@@ -1,7 +1,7 @@
 # SpecForge（暂定名）
 
 AI 研发流程平台：把 AI 的开发工作纳入 **需求分析 → 规格 → 实现 → 收尾验证** 的流水线，
-由引擎强制执行门禁、亲自采集证据、全程哈希链留痕。设计见 [docs/design.md](docs/design.md)。
+由引擎强制执行门禁、亲自采集证据、全程哈希链留痕。设计见 [docs/design.md](docs/design.md)，进度与任务见 [docs/TASKS.md](docs/TASKS.md)（AI 工具接手请先读 [AGENTS.md](AGENTS.md)）。
 
 当前进度：第一期完成（`core` 门禁 / 问题节点 / 哈希链，`runner` worktree 验证，`cli`）；
 第二期进行中，`agents` 已接入 Claude Agent SDK（需求分析 agent、独立审查 agent）。
