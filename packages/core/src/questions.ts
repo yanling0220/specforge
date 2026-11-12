@@ -171,6 +171,20 @@ export function rejectAnswer(q: Question, note: string, actor: Actor, now: strin
   return { ...q, revisions: [...q.revisions.slice(0, -1), updated], status: 'open' };
 }
 
+/**
+ * 追加确认角色（只增不减）：分类不当时由人兜底，例如把业务决策升级为需要产品确认。
+ * 当前待确认或已确认的答案会重新计算状态：已确认的答案缺少新角色时回到待确认。
+ */
+export function requireRole(q: Question, role: Role, reason: string): Question {
+  if (!reason.trim()) throw new ForgeError('reason_required', '追加确认角色必须填写原因');
+  if (q.requiredRoles.includes(role)) throw new ForgeError('already_required', `${q.id} 已经需要 ${role} 确认`);
+  const requiredRoles = [...q.requiredRoles, role];
+  const rev = currentRevision(q);
+  if (!rev || (rev.state !== 'pending' && rev.state !== 'confirmed')) return { ...q, requiredRoles };
+  const reopened = { ...rev, state: 'pending' as const };
+  return settle({ ...q, requiredRoles, revisions: [...q.revisions.slice(0, -1), reopened] });
+}
+
 /** 推迟：只允许 minor 问题 */
 export function deferQuestion(q: Question, reason: string, actor: Actor, now: string): Question {
   if (q.severity !== 'minor') throw new ForgeError('cannot_defer', `只有次要问题可以推迟，${q.id} 是 ${q.severity}`);

@@ -8,6 +8,7 @@ import {
   missingRoles,
   proposeAnswer,
   rejectAnswer,
+  requireRole,
 } from '../src/index.ts';
 
 const config = {
@@ -94,5 +95,19 @@ describe('问题节点：双方核对', () => {
     expect(() =>
       createQuestion({ id: 'Q-9', category: '业务规则', severity: 'blocking', question: '?', options: [{ id: 'A', text: 'a' }], defaultOptionId: 'A', raisedAtStage: 'analysis' }, config, dev, T),
     ).toThrow(/默认答案/);
+  });
+
+  it('分类不当时可追加产品确认：必须写原因；已确认的答案回到待确认', () => {
+    const tech = createQuestion({ id: 'Q-8', category: '可观测性', severity: 'minor', question: '要不要审计？', raisedAtStage: 'analysis' }, config, dev, T);
+    expect(() => requireRole(tech, 'product', ' ')).toThrow(/原因/);
+    const open = requireRole(tech, 'product', '做不做是业务决策');
+    expect(open).toMatchObject({ status: 'open', requiredRoles: ['dev', 'product'] });
+
+    const confirmed = proposeAnswer(tech, { text: '不需要' }, dev, T);
+    expect(confirmed.status).toBe('confirmed');
+    const reopened = requireRole(confirmed, 'product', '做不做是业务决策');
+    expect(reopened.status).toBe('drafted');
+    expect(missingRoles(reopened)).toEqual(['product']);
+    expect(() => requireRole(reopened, 'product', 'x')).toThrow(/已经需要/);
   });
 });

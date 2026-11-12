@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-12 · Claude Code（Opus 5.5） · 提交 `cd9ece1` 之后
+最后更新：2026-11-12 · Claude Code（Opus 5.5） · T2.3v / T2.3w 完成
 
 ---
 
 ## 当前快照
 
-- 测试：49 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
+- 测试：50 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T2.3v`**（确认问题分类修复的效果；花费很低），然后是 `T2.4`
+- **下一个建议任务：`T2.4`**（G3 方案门）；`T2.3c` 需要 Codex 登录，可穿插
 
 ---
 
@@ -35,7 +35,8 @@
 | T2.1 | agents 框架 + Claude 适配层（进程内 MCP 平台工具、canUseTool 白名单、运行前后工作区指纹校验、`agent.run` 事件） | done | T1.* | 提交 `b31d8a1`；`packages/agents/test/agents.test.ts` |
 | T2.2 | 需求分析 agent、独立审查 agent（6B） | done | T2.1 | `sf agent analyze` / `sf agent review`；DeepSeek 实测通过 |
 | T2.3 | 多后端：`deepseek`（Anthropic 兼容）、`openai-compatible`（自研循环，预设 deepseek/ollama）、`codex`（只读沙箱 + 整批提交） | done | T2.1 | 提交 `7154743`；`backends.test.ts` |
-| T2.3v | **确认问题分类修复（`cd9ece1`）有效**：在**干净的**示例仓库（只有现有代码、没有导入实现）上用 DeepSeek 跑分析，检查涉及业务决策的问题（列定义、能否创建 admin、部分成功）是否归到需要 product 确认的分类 | verify | T2.3 | 业务类问题的 `requiredRoles` 含 `product`；把结果写进"实测记录" |
+| T2.3v | 确认问题分类修复（`cd9ece1`）有效：在干净示例仓库上用 DeepSeek 跑分析 | done | T2.3 | 部分通过：核心业务问题（导入 admin、部分成功、重复邮箱、失败原因展示、交付形态）都要求 product；Q-7 行数上限、Q-8 是否做审计仍被归为 dev-only → 新增 `sf q require` 由人兜底追加确认角色（T2.3w）。见实测记录 |
+| T2.3w | `sf q require <id> <Q> --role product --reason`：追加确认角色（只增不减、必须写原因、已确认答案回到待确认、写入哈希链） | done | T1.2 | `questions.test.ts`；在 T2.3v 的真实输出上实测 Q-8 |
 | T2.3c | Codex 后端实测 | todo | T2.3 | 需要 Codex 登录；跑一次 `sf agent review --backend codex` 成功写入审查记录 |
 | T2.4 | G3 方案门：解析 `design.md`；必须覆盖全部 AC；必须有"结构变更清单"（新增的模块/接口/表）；L 档需人工审批（绑定哈希） | todo | T1.3 | core 纯函数 + 测试；状态机加入 `design` 阶段 |
 | T2.5 | G4 任务门：解析 `tasks.md`；每个任务关联 AC 与设计条目；依赖无环 | todo | T2.4 | 同上，加入 `tasks` 阶段 |
@@ -91,6 +92,10 @@
 | 审查 2（修复后） | `deepseek` | pass，覆盖 AC-1~3 | 12 | 24K+8K | 147s |
 | 分析重跑（修复 `cd9ece1` 后） | `deepseek` | 成功，但仓库里已有导入实现，只提了 2 个技术问题，**无法判断修复效果** → 见 T2.3v | 48 | 37K+17K | 268s |
 
+| T2.3v 干净仓库分析 | `deepseek` | 成功：12 节点、4 假设、8 问题；新提出"仓库没有服务/CLI/UI，交付形态是什么"（范围，阻塞，dev+product） | 44 | 8K+18K | 276s |
+
+T2.3v 分类结果：Q-1 范围、Q-3 用户与角色（能否导入 admin）、Q-4/Q-5 业务规则、Q-6 交互体验 → dev+product ✅；Q-2 CSV 格式（输入与校验）、Q-7 行数上限（边界值）、Q-8 是否做审计（可观测性）→ dev。Q-2 偏技术，可接受；Q-7、Q-8 属业务决策，归类不当 → 结论：prompt 约束显著改善但不可靠，需要人工兜底（T2.3w）。
+
 **发现**：第一次分析把"CSV 列定义 / 能否创建 admin"归为"输入与校验"（只需 dev 确认），绕过了产品核对 → 已在 `cd9ece1` 修复（分类限定在确认策略内 + prompt 规则），待 T2.3v 确认。
 
 ---
@@ -103,4 +108,5 @@
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.1–T2.2 · Claude agent 框架、分析与审查 agent · `b31d8a1`
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.3 · DeepSeek / Codex / OpenAI 兼容后端 · `7154743`
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.3 · DeepSeek 实测；问题分类修复 · `cd9ece1`
-- 2026-11-12 · Claude Code (Opus 5.5) · — · 建立本任务清单与交接规则 · （本次提交）
+- 2026-11-12 · Claude Code (Opus 5.5) · — · 建立本任务清单与交接规则 · `4df0a08`
+- 2026-11-12 · Claude Code (Opus 5.5) · T2.3v, T2.3w · DeepSeek 干净仓库实测（部分通过）；新增追加确认角色命令 · （本次提交）

@@ -17,6 +17,7 @@ import {
   nextStage,
   proposeAnswer,
   rejectAnswer,
+  requireRole,
   setDimension,
   setRestatement,
   upstreamGates,
@@ -25,6 +26,7 @@ import {
 import { headSha, repoRoot, runVerification } from '@specforge/runner';
 import type {
   AgentBackend,
+  Role,
   AgentProfile,
   GateEvaluation,
   Question,
@@ -70,6 +72,7 @@ change
   sf q reject <id> <Q-n> --note <意见> [--on-behalf <名字>:<角色>]
   sf q defer <id> <Q-n> --reason <原因>
   sf q invalidate <id> <Q-n> --reason <原因>
+  sf q require <id> <Q-n> --role product --reason <原因>   追加确认角色（只增不减）
 
 规格与收尾
   sf spec approve <id> [--note <说明>]            审批当前版本的 spec（绑定内容哈希）
@@ -116,6 +119,7 @@ const { values: opts, positionals: args } = parseArgs({
     default: { type: 'string' },
     'on-behalf': { type: 'string' },
     kind: { type: 'string' },
+    role: { type: 'string' },
     verdict: { type: 'string' },
     reviewer: { type: 'string' },
     coverage: { type: 'string' },
@@ -342,6 +346,15 @@ function cmdQuestion(store: Store, sub: string, id: string, qid?: string): void 
       type: 'question.deferred',
       apply: (q) => deferQuestion(q, need(opts.reason, '--reason'), actor, now()),
       payload: (q) => ({ questionId: q.id, reason: q.closure!.reason }),
+    },
+    require: {
+      type: 'question.role_required',
+      apply: (q) => {
+        const role = need(opts.role, '--role') as Role;
+        if (!['dev', 'product'].includes(role)) throw new ForgeError('bad_arg', '--role 只能是 dev|product');
+        return requireRole(q, role, need(opts.reason, '--reason'));
+      },
+      payload: (q) => ({ questionId: q.id, role: opts.role, reason: opts.reason, requiredRoles: q.requiredRoles, status: q.status }),
     },
     invalidate: {
       type: 'question.invalidated',
