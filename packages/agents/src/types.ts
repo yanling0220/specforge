@@ -1,5 +1,5 @@
 import type { AgentProfile, AgentRole } from '@specforge/shared';
-import type { z } from 'zod';
+import { z as zImpl, type z } from 'zod';
 
 /**
  * 平台工具：与后端无关的定义。各适配层负责把它包装成自己的工具格式
@@ -26,6 +26,10 @@ export interface AgentRunSpec {
   /** 平台工具在后端中的命名空间 */
   toolNamespace: string;
   onEvent?: (e: AgentEvent) => void;
+  /** 角色的产出是否已经完整提交（例如调用了 finish_analysis）；用于提醒或重试 */
+  isComplete?: () => boolean;
+  /** 清空草稿；需要整批重交的后端（codex）在重试前调用 */
+  reset?: () => void;
 }
 
 export type AgentEvent =
@@ -40,7 +44,9 @@ export interface AgentRunResult {
   model?: string;
   sessionId?: string;
   turns: number;
+  /** 后端报告的费用估算；拿不到时为 0，此时看 tokens */
   costUsd: number;
+  tokens?: { input: number; output: number };
   durationMs: number;
   deniedTools: { name: string; reason: string }[];
 }
@@ -53,4 +59,27 @@ export interface AgentAdapter {
 /** 逐个推断工具参数类型，再擦除为通用的 PlatformTool */
 export function defineTool<Shape extends z.ZodRawShape>(t: PlatformTool<Shape>): PlatformTool {
   return t as unknown as PlatformTool;
+}
+
+/** 按名称执行平台工具：校验参数并调用处理函数。错误以文本返回，交给模型修正 */
+export function callPlatformTool(tools: PlatformTool[], name: string, rawArgs: unknown): { text: string; isError: boolean } {
+  const t = tools.find((x) => x.name === name);
+  if (!t) return { text: `错误：没有名为 ${name} 的工具`, isError: true };
+  const parsed = zodObject(t).safeParse(rawArgs ?? {});
+  if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('；')}`, isError: true };
+  try {
+    return { text: t.handler(parsed.data as never), isError: false };
+  } catch (e) {
+    return { text: `错误：${(e as Error).message}`, isError: true };
+  }
+}
+
+export function zodObject(t: PlatformTool) {
+  return zImpl.object(t.shape);
+}
+
+/** 工具参数的 JSON Schema（给 OpenAI 兼容接口用） */
+export function toolJsonSchema(t: PlatformTool): Record<string, unknown> {
+  const { $schema: _ignored, ...schema } = zImpl.toJSONSchema(zodObject(t), { io: 'input' }) as Record<string, unknown>;
+  return schema;
 }

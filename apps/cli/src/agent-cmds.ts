@@ -65,7 +65,7 @@ async function runReadOnly(
   const profile = resolveProfile(role, store.config().agents, opts.override);
   const adapter = opts.adapter ?? adapterFor(profile);
   const before = workspaceFingerprint(store.root);
-  log(`启动 ${role} agent（${adapter.backend}${profile.model ? ` · ${profile.model}` : ''} · effort ${profile.effort ?? '默认'}）…`);
+  log(`启动 ${role} agent（${adapter.backend}${profile.model ? ` · ${profile.model}` : ''}${profile.provider ? ` · ${profile.provider}` : ''} · effort ${profile.effort ?? '默认'}）…`);
   let result: AgentRunResult;
   try {
     result = await adapter.run({
@@ -96,12 +96,14 @@ async function runReadOnly(
       error: result.error,
       turns: result.turns,
       costUsd: result.costUsd,
+      tokens: result.tokens,
       durationMs: result.durationMs,
       deniedTools: result.deniedTools,
       workspaceChanged: tampered,
     },
   });
-  log(`${result.ok ? '✓' : '✗'} 结束：${result.turns} 轮 · $${result.costUsd.toFixed(4)} · ${(result.durationMs / 1000).toFixed(1)}s${result.error ? ` · ${result.error}` : ''}`);
+  const spend = result.costUsd > 0 ? `$${result.costUsd.toFixed(4)}` : result.tokens ? `${result.tokens.input}+${result.tokens.output} tokens` : '费用未知';
+  log(`${result.ok ? '✓' : '✗'} 结束：${result.turns} 轮 · ${spend} · ${(result.durationMs / 1000).toFixed(1)}s${result.error ? ` · ${result.error}` : ''}`);
   if (!result.ok) throw new ForgeError('agent_failed', `${role} agent 运行失败：${result.error ?? '未知原因'}`);
   return { result, profile };
 }
@@ -135,7 +137,14 @@ export async function cmdAgentAnalyze(store: Store, changeId: string, actor: Act
     changeId,
     actor,
     'analyst',
-    () => ({ role: 'analyst', systemPrompt: ANALYST_SYSTEM_PROMPT, prompt: analystPrompt(ctx), tools: analystTools(draft, ctx) }),
+    () => ({
+      role: 'analyst',
+      systemPrompt: ANALYST_SYSTEM_PROMPT,
+      prompt: analystPrompt(ctx),
+      tools: analystTools(draft, ctx),
+      isComplete: () => draft.finished,
+      reset: () => Object.assign(draft, emptyAnalysisDraft()),
+    }),
     opts,
   );
 
@@ -204,7 +213,14 @@ export async function cmdAgentReview(store: Store, changeId: string, actor: Acto
     changeId,
     actor,
     'reviewer',
-    () => ({ role: 'reviewer', systemPrompt: REVIEWER_SYSTEM_PROMPT, prompt: reviewerPrompt(ctx), tools: reviewerTools(draft, ctx) }),
+    () => ({
+      role: 'reviewer',
+      systemPrompt: REVIEWER_SYSTEM_PROMPT,
+      prompt: reviewerPrompt(ctx),
+      tools: reviewerTools(draft, ctx),
+      isComplete: () => draft.submitted,
+      reset: () => Object.assign(draft, emptyReviewDraft()),
+    }),
     opts,
   );
   if (headSha(store.root) !== sha) throw new ForgeError('head_moved', '审查期间 HEAD 发生了变化，结论作废，请重新审查');

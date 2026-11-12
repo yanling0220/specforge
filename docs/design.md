@@ -264,8 +264,9 @@ interface AgentTask {
 | 后端 | 接入方式 | 执行时拦截 | 备注 |
 |---|---|---|---|
 | **Claude** | Claude Agent SDK（TypeScript） | 强：`canUseTool`、PreToolUse hooks，可以细到单个工具调用 | 默认后端 |
-| **Codex** | Codex SDK / `codex exec` | 中：沙箱模式（read-only / workspace-write）+ 审批策略 | 细粒度约束靠事后校验 |
-| **DeepSeek** | 优先尝试通过 Anthropic 兼容接口接入 Claude Agent SDK（设置 base URL）；否则走 OpenAI 兼容接口 + 自研最小 agent 循环 | 取决于接入方式 | 接入方式需在第二期验证 |
+| **Codex** | Codex SDK：`read-only` 沙箱、禁网；不支持进程内工具，改为结构化输出整批提交平台工具调用，校验失败则清空草稿重交 | 中：沙箱 + 事后校验 | |
+| **DeepSeek** | 两条路都已实现：① `deepseek`：Anthropic 兼容接口 + Claude Agent SDK；② `openai-compatible` + `provider: deepseek`：自研 agent 循环（回传 `reasoning_content`） | ① 同 Claude；② 只提供引擎实现的只读工具 | 待实测哪条更稳定 |
+| **任意 OpenAI 兼容服务** | `openai-compatible`（预设 ollama，或直接配 baseUrl） | 只提供引擎实现的只读工具 | |
 
 平台工具（`raise_question` 等）通过 **MCP server** 暴露，三种后端都能使用。
 
@@ -421,6 +422,7 @@ specforge/
 | **第一期** | shared / core / runner / cli；G1、G2、G6；问题节点 + 双方核对 + 留痕；哈希链；引擎验证 | 在示例项目上跑通：问题未确认被拦截 → 确认后通过；跳过测试被拦截；新提交使 G6 失效 |
 | **第二期** | agents（Claude 优先，再接 Codex、DeepSeek）、MCP 平台工具、G3/G4/G5、server + 只读 Web 控制台 | AI 在约束下自动跑完 M 档流程 |
 | 　↳ 已完成 | Claude 适配层（进程内 MCP 平台工具 + canUseTool 拦截 + 运行前后工作区指纹校验）；需求分析 agent；独立审查 agent（6B） | `sf agent analyze` / `sf agent review` |
+| 　↳ 已完成 | DeepSeek（两种接入）、Codex、通用 OpenAI 兼容后端 | `--backend deepseek\|codex\|openai-compatible` |
 | **第三期** | 交互：行内评论、审批、打回、接管；并行任务；测试数量检查 | 开发者只在控制台完成全部人工决策 |
 | **第四期** | 团队：身份与权限、多项目、Postgres、通知（IM） | 产品方直接登录确认问题 |
 

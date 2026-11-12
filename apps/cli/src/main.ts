@@ -80,8 +80,8 @@ change
 AI agent
   sf agent analyze <id>                           需求分析 agent：复述、分解树、假设、维度、问题节点
   sf agent review <id>                            独立审查 agent（G6 6B），针对当前 HEAD
-               [--backend claude] [--model <模型>] [--effort low|medium|high|xhigh|max]
-               [--budget <美元上限>] [--verbose]
+               [--backend claude|deepseek|codex|openai-compatible] [--provider deepseek|ollama]
+               [--model <模型>] [--effort low|medium|high|xhigh|max] [--budget <美元上限>] [--verbose]
 
 审计
   sf log [<id>]                                   事件时间线
@@ -121,6 +121,7 @@ const { values: opts, positionals: args } = parseArgs({
     coverage: { type: 'string' },
     file: { type: 'string' },
     backend: { type: 'string' },
+    provider: { type: 'string' },
     model: { type: 'string' },
     effort: { type: 'string' },
     budget: { type: 'string' },
@@ -423,7 +424,9 @@ function agentOverride(): Partial<AgentProfile> {
   if (effort && !['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) throw new ForgeError('bad_arg', '--effort 只能是 low|medium|high|xhigh|max');
   const budget = opts.budget ? Number(opts.budget) : undefined;
   if (budget !== undefined && !(budget > 0)) throw new ForgeError('bad_arg', '--budget 必须是正数（美元）');
-  return { backend: opts.backend as AgentBackend | undefined, model: opts.model, effort, maxBudgetUsd: budget };
+  const backends: AgentBackend[] = ['claude', 'deepseek', 'codex', 'openai-compatible'];
+  if (opts.backend && !backends.includes(opts.backend as AgentBackend)) throw new ForgeError('bad_arg', `--backend 只能是 ${backends.join('|')}`);
+  return { backend: opts.backend as AgentBackend | undefined, provider: opts.provider, model: opts.model, effort, maxBudgetUsd: budget };
 }
 
 async function main(): Promise<void> {

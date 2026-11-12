@@ -51,15 +51,31 @@ sf log verify                            # 校验哈希链与带外修改
 
 ## AI agent
 
-- 认证沿用 Claude Code / Agent SDK 的方式（`ANTHROPIC_API_KEY`，或已登录的 Claude Code）。
-- 默认模型 `claude-opus-5-5`，可在 `.specforge/config.json` 中按角色配置：
+四种后端，按角色在 `.specforge/config.json` 中配置，或用命令行 `--backend` 临时指定：
+
+| backend | 接入方式 | 只读约束 | 需要 |
+|---|---|---|---|
+| `claude`（默认） | Claude Agent SDK | 内置工具白名单 + canUseTool 拦截 | Claude 凭据 |
+| `deepseek` | DeepSeek 的 Anthropic 兼容接口，跑在 Claude Agent SDK 上 | 同上 | `DEEPSEEK_API_KEY` |
+| `codex` | OpenAI Codex SDK，只读沙箱 + 结构化输出整批提交 | `read-only` 沙箱，禁网 | Codex 登录或 key |
+| `openai-compatible` | 引擎自带的 agent 循环，任意 OpenAI 兼容接口（预设 `deepseek`、`ollama`） | 只提供引擎实现的只读工具 | 视服务而定 |
 
 ```json
 "agents": {
-  "default": { "backend": "claude", "model": "claude-opus-5-5", "maxBudgetUsd": 2 },
-  "roles": { "reviewer": { "backend": "claude", "effort": "xhigh" } }
+  "default": { "backend": "deepseek" },
+  "roles": {
+    "reviewer": { "backend": "codex", "effort": "high" },
+    "analyst":  { "backend": "openai-compatible", "provider": "deepseek", "model": "deepseek-v4-pro" }
+  }
 }
 ```
 
-- agent 只能通过平台工具提交结果，由引擎校验后写入；只读角色运行前后工作区必须一致，否则产出作废。
-- Codex、DeepSeek 后端尚未接入（配置后会提示）。
+```bash
+export DEEPSEEK_API_KEY=...
+sf agent analyze <id> --backend deepseek
+sf agent review  <id> --backend openai-compatible --provider deepseek
+```
+
+- 配置里只写环境变量名（`apiKeyEnv`），不写 key 本身。
+- 无论哪个后端：agent 只能通过平台工具提交，由引擎校验后写入；只读角色运行前后工作区必须一致，否则产出作废；每次运行都写 `agent.run` 事件。
+- `--budget` 只对 claude / deepseek 生效；兼容接口的费用以 token 数报告。

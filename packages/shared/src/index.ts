@@ -32,7 +32,13 @@ export interface ProjectConfig {
   agents?: AgentsConfig;
 }
 
-export type AgentBackend = 'claude' | 'codex' | 'deepseek';
+/**
+ * - claude：Claude Agent SDK
+ * - deepseek：DeepSeek 的 Anthropic 兼容接口，同样运行在 Claude Agent SDK 上
+ * - codex：OpenAI Codex SDK（只读沙箱 + 结构化输出）
+ * - openai-compatible：引擎自带的最小 agent 循环，适用于任何 OpenAI 兼容接口
+ */
+export type AgentBackend = 'claude' | 'deepseek' | 'codex' | 'openai-compatible';
 
 export type AgentRole = 'analyst' | 'reviewer';
 
@@ -41,8 +47,14 @@ export interface AgentProfile {
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   maxTurns?: number;
-  /** 单次运行的费用上限（美元） */
+  /** 单次运行的费用上限（美元）；仅 claude / deepseek 后端生效 */
   maxBudgetUsd?: number;
+  /** 接口地址；claude 后端填 Anthropic 兼容地址，openai-compatible 填 OpenAI 兼容地址 */
+  baseUrl?: string;
+  /** 存放 API key 的环境变量名（只记录变量名，不在配置里写 key） */
+  apiKeyEnv?: string;
+  /** openai-compatible 的预设：deepseek / ollama；填了 baseUrl 则以 baseUrl 为准 */
+  provider?: string;
 }
 
 export interface AgentsConfig {

@@ -1,5 +1,6 @@
 import { createSdkMcpServer, query, tool, type CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { ForgeError } from '@specforge/core';
+import type { AgentProfile } from '@specforge/shared';
 import type { AgentAdapter, AgentRunResult, AgentRunSpec, PlatformTool } from './types.ts';
 
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5';
@@ -33,13 +34,36 @@ function toSdkTool(t: PlatformTool) {
   });
 }
 
+/**
+ * 指向 Anthropic 兼容接口（如 DeepSeek）时的子进程环境。
+ * SDK 的 env 选项会整体替换子进程环境，所以在 process.env 基础上修改；
+ * 去掉 ANTHROPIC_API_KEY，避免它优先于 AUTH_TOKEN 把请求发到错误的服务。
+ */
+export function compatEnv(profile: AgentProfile, source: NodeJS.ProcessEnv = process.env): Record<string, string> | undefined {
+  if (!profile.baseUrl) return undefined;
+  const keyVar = profile.apiKeyEnv;
+  const key = keyVar ? source[keyVar] : undefined;
+  if (!keyVar || !key) {
+    throw new ForgeError('no_api_key', `${profile.backend} 后端需要 API key：请设置环境变量 ${keyVar ?? '(未配置 apiKeyEnv)'}`);
+  }
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(source)) if (v !== undefined && k !== 'ANTHROPIC_API_KEY') env[k] = v;
+  env.ANTHROPIC_BASE_URL = profile.baseUrl;
+  env.ANTHROPIC_AUTH_TOKEN = key;
+  return env;
+}
+
 export class ClaudeAdapter implements AgentAdapter {
-  backend = 'claude';
+  backend: string;
+  constructor(backend = 'claude') {
+    this.backend = backend;
+  }
 
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
     if (!spec.readOnly) throw new ForgeError('not_supported', '可写角色将在实现阶段（G5）接入，当前只支持只读角色');
     const t0 = Date.now();
     const model = spec.profile.model ?? DEFAULT_CLAUDE_MODEL;
+    const env = compatEnv(spec.profile);
     const deniedTools: AgentRunResult['deniedTools'] = [];
     const onDenied = (name: string, reason: string) => {
       deniedTools.push({ name, reason });
@@ -63,6 +87,7 @@ export class ClaudeAdapter implements AgentAdapter {
         mcpServers: { [spec.toolNamespace]: server },
         canUseTool: makeCanUseTool(spec, onDenied),
         permissionMode: 'default',
+        ...(env ? { env } : {}),
       },
     });
 
@@ -75,10 +100,13 @@ export class ClaudeAdapter implements AgentAdapter {
         }
       } else if (msg.type === 'result') {
         result.turns = msg.num_turns;
-        result.costUsd = msg.total_cost_usd;
+        // 走兼容接口时，SDK 按 Claude 价格估算的费用不准确，只报告 token 数
+        result.costUsd = env ? 0 : msg.total_cost_usd;
         result.sessionId = msg.session_id;
-        if (msg.subtype === 'success' && !msg.is_error) result.ok = true;
-        else result.error = msg.subtype === 'success' ? '运行以错误结束' : msg.subtype;
+        result.tokens = { input: msg.usage.input_tokens, output: msg.usage.output_tokens };
+        if (msg.subtype === 'success' && !msg.is_error) result.ok = !spec.isComplete || spec.isComplete();
+        if (result.ok === false && msg.subtype === 'success' && !msg.is_error) result.error = 'agent 结束时没有完整提交结果';
+        else if (msg.subtype !== 'success' || msg.is_error) result.error = msg.subtype === 'success' ? '运行以错误结束' : msg.subtype;
       }
     }
     result.durationMs = Date.now() - t0;
