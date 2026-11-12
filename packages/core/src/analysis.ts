@@ -1,4 +1,4 @@
-import type { Actor, Analysis, AssumptionStatus, DimensionStatus, ProjectConfig } from '@specforge/shared';
+import type { Actor, Analysis, AssumptionStatus, DimensionStatus, ProjectConfig, RequirementNode } from '@specforge/shared';
 import { ForgeError } from './errors.ts';
 import { hashOf } from './hash.ts';
 
@@ -58,4 +58,16 @@ export function setDimension(
     ...a,
     dimensions: exists ? a.dimensions.map((d) => (d.dimension === dimension ? entry : d)) : [...a.dimensions, entry],
   };
+}
+
+/** 替换需求分解树；节点 id 必须唯一，parentId 必须指向已有节点 */
+export function setNodes(a: Analysis, nodes: RequirementNode[]): Analysis {
+  const ids = new Set<string>();
+  for (const n of nodes) {
+    if (ids.has(n.id)) throw new ForgeError('dup_node', `节点 ${n.id} 重复`);
+    ids.add(n.id);
+  }
+  const dangling = nodes.filter((n) => n.parentId && !ids.has(n.parentId));
+  if (dangling.length) throw new ForgeError('bad_parent', `节点的父节点不存在：${dangling.map((n) => n.id).join(', ')}`);
+  return { ...a, nodes };
 }

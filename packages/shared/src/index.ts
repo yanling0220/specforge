@@ -28,6 +28,26 @@ export interface ProjectConfig {
   confirmPolicy: Record<string, Role[]> & { default: Role[] };
   /** 需求分析维度 */
   dimensions: string[];
+  /** agent 后端配置；未配置时使用 Claude 默认值 */
+  agents?: AgentsConfig;
+}
+
+export type AgentBackend = 'claude' | 'codex' | 'deepseek';
+
+export type AgentRole = 'analyst' | 'reviewer';
+
+export interface AgentProfile {
+  backend: AgentBackend;
+  model?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  maxTurns?: number;
+  /** 单次运行的费用上限（美元） */
+  maxBudgetUsd?: number;
+}
+
+export interface AgentsConfig {
+  default?: AgentProfile;
+  roles?: Partial<Record<AgentRole, AgentProfile>>;
 }
 
 // ---------- change ----------

@@ -24,6 +24,8 @@ import {
 } from '@specforge/core';
 import { headSha, repoRoot, runVerification } from '@specforge/runner';
 import type {
+  AgentBackend,
+  AgentProfile,
   GateEvaluation,
   Question,
   QuestionOption,
@@ -32,6 +34,7 @@ import type {
   Severity,
   Tier,
 } from '@specforge/shared';
+import { cmdAgentAnalyze, cmdAgentReview } from './agent-cmds.ts';
 import { evaluateAll, specBindingNow } from './engine.ts';
 import { defaultConfig, FORGE_DIR, parseActor, Store, type ChangeState } from './store.ts';
 
@@ -74,6 +77,12 @@ change
   sf review <id> --kind agent|human --verdict pass|fail
                [--reviewer <名字>] [--coverage AC-1,AC-2] [--file <审查报告.json>] [--note <说明>]
 
+AI agent
+  sf agent analyze <id>                           需求分析 agent：复述、分解树、假设、维度、问题节点
+  sf agent review <id>                            独立审查 agent（G6 6B），针对当前 HEAD
+               [--backend claude] [--model <模型>] [--effort low|medium|high|xhigh|max]
+               [--budget <美元上限>] [--verbose]
+
 审计
   sf log [<id>]                                   事件时间线
   sf log verify                                   校验哈希链与带外修改
@@ -111,6 +120,11 @@ const { values: opts, positionals: args } = parseArgs({
     reviewer: { type: 'string' },
     coverage: { type: 'string' },
     file: { type: 'string' },
+    backend: { type: 'string' },
+    model: { type: 'string' },
+    effort: { type: 'string' },
+    budget: { type: 'string' },
+    verbose: { type: 'boolean', short: 'v' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -404,7 +418,15 @@ function cmdLog(store: Store, sub?: string, id?: string): void {
   }
 }
 
-function main(): void {
+function agentOverride(): Partial<AgentProfile> {
+  const effort = opts.effort as AgentProfile['effort'];
+  if (effort && !['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) throw new ForgeError('bad_arg', '--effort 只能是 low|medium|high|xhigh|max');
+  const budget = opts.budget ? Number(opts.budget) : undefined;
+  if (budget !== undefined && !(budget > 0)) throw new ForgeError('bad_arg', '--budget 必须是正数（美元）');
+  return { backend: opts.backend as AgentBackend | undefined, model: opts.model, effort, maxBudgetUsd: budget };
+}
+
+async function main(): Promise<void> {
   const [cmd, sub, a1, a2] = args;
   if (!cmd || opts.help) {
     console.log(HELP);
@@ -540,18 +562,24 @@ function main(): void {
       return cmdReview(store, need(sub, '<id>'));
     case 'log':
       return cmdLog(store, sub, a1);
+    case 'agent': {
+      const id = need(a1, '<id>');
+      const actor = store.identity(opts.as);
+      const agentOpts = { override: agentOverride(), verbose: !!opts.verbose };
+      if (sub === 'analyze') return cmdAgentAnalyze(store, id, actor, agentOpts);
+      if (sub === 'review') return cmdAgentReview(store, id, actor, agentOpts);
+      throw new ForgeError('bad_cmd', `未知命令 sf agent ${sub ?? ''}`);
+    }
     default:
       throw new ForgeError('bad_cmd', `未知命令 ${cmd}，运行 sf --help 查看用法`);
   }
 }
 
-try {
-  main();
-} catch (e) {
+main().catch((e: unknown) => {
   if (e instanceof ForgeError) {
     console.error(`⛔ ${e.message}`);
     process.exitCode = 1;
   } else {
     throw e;
   }
-}
+});

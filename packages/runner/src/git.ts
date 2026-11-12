@@ -47,3 +47,16 @@ export function grepFiles(cwd: string, sha: string, needle: string): string[] {
   if (code !== 0 || !out) return [];
   return out.split('\n').map((l) => l.slice(sha.length + 1));
 }
+
+/** 工作区指纹：HEAD + 已跟踪文件改动 + 未跟踪文件列表。只读 agent 运行前后必须一致 */
+export function workspaceFingerprint(cwd: string): string {
+  return [headSha(cwd), git(cwd, ['status', '--porcelain', '--untracked-files=all']), git(cwd, ['diff', 'HEAD'])].join('\n\0\n');
+}
+
+export function diffStat(cwd: string, from: string, to: string): string {
+  return git(cwd, ['diff', '--stat', `${from}..${to}`]);
+}
+
+export function fullDiff(cwd: string, from: string, to: string): string {
+  return git(cwd, ['diff', `${from}..${to}`]);
+}
