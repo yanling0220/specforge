@@ -1,0 +1,7 @@
+{
+  "name": "@specforge/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "sf": "./src/main.ts" }
+}

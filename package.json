@@ -1,0 +1,17 @@
+{
+  "name": "specforge",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "sf": "node apps/cli/src/main.ts"
+  },
+  "engines": { "node": ">=22.18" },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

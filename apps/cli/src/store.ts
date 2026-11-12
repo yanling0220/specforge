@@ -1,0 +1,270 @@
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { chainEvent, ForgeError, hashOf } from '@specforge/core';
+import type {
+  Actor,
+  Analysis,
+  Approval,
+  Change,
+  EventInput,
+  ForgeEvent,
+  ProjectConfig,
+  Question,
+  ReviewRecord,
+  Role,
+  VerificationEvidence,
+} from '@specforge/shared';
+
+export const FORGE_DIR = '.specforge';
+
+export function defaultConfig(): ProjectConfig {
+  return {
+    version: 1,
+    verify: [
+      { name: 'install', command: 'npm ci' },
+      { name: 'test', command: 'npm test' },
+    ],
+    protectedPaths: ['.github/**', '**/vitest.config.*', '**/jest.config.*', '**/.eslintrc*', '**/eslint.config.*', '.specforge/config.json'],
+    testGlobs: ['**/*.test.*', '**/*.spec.*', '**/test/**', '**/tests/**', '**/__tests__/**', '**/*_test.*', '**/test_*.py'],
+    skipPatterns: [
+      '\\b(it|test|describe)\\.skip\\(',
+      '\\bx(it|describe|test)\\(',
+      '\\.only\\(',
+      '@Ignore\\b',
+      '@Disabled\\b',
+      'pytest\\.mark\\.skip',
+      '\\bt\\.Skip\\(',
+    ],
+    confirmPolicy: {
+      业务规则: ['dev', 'product'],
+      范围: ['dev', 'product'],
+      用户与角色: ['dev', 'product'],
+      交互体验: ['dev', 'product'],
+      default: ['dev'],
+    },
+    dimensions: [
+      '用户与角色',
+      '输入与校验',
+      '状态流转',
+      '异常与错误',
+      '边界值',
+      '并发与幂等',
+      '数据迁移与兼容',
+      '性能',
+      '安全与权限',
+      '可观测性',
+      '交互体验',
+      '范围外事项',
+    ],
+  };
+}
+
+/** 一个 change 在 .specforge 中的全部状态 */
+export interface ChangeState {
+  change: Change;
+  analysis: Analysis;
+  questions: Question[];
+  reviews: ReviewRecord[];
+  approvals: Approval[];
+}
+
+const STATE_FILES = ['change', 'analysis', 'questions', 'reviews', 'approvals'] as const;
+
+function readJson<T>(path: string): T {
+  return JSON.parse(readFileSync(path, 'utf8')) as T;
+}
+
+function writeJson(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
+}
+
+export function stateHash(state: ChangeState): string {
+  return hashOf(state);
+}
+
+export class Store {
+  root: string;
+  constructor(root: string) {
+    this.root = root;
+  }
+
+  static find(cwd: string): Store {
+    let dir = cwd;
+    while (true) {
+      if (existsSync(join(dir, FORGE_DIR, 'config.json'))) return new Store(dir);
+      const parent = dirname(dir);
+      if (parent === dir) throw new ForgeError('no_project', '当前目录不在 SpecForge 项目中，请先运行 sf init');
+      dir = parent;
+    }
+  }
+
+  path(...parts: string[]): string {
+    return join(this.root, FORGE_DIR, ...parts);
+  }
+
+  rel(path: string): string {
+    return relative(this.root, path);
+  }
+
+  config(): ProjectConfig {
+    return readJson<ProjectConfig>(this.path('config.json'));
+  }
+
+  // ---------- 身份 ----------
+
+  identity(override?: string): Actor {
+    if (override) return parseActor(override);
+    const file = this.path('identity.local.json');
+    if (!existsSync(file)) {
+      throw new ForgeError('no_identity', '还没有设置身份：sf whoami --set <名字>:<dev|product>');
+    }
+    return readJson<Actor>(file);
+  }
+
+  setIdentity(actor: Actor): void {
+    writeJson(this.path('identity.local.json'), actor);
+  }
+
+  // ---------- change 状态 ----------
+
+  changeDir(id: string): string {
+    return this.path('changes', id);
+  }
+
+  listChanges(): string[] {
+    const dir = this.path('changes');
+    return existsSync(dir) ? readdirSync(dir).filter((d) => existsSync(join(dir, d, 'change.json'))).sort() : [];
+  }
+
+  load(id: string): ChangeState {
+    const dir = this.changeDir(id);
+    if (!existsSync(join(dir, 'change.json'))) throw new ForgeError('no_change', `change ${id} 不存在`);
+    const read = <T>(name: string, fallback: T): T =>
+      existsSync(join(dir, `${name}.json`)) ? readJson<T>(join(dir, `${name}.json`)) : fallback;
+    return {
+      change: read<Change>('change', undefined as never),
+      analysis: read<Analysis>('analysis', { nodes: [], assumptions: [], dimensions: [] }),
+      questions: read<Question[]>('questions', []),
+      reviews: read<ReviewRecord[]>('reviews', []),
+      approvals: read<Approval[]>('approvals', []),
+    };
+  }
+
+  private save(state: ChangeState): void {
+    const dir = this.changeDir(state.change.id);
+    for (const name of STATE_FILES) writeJson(join(dir, `${name}.json`), state[name]);
+  }
+
+  /** 创建 change：写状态并记录事件 */
+  create(state: ChangeState, actor: Actor): void {
+    if (existsSync(join(this.changeDir(state.change.id), 'change.json'))) {
+      throw new ForgeError('exists', `change ${state.change.id} 已存在`);
+    }
+    this.save(state);
+    this.append({ type: 'change.created', actor, changeId: state.change.id, payload: { ...state.change }, stateHash: stateHash(state) });
+  }
+
+  /**
+   * 所有状态变更的唯一入口：校验没有带外修改 → 应用变更 → 落盘 → 写事件（P5）。
+   */
+  mutate(
+    id: string,
+    actor: Actor,
+    type: string,
+    fn: (s: ChangeState) => ChangeState,
+    payload: (next: ChangeState) => Record<string, unknown>,
+  ): ChangeState {
+    const current = this.load(id);
+    const oob = this.outOfBand(id, current);
+    if (oob) {
+      throw new ForgeError(
+        'out_of_band',
+        `检测到 ${id} 的状态文件被绕过引擎修改（${oob}）。请检查后运行 sf log ack ${id} --reason "<说明>" 记录确认`,
+      );
+    }
+    const next = fn(current);
+    this.save(next);
+    this.append({ type, actor, changeId: id, payload: payload(next), stateHash: stateHash(next) });
+    return next;
+  }
+
+  /** 当前状态与最后一次事件记录的 stateHash 不一致时返回说明 */
+  outOfBand(id: string, state = this.load(id)): string | undefined {
+    const last = this.events().filter((e) => e.changeId === id && e.stateHash).at(-1);
+    if (!last) return '没有任何事件记录';
+    return last.stateHash === stateHash(state) ? undefined : `最后一次记录是事件 #${last.seq}`;
+  }
+
+  /** 人工确认带外修改，把当前状态重新纳入链中 */
+  acknowledgeOutOfBand(id: string, actor: Actor, reason: string): void {
+    const state = this.load(id);
+    this.append({ type: 'state.out_of_band_acknowledged', actor, changeId: id, payload: { reason }, stateHash: stateHash(state) });
+  }
+
+  // ---------- 证据 ----------
+
+  saveEvidence(changeId: string, ev: VerificationEvidence, actor: Actor): string {
+    const file = join(this.changeDir(changeId), 'evidence', `${ev.id}.json`);
+    writeJson(file, ev);
+    this.append({
+      type: 'evidence.recorded',
+      actor,
+      changeId,
+      payload: {
+        evidenceId: ev.id,
+        sha: ev.sha,
+        evidenceHash: hashOf(ev),
+        steps: ev.steps.map((s) => ({ name: s.name, exitCode: s.exitCode, timedOut: s.timedOut })),
+      },
+    });
+    return file;
+  }
+
+  /** 最新一份针对指定 commit 的证据；证据文件的哈希必须和事件日志中记录的一致 */
+  latestEvidence(changeId: string, sha: string): VerificationEvidence | undefined {
+    const recorded = this.events().filter((e) => e.changeId === changeId && e.type === 'evidence.recorded' && e.payload.sha === sha);
+    for (const event of recorded.reverse()) {
+      const file = join(this.changeDir(changeId), 'evidence', `${String(event.payload.evidenceId)}.json`);
+      if (!existsSync(file)) continue;
+      const ev = readJson<VerificationEvidence>(file);
+      if (hashOf(ev) === event.payload.evidenceHash) return ev;
+    }
+    return undefined;
+  }
+
+  // ---------- 事件日志 ----------
+
+  events(): ForgeEvent[] {
+    const file = this.path('events.jsonl');
+    if (!existsSync(file)) return [];
+    return readFileSync(file, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as ForgeEvent);
+  }
+
+  append(input: EventInput): ForgeEvent {
+    const event = chainEvent(this.events().at(-1), input, new Date().toISOString());
+    appendFileSync(this.path('events.jsonl'), JSON.stringify(event) + '\n');
+    return event;
+  }
+
+  // ---------- OpenSpec ----------
+
+  openspecChangeDir(id: string): string {
+    return join(this.root, 'openspec', 'changes', id);
+  }
+}
+
+const ROLES: Role[] = ['dev', 'product', 'agent'];
+
+export function parseActor(text: string): Actor {
+  const idx = text.lastIndexOf(':');
+  const name = idx > 0 ? text.slice(0, idx).trim() : '';
+  const role = (idx > 0 ? text.slice(idx + 1).trim() : '') as Role;
+  if (!name || !ROLES.includes(role)) {
+    throw new ForgeError('bad_actor', `身份格式应为 <名字>:<${ROLES.join('|')}>，收到「${text}」`);
+  }
+  return { name, role };
+}
