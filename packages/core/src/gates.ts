@@ -11,6 +11,8 @@ import type {
 } from '@specforge/shared';
 import { hashOf } from './hash.ts';
 import { isResolved, missingRoles } from './questions.ts';
+import { pathsIn, type ParsedDesign } from './design.ts';
+import { matchesAny } from './policy.ts';
 import { acIdsOf, questionRefsIn, type ParsedSpec } from './spec.ts';
 
 // 门禁评估都是纯函数：输入当前事实，输出逐项检查结果。
@@ -147,6 +149,60 @@ export function evaluateSpec(inputs: SpecInputs, now: string): GateEvaluation {
   }
 
   return evaluation('G2', checks, { kind: 'content', value: binding }, now);
+}
+
+// ---------------- G3 方案门 ----------------
+
+export interface DesignInputs {
+  design?: ParsedDesign;
+  /** design.md 原文，用于计算绑定哈希 */
+  text: string;
+  acIds: string[];
+  specBinding: string;
+  approvals: Approval[];
+  tier: Tier;
+  protectedPaths: string[];
+}
+
+export function designBinding(inputs: Pick<DesignInputs, 'text' | 'specBinding'>): string {
+  return hashOf({ design: inputs.text, upstream: inputs.specBinding });
+}
+
+/** L 档，或结构变更涉及受保护路径时，方案需要人工审批 */
+export function designNeedsApproval(inputs: Pick<DesignInputs, 'design' | 'tier' | 'protectedPaths'>): { required: boolean; protectedHits: string[] } {
+  const hits = (inputs.design?.changes ?? []).flatMap((c) => pathsIn(c.text).filter((p) => matchesAny(p, inputs.protectedPaths)).map((p) => `${c.id} ${p}`));
+  return { required: inputs.tier === 'L' || hits.length > 0, protectedHits: hits };
+}
+
+export function evaluateDesign(inputs: DesignInputs, now: string): GateEvaluation {
+  const d = inputs.design;
+  const checks: CheckResult[] = [check('exists', '存在 design.md', d ? [] : ['未找到 openspec/changes/<id>/design.md'])];
+  if (d) {
+    checks.push(
+      check('ac-covered', '方案覆盖全部 AC', inputs.acIds.length ? inputs.acIds.filter((id) => !d.acRefs.has(id)).map((id) => `${id} 未在方案中说明`) : ['spec 中没有 AC']),
+    );
+    const unknown = [...d.acRefs].filter((id) => !inputs.acIds.includes(id));
+    checks.push(check('ac-known', '方案引用的 AC 都存在于 spec', unknown.map((id) => `${id} 不在 spec 中`)));
+    const ids = d.changes.map((c) => c.id);
+    const dup = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+    checks.push(
+      check('structure', '有结构变更清单（或明确声明无结构变更）', [
+        ...(!d.hasStructureSection ? ['缺少「## 结构变更」一节'] : []),
+        ...(d.hasStructureSection && !d.changes.length && !d.noneReason ? ['结构变更清单为空；没有结构变更请写「- 无：<原因>」'] : []),
+        ...(d.changes.length && d.noneReason ? ['同时列出了结构变更和「无」'] : []),
+        ...dup.map((id) => `${id} 重复`),
+        ...d.malformed.map((m) => `第 ${m.line} 行格式应为「- [S-n] …」：${m.text}`),
+      ]),
+    );
+  }
+  const binding = designBinding(inputs);
+  const { required, protectedHits } = designNeedsApproval(inputs);
+  if (required) {
+    const approved = inputs.approvals.some((a) => a.target === 'design' && a.hash === binding);
+    const why = inputs.tier === 'L' ? 'L 档' : `涉及受保护路径：${protectedHits.join('、')}`;
+    checks.push(check('approved', `当前版本的方案已获人工审批（${why}）`, approved ? [] : ['当前方案版本未审批（或审批后内容有变化）']));
+  }
+  return evaluation('G3', checks, { kind: 'content', value: binding }, now);
 }
 
 // ---------------- G6 双子门禁 ----------------

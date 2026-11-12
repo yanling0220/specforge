@@ -2,13 +2,16 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import {
   acIdsOf,
+  evaluateDesign,
   evaluateReview,
   evaluateSpec,
   evaluateTwin,
   evaluateUnderstanding,
   evaluateVerification,
+  parseDesign,
   parseSpec,
   understandingBinding,
+  type ParsedDesign,
   type ParsedSpec,
 } from '@specforge/core';
 import { acCoverage, antiCheat, headSha } from '@specforge/runner';
@@ -39,6 +42,20 @@ export function readSpecFacts(store: Store, changeId: string): SpecFacts {
   return { specs, sources };
 }
 
+export interface DesignFacts {
+  path: string;
+  text: string;
+  design?: ParsedDesign;
+}
+
+export function readDesignFacts(store: Store, changeId: string): DesignFacts {
+  const file = join(store.openspecChangeDir(changeId), 'design.md');
+  const path = relative(store.root, file);
+  if (!existsSync(file)) return { path, text: '' };
+  const text = readFileSync(file, 'utf8');
+  return { path, text, design: parseDesign(path, text) };
+}
+
 export type Evaluations = Partial<Record<GateId, GateEvaluation>>;
 
 /** 此刻重新评估全部门禁（不使用任何缓存结果） */
@@ -59,6 +76,22 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
         understandingBinding: understandingBinding(analysis, questions),
         approvals,
         tier: change.tier,
+      },
+      now,
+    );
+  }
+
+  if (change.tier !== 'S' && out.G2) {
+    const design = readDesignFacts(store, change.id);
+    out.G3 = evaluateDesign(
+      {
+        design: design.design,
+        text: design.text,
+        acIds: acIdsOf(facts.specs),
+        specBinding: out.G2.boundTo.value,
+        approvals,
+        tier: change.tier,
+        protectedPaths: config.protectedPaths,
       },
       now,
     );
@@ -89,6 +122,6 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
   return out;
 }
 
-export function specBindingNow(store: Store, state: ChangeState): string | undefined {
-  return evaluateAll(store, state).G2?.boundTo.value;
+export function bindingNow(store: Store, state: ChangeState, gate: 'G2' | 'G3'): string | undefined {
+  return evaluateAll(store, state)[gate]?.boundTo.value;
 }

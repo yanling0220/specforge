@@ -37,7 +37,7 @@ import type {
   Tier,
 } from '@specforge/shared';
 import { cmdAgentAnalyze, cmdAgentReview } from './agent-cmds.ts';
-import { evaluateAll, specBindingNow } from './engine.ts';
+import { bindingNow, evaluateAll } from './engine.ts';
 import { defaultConfig, FORGE_DIR, parseActor, Store, type ChangeState } from './store.ts';
 
 const HELP = `SpecForge CLI（第一期）
@@ -76,6 +76,8 @@ change
 
 规格与收尾
   sf spec approve <id> [--note <说明>]            审批当前版本的 spec（绑定内容哈希）
+  sf design approve <id> [--note <说明>]          审批当前版本的方案（L 档或涉及受保护路径时需要）
+    design.md 约定：正文引用每个 AC；「## 结构变更」逐条 - [S-n] …，无变更写 - 无：<原因>
   sf verify <id>                                  在干净 worktree 中执行验证并记录证据
   sf review <id> --kind agent|human --verdict pass|fail
                [--reviewer <名字>] [--coverage AC-1,AC-2] [--file <审查报告.json>] [--note <说明>]
@@ -228,7 +230,7 @@ function cmdStatus(store: Store, id: string): void {
   const upstream = upstreamGates(change.stage, change.tier).filter((g) => evals[g]?.status !== 'passed');
   if (upstream.length) console.log(`⚠️  上游门禁已失效：${upstream.join(', ')}（需要重新满足后才能继续推进）`);
   console.log();
-  for (const g of ['G1', 'G2', 'G6A', 'G6B', 'G6'] as const) {
+  for (const g of ['G1', 'G2', 'G3', 'G6A', 'G6B', 'G6'] as const) {
     const ev = evals[g];
     if (ev) printGate(ev);
   }
@@ -545,15 +547,16 @@ async function main(): Promise<void> {
     }
     case 'q':
       return cmdQuestion(store, need(sub, '子命令'), need(a1, '<id>'), a2);
-    case 'spec': {
-      if (sub !== 'approve') throw new ForgeError('bad_cmd', `未知命令 sf spec ${sub ?? ''}`);
+    case 'spec':
+    case 'design': {
+      if (sub !== 'approve') throw new ForgeError('bad_cmd', `未知命令 sf ${cmd} ${sub ?? ''}`);
       const id = need(a1, '<id>');
       const actor = store.identity(opts.as);
-      if (actor.role !== 'dev') throw new ForgeError('bad_role', 'spec 审批需要 dev 角色');
-      const hash = specBindingNow(store, store.load(id));
-      if (!hash) throw new ForgeError('no_spec', 'S 档没有 spec 审批');
-      store.mutate(id, actor, 'spec.approved', (s) => ({ ...s, approvals: [...s.approvals, { target: 'spec', hash, actor, at: now(), note: opts.note }] }), () => ({ hash, note: opts.note }));
-      console.log(`已审批当前 spec（hash ${hash.slice(0, 12)}）；spec 或上游分析再有改动，审批即失效`);
+      if (actor.role !== 'dev') throw new ForgeError('bad_role', `${cmd} 审批需要 dev 角色`);
+      const hash = bindingNow(store, store.load(id), cmd === 'spec' ? 'G2' : 'G3');
+      if (!hash) throw new ForgeError('no_target', `S 档没有 ${cmd} 审批`);
+      store.mutate(id, actor, `${cmd}.approved`, (s) => ({ ...s, approvals: [...s.approvals, { target: cmd, hash, actor, at: now(), note: opts.note }] }), () => ({ hash, note: opts.note }));
+      console.log(`已审批当前 ${cmd}（hash ${hash.slice(0, 12)}）；内容或上游再有改动，审批即失效`);
       return;
     }
     case 'verify': {

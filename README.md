@@ -39,6 +39,11 @@ sf status add-bulk-import && sf advance add-bulk-import
 #   openspec/changes/add-bulk-import/specs/<capability>/spec.md
 sf spec approve add-bulk-import && sf advance add-bulk-import
 
+# 技术方案 openspec/changes/<id>/design.md：正文引用每个 AC；
+#   「## 结构变更」逐条 - [S-n] …（无变更写 - 无：<原因>）
+sf design approve add-bulk-import        # 仅 L 档或涉及受保护路径时需要
+sf advance add-bulk-import               # design → implement
+
 # 实现 → 收尾双子门禁
 sf advance add-bulk-import               # implement → closing
 sf verify add-bulk-import                # 引擎在干净 worktree 中重跑验证

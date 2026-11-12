@@ -21,7 +21,7 @@ import {
 import { acIdsOf, ForgeError } from '@specforge/core';
 import { diffStat, fullDiff, headSha, workspaceFingerprint } from '@specforge/runner';
 import type { Actor, AgentProfile, AgentRole, ProjectConfig } from '@specforge/shared';
-import { readSpecFacts } from './engine.ts';
+import { readDesignFacts, readSpecFacts } from './engine.ts';
 import type { Store } from './store.ts';
 
 const MAX_DIFF_CHARS = 150_000;
@@ -206,7 +206,11 @@ export async function cmdAgentReview(store: Store, changeId: string, actor: Acto
     sha,
     baseSha: state.change.baseSha,
     acIds: acIdsOf(facts.specs),
-    sources: facts.sources,
+    // 方案（含结构变更清单）供审查判断“计划外新增”
+    sources: (() => {
+      const d = readDesignFacts(store, changeId);
+      return d.text ? [...facts.sources, { path: d.path, text: d.text }] : facts.sources;
+    })(),
     decisions: state.questions
       .filter((q) => q.status === 'confirmed')
       .map((q) => ({ id: q.id, question: q.question, answer: q.revisions.at(-1)!.text })),
