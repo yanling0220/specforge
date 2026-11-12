@@ -66,7 +66,7 @@ export interface AgentsConfig {
 
 export type Tier = 'S' | 'M' | 'L';
 
-export type Stage = 'analysis' | 'spec' | 'design' | 'implement' | 'closing' | 'delivered';
+export type Stage = 'analysis' | 'spec' | 'design' | 'tasks' | 'implement' | 'closing' | 'delivered';
 
 export interface Change {
   id: string;
@@ -185,7 +185,7 @@ export interface Question {
 
 // ---------- 门禁 ----------
 
-export type GateId = 'G1' | 'G2' | 'G3' | 'G6A' | 'G6B' | 'G6';
+export type GateId = 'G1' | 'G2' | 'G3' | 'G4' | 'G6A' | 'G6B' | 'G6';
 
 export type GateStatus = 'passed' | 'failed' | 'unverified';
 

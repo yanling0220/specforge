@@ -1,18 +1,19 @@
 import type { GateEvaluation, GateId, Stage, Tier } from '@specforge/shared';
 import { ForgeError } from './errors.ts';
 
-// 阶段与出口门禁。G4（tasks）、G5（TDD）在后续任务中加入。
+// 阶段与出口门禁。G5（TDD）在后续任务中加入。
 const EXIT_GATE: Partial<Record<Stage, GateId>> = {
   analysis: 'G1',
   spec: 'G2',
   design: 'G3',
+  tasks: 'G4',
   closing: 'G6',
 };
 
 export function stagesFor(tier: Tier): Stage[] {
   return tier === 'S'
     ? ['analysis', 'implement', 'closing', 'delivered']
-    : ['analysis', 'spec', 'design', 'implement', 'closing', 'delivered'];
+    : ['analysis', 'spec', 'design', 'tasks', 'implement', 'closing', 'delivered'];
 }
 
 /** 离开某阶段前必须仍然有效的门禁：该阶段及其之前所有阶段的出口门禁 */

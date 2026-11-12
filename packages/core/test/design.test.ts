@@ -85,10 +85,10 @@ describe('G3 方案门', () => {
 
 describe('状态机加入 design 阶段', () => {
   const pass = (gate: 'G1' | 'G2' | 'G3') => ({ gate, status: 'passed' as const, checks: [], boundTo: { kind: 'content' as const, value: 'x' }, evaluatedAt: T });
-  it('M 档 spec → design → implement；离开 design 需要 G1、G2、G3', () => {
+  it('M 档 spec → design → tasks；离开 design 需要 G1、G2、G3', () => {
     expect(nextStage('spec', 'M', { G1: pass('G1'), G2: pass('G2') })).toBe('design');
     expect(() => nextStage('design', 'M', { G1: pass('G1'), G2: pass('G2') })).toThrow(/G3/);
-    expect(nextStage('design', 'M', { G1: pass('G1'), G2: pass('G2'), G3: pass('G3') })).toBe('implement');
+    expect(nextStage('design', 'M', { G1: pass('G1'), G2: pass('G2'), G3: pass('G3') })).toBe('tasks');
   });
   it('S 档不经过 design', () => {
     expect(nextStage('analysis', 'S', { G1: pass('G1') })).toBe('implement');

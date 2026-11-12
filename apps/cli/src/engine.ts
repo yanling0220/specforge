@@ -5,11 +5,13 @@ import {
   evaluateDesign,
   evaluateReview,
   evaluateSpec,
+  evaluateTasks,
   evaluateTwin,
   evaluateUnderstanding,
   evaluateVerification,
   parseDesign,
   parseSpec,
+  parseTasks,
   understandingBinding,
   type ParsedDesign,
   type ParsedSpec,
@@ -56,6 +58,11 @@ export function readDesignFacts(store: Store, changeId: string): DesignFacts {
   return { path, text, design: parseDesign(path, text) };
 }
 
+export function readTasksFacts(store: Store, changeId: string) {
+  const file = join(store.openspecChangeDir(changeId), 'tasks.md');
+  return existsSync(file) ? parseTasks(relative(store.root, file), readFileSync(file, 'utf8')) : undefined;
+}
+
 export type Evaluations = Partial<Record<GateId, GateEvaluation>>;
 
 /** 此刻重新评估全部门禁（不使用任何缓存结果） */
@@ -92,6 +99,15 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
         approvals,
         tier: change.tier,
         protectedPaths: config.protectedPaths,
+      },
+      now,
+    );
+    out.G4 = evaluateTasks(
+      {
+        tasks: readTasksFacts(store, change.id),
+        acIds: acIdsOf(facts.specs),
+        structureIds: design.design?.changes.map((c) => c.id) ?? [],
+        designBinding: out.G3.boundTo.value,
       },
       now,
     );

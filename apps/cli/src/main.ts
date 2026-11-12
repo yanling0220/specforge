@@ -78,6 +78,7 @@ change
   sf spec approve <id> [--note <说明>]            审批当前版本的 spec（绑定内容哈希）
   sf design approve <id> [--note <说明>]          审批当前版本的方案（L 档或涉及受保护路径时需要）
     design.md 约定：正文引用每个 AC；「## 结构变更」逐条 - [S-n] …，无变更写 - 无：<原因>
+    tasks.md 约定：- [ ] T-1 标题（AC-1, S-1）依赖 T-0；勾选进度不影响 G4
   sf verify <id>                                  在干净 worktree 中执行验证并记录证据
   sf review <id> --kind agent|human --verdict pass|fail
                [--reviewer <名字>] [--coverage AC-1,AC-2] [--file <审查报告.json>] [--note <说明>]
@@ -230,7 +231,7 @@ function cmdStatus(store: Store, id: string): void {
   const upstream = upstreamGates(change.stage, change.tier).filter((g) => evals[g]?.status !== 'passed');
   if (upstream.length) console.log(`⚠️  上游门禁已失效：${upstream.join(', ')}（需要重新满足后才能继续推进）`);
   console.log();
-  for (const g of ['G1', 'G2', 'G3', 'G6A', 'G6B', 'G6'] as const) {
+  for (const g of ['G1', 'G2', 'G3', 'G4', 'G6A', 'G6B', 'G6'] as const) {
     const ev = evals[g];
     if (ev) printGate(ev);
   }

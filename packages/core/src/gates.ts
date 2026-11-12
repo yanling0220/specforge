@@ -13,6 +13,7 @@ import { hashOf } from './hash.ts';
 import { isResolved, missingRoles } from './questions.ts';
 import { pathsIn, type ParsedDesign } from './design.ts';
 import { matchesAny } from './policy.ts';
+import { findCycles, taskStructure, type ParsedTasks } from './tasks.ts';
 import { acIdsOf, questionRefsIn, type ParsedSpec } from './spec.ts';
 
 // 门禁评估都是纯函数：输入当前事实，输出逐项检查结果。
@@ -203,6 +204,55 @@ export function evaluateDesign(inputs: DesignInputs, now: string): GateEvaluatio
     checks.push(check('approved', `当前版本的方案已获人工审批（${why}）`, approved ? [] : ['当前方案版本未审批（或审批后内容有变化）']));
   }
   return evaluation('G3', checks, { kind: 'content', value: binding }, now);
+}
+
+// ---------------- G4 任务门 ----------------
+
+export interface TasksInputs {
+  tasks?: ParsedTasks;
+  acIds: string[];
+  /** design.md 中的结构变更编号 */
+  structureIds: string[];
+  designBinding: string;
+}
+
+/** 绑定任务结构而非原文：勾选进度不会让 G4 失效 */
+export function tasksBinding(inputs: Pick<TasksInputs, 'tasks' | 'designBinding'>): string {
+  return hashOf({ tasks: inputs.tasks ? taskStructure(inputs.tasks) : null, upstream: inputs.designBinding });
+}
+
+export function evaluateTasks(inputs: TasksInputs, now: string): GateEvaluation {
+  const t = inputs.tasks;
+  const checks: CheckResult[] = [check('exists', '存在 tasks.md 且至少有一个任务', t?.tasks.length ? [] : ['未找到任务（格式：- [ ] T-1 标题（AC-1, S-1）依赖 T-0）'])];
+  if (t?.tasks.length) {
+    const ids = t.tasks.map((x) => x.id);
+    const dup = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+    checks.push(
+      check('format', '每个任务都有唯一的 T-n 编号', [
+        ...dup.map((id) => `${id} 重复`),
+        ...t.malformed.map((m) => `第 ${m.line} 行缺少 T-n 编号：${m.text}`),
+      ]),
+    );
+    checks.push(check('task-ac', '每个任务都关联至少一个 AC', t.tasks.filter((x) => !x.acRefs.length).map((x) => `${x.id} 没有关联 AC`)));
+    checks.push(
+      check('refs-known', '引用的 AC / 结构变更都存在', [
+        ...t.tasks.flatMap((x) => x.acRefs.filter((a) => !inputs.acIds.includes(a)).map((a) => `${x.id} 引用了不存在的 ${a}`)),
+        ...t.tasks.flatMap((x) => x.structureRefs.filter((s) => !inputs.structureIds.includes(s)).map((s) => `${x.id} 引用了不存在的 ${s}`)),
+      ]),
+    );
+    const coveredAc = new Set(t.tasks.flatMap((x) => x.acRefs));
+    checks.push(check('ac-covered', '每个 AC 都有任务负责', inputs.acIds.filter((a) => !coveredAc.has(a)).map((a) => `${a} 没有任务`)));
+    const coveredS = new Set(t.tasks.flatMap((x) => x.structureRefs));
+    checks.push(check('structure-covered', '每个结构变更都有任务负责', inputs.structureIds.filter((s) => !coveredS.has(s)).map((s) => `${s} 没有任务`)));
+    checks.push(
+      check('deps', '依赖都存在且无环', [
+        ...t.tasks.flatMap((x) => x.dependsOn.filter((d) => d === x.id).map(() => `${x.id} 依赖自己`)),
+        ...t.tasks.flatMap((x) => x.dependsOn.filter((d) => d !== x.id && !ids.includes(d)).map((d) => `${x.id} 依赖不存在的 ${d}`)),
+        ...findCycles(t.tasks.map((x) => ({ ...x, dependsOn: x.dependsOn.filter((d) => d !== x.id) }))).map((c) => `依赖环：${c.join(' → ')}`),
+      ]),
+    );
+  }
+  return evaluation('G4', checks, { kind: 'content', value: tasksBinding(inputs) }, now);
 }
 
 // ---------------- G6 双子门禁 ----------------

@@ -8,3 +8,4 @@ export * from './policy.ts';
 export * from './questions.ts';
 export * from './spec.ts';
 export * from './design.ts';
+export * from './tasks.ts';
