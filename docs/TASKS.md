@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-12 · Claude Code（Opus 5.5） · T2.6 完成
+最后更新：2026-11-12 · Claude Code（Opus 5.5） · T2.6v 进行到一半（当日收工）
 
 ---
 
 ## 当前快照
 
-- 测试：80 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
+- 测试：81 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T2.6v`**（真实模型跑实现，需用户同意费用）或 `T2.7`（G5 TDD 门，纯代码）；`T2.3c` 需要 Codex 登录
+- **下一个建议任务：继续 `T2.6v`**（跑 T-2 及收尾，费用约数万 token，用户已同意本任务的真实运行）；之后是 `T2.7`（G5 TDD 门，纯代码）
 
 ---
 
@@ -41,7 +41,7 @@
 | T2.4 | G3 方案门：解析 `design.md`；必须覆盖全部 AC、不得引用不存在的 AC；必须有「## 结构变更」清单（`- [S-n] …` 或 `- 无：<原因>`）；L 档或结构变更涉及受保护路径时需人工审批（绑定 design + spec 哈希） | done | T1.3 | `packages/core/test/design.test.ts`；状态机加入 `design` 阶段；`sf design approve`；审查 agent 读取结构变更清单判断计划外新增；CLI 端到端演示通过 |
 | T2.5 | G4 任务门：解析 `tasks.md`（`- [ ] T-n 标题（AC-n, S-n）依赖 T-m`）；每个任务关联 AC；引用必须存在；每个 AC 与结构变更都有任务负责；依赖存在、无自依赖、无环；绑定任务结构而非原文（勾选进度不使 G4 失效） | done | T2.4 | `packages/core/test/tasks.test.ts`；状态机加入 `tasks` 阶段；`executionOrder` 供 T2.6 使用；CLI 端到端演示通过 |
 | T2.6 | 可写的实现 agent `sf agent implement [--task T-n]`：独立 worktree；写文件执行时拦截（Claude canUseTool / openai-compatible 写工具）+ 引擎事后路径校验（`implementPolicy`：禁 openspec/、.specforge/、.git/、受保护路径）；主工作区指纹兜底；agent 自己的提交会被收拢；引擎勾选任务、提交（带 SpecForge-* trailer）、fast-forward 合入；`implement.committed / rejected / blocked` 事件 | done | T2.5 | `apps/cli/test/implement.test.ts`（8 个场景）、`packages/agents/test/implementer.test.ts` |
-| T2.6v | 用真实模型跑一次 `sf agent implement`（建议 DeepSeek，示例项目） | verify | T2.6 | 需要用户同意费用；记录到实测记录 |
+| T2.6v | 用真实模型跑 `sf agent implement`（DeepSeek，示例项目 `/tmp/sf-t26v`） | verify（进行到一半） | T2.6 | **T-1 已完成**：DeepSeek 实现并由引擎提交 `5d4f4d0`，测试 3/3 通过，无越界；发现并修复符号链接路径误拦截。**剩余**：用修复后的版本跑 T-2，再 `sf advance` → `sf verify` → `sf agent review` → 签字交付。`/tmp` 目录可能已被清理，清理了就运行 `bash docs/demo-t26v.sh` 重建（会重建到 T-1 之前的状态） |
 | T2.7 | G5 TDD 门：引擎先确认新测试失败（RED），实现后通过（GREEN），绑定任务尝试与 commit | todo | T2.6 | runner 支持只跑指定测试；测试覆盖"先红后绿"和"测试一开始就通过"两种情况 |
 | T2.8 | 生成类 agent：spec-writer（proposal→spec）、architect（→design）、planner（→tasks），只能写 `openspec/changes/<id>/**` | todo | T2.4, T2.5 | 生成结果仍需过 G2/G3/G4 |
 | T2.9 | 问题回流：所有阶段的 agent 都能 `raise_question`；新阻塞问题使 G1 失效并暂停相关任务 | todo | T2.6 | 测试：实现阶段提问后 `advance` 被拦截 |
@@ -98,6 +98,12 @@
 
 T2.3v 分类结果：Q-1 范围、Q-3 用户与角色（能否导入 admin）、Q-4/Q-5 业务规则、Q-6 交互体验 → dev+product ✅；Q-2 CSV 格式（输入与校验）、Q-7 行数上限（边界值）、Q-8 是否做审计（可观测性）→ dev。Q-2 偏技术，可接受；Q-7、Q-8 属业务决策，归类不当 → 结论：prompt 约束显著改善但不可靠，需要人工兜底（T2.3w）。
 
+| T2.6v 实现 T-1 | `deepseek` | 成功：新增 `src/import.js` 与 `test/import.test.js`，引擎提交 `5d4f4d0`，测试 3/3 | 13 | 7K+4K | 64s |
+
+T2.6v 发现：模型用 `/private/var/...` 写 worktree 文件被误判为"工作目录之外"（macOS `/var` 是符号链接）→ `writeDenial` 改为先解析符号链接，已加回归测试。
+
+T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`（同第一次演示）；change `bulk-import`（M 档），spec 含 AC-1 导入合法文件、AC-2 部分失败（行号+原因）、AC-3 非管理员拒绝；design 结构变更 S-1 `src/import.js`、S-2 `test/import.test.js`；tasks：T-1（AC-1, AC-2, S-1, S-2）、T-2（AC-3）依赖 T-1；agents.default.backend = deepseek。
+
 **发现**：第一次分析把"CSV 列定义 / 能否创建 admin"归为"输入与校验"（只需 dev 确认），绕过了产品核对 → 已在 `cd9ece1` 修复（分类限定在确认策略内 + prompt 规则），待 T2.3v 确认。
 
 ---
@@ -114,4 +120,5 @@ T2.3v 分类结果：Q-1 范围、Q-3 用户与角色（能否导入 admin）、
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.3v, T2.3w · DeepSeek 干净仓库实测（部分通过）；新增追加确认角色命令 · `0e66087`
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.4 · G3 方案门、design 阶段、`sf design approve` · `a3f30a4`
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.5 · G4 任务门、tasks 阶段 · `536f636`
-- 2026-11-12 · Claude Code (Opus 5.5) · T2.6 · 可写实现 agent（worktree 隔离、双重路径校验、引擎提交） · （本次提交）
+- 2026-11-12 · Claude Code (Opus 5.5) · T2.6 · 可写实现 agent（worktree 隔离、双重路径校验、引擎提交） · `1ebb54a`
+- 2026-11-12 · Claude Code (Opus 5.5) · T2.6v · DeepSeek 实现 T-1 成功；修复符号链接路径误拦截；收工，T-2 待继续 · （本次提交）

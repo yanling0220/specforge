@@ -1,5 +1,6 @@
 import { checkPathPolicy, type PathPolicy } from '@specforge/core';
-import { relative as relativePath, resolve as resolvePath, sep as sepChar } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { basename as basenamePath, dirname as dirnamePath, join as joinPath, relative as relativePath, resolve as resolvePath, sep as sepChar } from 'node:path';
 import type { AgentProfile, AgentRole } from '@specforge/shared';
 import { z as zImpl, type z } from 'zod';
 
@@ -90,11 +91,25 @@ export function toolJsonSchema(t: PlatformTool): Record<string, unknown> {
 
 /** 可写角色检查目标路径：必须在 cwd 内，且符合路径策略。返回拒绝原因，允许时返回 undefined */
 export function writeDenial(cwd: string, filePath: string, policy: PathPolicy | undefined): string | undefined {
-  const root = resolvePath(cwd);
-  const abs = resolvePath(root, filePath);
+  // 先解析符号链接（如 macOS 的 /var → /private/var），否则同一位置的两种写法会被误判
+  const root = realOrSelf(resolvePath(cwd));
+  const abs = realOrSelf(resolvePath(cwd, filePath));
   if (abs !== root && !abs.startsWith(root + sepChar)) return `路径在工作目录之外：${filePath}`;
   const rel = relativePath(root, abs).split(sepChar).join('/');
   if (!policy) return '没有配置路径策略';
   const [violation] = checkPathPolicy([rel], policy);
   return violation ? `${rel}：${violation.reason}` : undefined;
+}
+
+/** 解析符号链接；路径尚不存在时，解析最近的已存在祖先目录再拼回剩余部分 */
+function realOrSelf(p: string): string {
+  let cur = p;
+  const rest: string[] = [];
+  while (!existsSync(cur)) {
+    const parent = dirnamePath(cur);
+    if (parent === cur) return p;
+    rest.unshift(basenamePath(cur));
+    cur = parent;
+  }
+  return joinPath(realpathSync(cur), ...rest);
 }

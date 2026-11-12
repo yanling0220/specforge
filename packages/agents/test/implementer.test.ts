@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -18,6 +18,17 @@ describe('实现阶段的路径约束', () => {
     expect(writeDenial('/w', 'openspec/changes/c/spec.md', policy)).toMatch(/禁止路径/);
     expect(writeDenial('/w', '.specforge/events.jsonl', policy)).toMatch(/禁止路径/);
     expect(writeDenial('/w', 'vitest.config.ts', policy)).toMatch(/禁止路径/);
+  });
+
+  it('同一位置经符号链接的两种写法都能识别（macOS /var → /private/var）', () => {
+    const real = mkdtempSync(join(tmpdir(), 'sf-real-'));
+    dirs.push(real);
+    const link = join(tmpdir(), `sf-link-${Date.now()}`);
+    symlinkSync(real, link);
+    dirs.push(link);
+    expect(writeDenial(link, join(real, 'src/new/a.ts'), policy)).toBeUndefined();
+    expect(writeDenial(real, join(link, 'src/a.ts'), policy)).toBeUndefined();
+    expect(writeDenial(link, join(link, '../escape.ts'), policy)).toMatch(/工作目录之外/);
   });
 
   it('Claude 可写模式：写文件逐次检查路径，Bash 放行，其他工具拒绝', async () => {
