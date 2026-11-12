@@ -8,6 +8,7 @@ import type { AgentAdapter } from './types.ts';
 const ROLE_DEFAULTS: Record<AgentRole, Partial<AgentProfile>> = {
   analyst: { effort: 'high', maxTurns: 60 },
   reviewer: { effort: 'high', maxTurns: 40 },
+  implementer: { effort: 'high', maxTurns: 120 },
 };
 
 /** 各后端的默认连接参数；用户配置优先 */

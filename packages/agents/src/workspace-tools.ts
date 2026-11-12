@@ -1,8 +1,10 @@
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import { globToRegExp } from '@specforge/core';
-import { defineTool, type PlatformTool } from './types.ts';
+import { globToRegExp, type PathPolicy } from '@specforge/core';
+import { defineTool, writeDenial, type PlatformTool } from './types.ts';
 
 // 引擎自己实现的只读工具，给没有内置文件工具的后端（openai-compatible）使用。
 // 所有路径都限制在项目目录内，且不读 .git 与依赖目录。
@@ -103,6 +105,56 @@ export function workspaceTools(root: string): PlatformTool[] {
           if (hits.length >= MAX_MATCHES) break;
         }
         return hits.length ? hits.join('\n') + (hits.length >= MAX_MATCHES ? '\n…（结果过多已截断）' : '') : '（没有匹配）';
+      },
+    }),
+  ];
+}
+
+const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
+const COMMAND_TAIL = 20_000;
+
+/** 可写角色的工具：写文件 / 替换片段受路径策略约束；命令在 cwd 内执行（越界写入由引擎事后校验兜底） */
+export function writableWorkspaceTools(root: string, policy: PathPolicy): PlatformTool[] {
+  const target = (path: string) => {
+    const denial = writeDenial(realpathSync(root), path, policy);
+    if (denial) throw new Error(`不允许写入：${denial}`);
+    return join(realpathSync(root), path);
+  };
+  return [
+    defineTool({
+      name: 'write_file',
+      description: '创建或覆盖项目内的文件（整文件内容）。不能写 openspec/、.specforge/ 和受保护路径。',
+      shape: { path: z.string(), content: z.string() },
+      handler: ({ path, content }) => {
+        const abs = target(path);
+        mkdirSync(dirname(abs), { recursive: true });
+        writeFileSync(abs, content);
+        return `已写入 ${path}（${content.split('\n').length} 行）`;
+      },
+    }),
+    defineTool({
+      name: 'replace_in_file',
+      description: '把文件中唯一出现的 old 片段替换为 new。old 必须在文件中恰好出现一次。',
+      shape: { path: z.string(), old: z.string().min(1), new: z.string() },
+      handler: ({ path, old, new: replacement }) => {
+        const abs = target(path);
+        if (!existsSync(abs)) throw new Error(`文件不存在：${path}`);
+        const text = readFileSync(abs, 'utf8');
+        const count = text.split(old).length - 1;
+        if (count !== 1) throw new Error(`old 片段出现了 ${count} 次，必须恰好 1 次`);
+        writeFileSync(abs, text.replace(old, () => replacement));
+        return `已修改 ${path}`;
+      },
+    }),
+    defineTool({
+      name: 'run_command',
+      description: '在项目根目录执行 shell 命令（例如运行测试），返回退出码和输出末尾。超时 10 分钟。',
+      shape: { command: z.string().min(1) },
+      handler: ({ command }) => {
+        const res = spawnSync('sh', ['-c', command], { cwd: root, encoding: 'utf8', timeout: COMMAND_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, CI: '1' } });
+        const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+        const timedOut = (res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
+        return `退出码 ${timedOut ? '超时' : res.status}\n${out.slice(-COMMAND_TAIL)}`;
       },
     }),
   ];

@@ -46,6 +46,7 @@ sf advance add-bulk-import               # design → tasks
 
 # 任务 openspec/changes/<id>/tasks.md：- [ ] T-1 标题（AC-1, S-1）依赖 T-0
 sf advance add-bulk-import               # tasks → implement（勾选进度不影响 G4）
+sf agent implement add-bulk-import       # 逐个实现任务：独立 worktree，越界改动整体丢弃，引擎提交并合入
 
 # 实现 → 收尾双子门禁
 sf advance add-bulk-import               # implement → closing

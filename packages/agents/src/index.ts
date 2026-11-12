@@ -8,3 +8,4 @@ export * from './registry.ts';
 export * from './reviewer.ts';
 export * from './types.ts';
 export * from './workspace-tools.ts';
+export * from './implementer.ts';

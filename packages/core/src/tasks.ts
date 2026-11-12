@@ -97,3 +97,19 @@ export function executionOrder(tasks: Pick<ParsedTask, 'id' | 'dependsOn'>[]): s
   }
   return order;
 }
+
+/** 把指定任务勾选为完成；找不到时抛错 */
+export function markTaskDone(text: string, id: string): string {
+  const re = new RegExp(`^(\\s*[-*]\\s+)\\[ \\](\\s+${id}\\b)`, 'm');
+  if (!re.test(text)) {
+    if (new RegExp(`^\\s*[-*]\\s+\\[[xX]\\]\\s+${id}\\b`, 'm').test(text)) return text;
+    throw new Error(`tasks.md 中找不到未完成的任务 ${id}`);
+  }
+  return text.replace(re, '$1[x]$2');
+}
+
+/** 下一个可做的任务：未完成、依赖都已完成，按文档顺序取第一个 */
+export function nextTask(parsed: ParsedTasks): ParsedTask | undefined {
+  const done = new Set(parsed.tasks.filter((t) => t.done).map((t) => t.id));
+  return parsed.tasks.find((t) => !t.done && t.dependsOn.every((d) => done.has(d)));
+}

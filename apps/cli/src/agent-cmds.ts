@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   adapterFor,
@@ -7,7 +7,11 @@ import {
   ANALYST_SYSTEM_PROMPT,
   applyAnalysisDraft,
   emptyAnalysisDraft,
+  emptyImplementDraft,
   emptyReviewDraft,
+  IMPLEMENTER_SYSTEM_PROMPT,
+  implementerPrompt,
+  implementerTools,
   resolveProfile,
   reviewerPrompt,
   reviewerTools,
@@ -18,10 +22,20 @@ import {
   type AgentRunResult,
   type AgentRunSpec,
 } from '@specforge/agents';
-import { acIdsOf, ForgeError } from '@specforge/core';
-import { diffStat, fullDiff, headSha, workspaceFingerprint } from '@specforge/runner';
+import { acIdsOf, checkPathPolicy, ForgeError, implementPolicy, markTaskDone, nextTask, type PathPolicy } from '@specforge/core';
+import {
+  createWorktree,
+  diffStat,
+  fullDiff,
+  git,
+  headSha,
+  isDirty,
+  removeWorktree,
+  stageAllChanges,
+  workspaceFingerprint,
+} from '@specforge/runner';
 import type { Actor, AgentProfile, AgentRole, ProjectConfig } from '@specforge/shared';
-import { readDesignFacts, readSpecFacts } from './engine.ts';
+import { readDesignFacts, readSpecFacts, readTasksFacts } from './engine.ts';
 import type { Store } from './store.ts';
 
 const MAX_DIFF_CHARS = 150_000;
@@ -59,13 +73,21 @@ function printer(verbose: boolean, log: (l: string) => void) {
  * 运行只读 agent，并做事后校验（设计文档 5 ④）：运行前后工作区必须完全一致，
  * 否则丢弃全部产出。无论成败都写一条 agent.run 事件。
  */
+interface RunPlace {
+  /** agent 的工作目录；默认是项目根目录 */
+  cwd?: string;
+  readOnly: boolean;
+  pathPolicy?: PathPolicy;
+}
+
 async function runReadOnly(
   store: Store,
   changeId: string,
   actor: Actor,
   role: AgentRole,
-  build: (profile: AgentProfile) => Omit<AgentRunSpec, 'profile' | 'cwd' | 'readOnly' | 'toolNamespace' | 'onEvent'>,
+  build: (profile: AgentProfile) => Omit<AgentRunSpec, 'profile' | 'cwd' | 'readOnly' | 'toolNamespace' | 'onEvent' | 'pathPolicy'>,
   opts: AgentCmdOptions,
+  place: RunPlace = { readOnly: true },
 ): Promise<{ result: AgentRunResult; profile: AgentProfile }> {
   const log = opts.log ?? console.log;
   const profile = resolveProfile(role, store.config().agents, opts.override);
@@ -73,21 +95,30 @@ async function runReadOnly(
   const before = workspaceFingerprint(store.root);
   log(`启动 ${role} agent（${adapter.backend}${profile.model ? ` · ${profile.model}` : ''}${profile.provider ? ` · ${profile.provider}` : ''} · effort ${profile.effort ?? '默认'}）…`);
   let result: AgentRunResult;
+  const built = build(profile);
   try {
     result = await adapter.run({
-      ...build(profile),
+      ...built,
       profile,
-      cwd: store.root,
-      readOnly: true,
+      cwd: place.cwd ?? store.root,
+      readOnly: place.readOnly,
+      pathPolicy: place.pathPolicy,
       toolNamespace: 'specforge',
       onEvent: printer(opts.verbose, log),
     });
   } catch (e) {
     result = { ok: false, error: (e as Error).message, backend: adapter.backend, turns: 0, costUsd: 0, durationMs: 0, deniedTools: [] };
   }
+  if (!result.ok && !result.error && built.isComplete && !built.isComplete()) result.error = 'agent 结束时没有完整提交结果';
   const tampered = workspaceFingerprint(store.root) !== before;
   if (tampered) {
-    result = { ...result, ok: false, error: '只读 agent 运行后工作区发生了变化，产出已丢弃，请检查工作区' };
+    result = {
+      ...result,
+      ok: false,
+      error: place.cwd
+        ? 'agent 改动了 worktree 之外的项目工作区，产出已丢弃，请检查项目工作区'
+        : '只读 agent 运行后工作区发生了变化，产出已丢弃，请检查工作区',
+    };
   }
   store.append({
     type: 'agent.run',
@@ -243,4 +274,111 @@ export async function cmdAgentReview(store: Store, changeId: string, actor: Acto
     log(`  ${f.severity === 'blocking' ? '🔴' : '⚪'} ${f.anchor ? `[${f.anchor}] ` : ''}${f.kind ? `(${f.kind}) ` : ''}${f.text}`);
   }
   if (record.note) log(`总结：${record.note}`);
+}
+
+export async function cmdAgentImplement(store: Store, changeId: string, actor: Actor, opts: AgentCmdOptions & { taskId?: string }): Promise<void> {
+  const log = opts.log ?? console.log;
+  const state = store.load(changeId);
+  const config = store.config();
+  if (state.change.stage !== 'implement') throw new ForgeError('bad_stage', `实现在 implement 阶段进行，当前是 ${state.change.stage}`);
+  if (isDirty(store.root)) {
+    throw new ForgeError('dirty', '项目工作区有未提交的改动（.specforge/ 除外），请先提交：实现在独立 worktree 中进行，并以 fast-forward 合入');
+  }
+  const tasks = readTasksFacts(store, changeId);
+  if (!tasks?.tasks.length) throw new ForgeError('no_tasks', `openspec/changes/${changeId}/tasks.md 中没有任务`);
+  let task;
+  if (opts.taskId) {
+    task = tasks.tasks.find((t) => t.id === opts.taskId);
+    if (!task) throw new ForgeError('not_found', `任务 ${opts.taskId} 不存在`);
+    if (task.done) throw new ForgeError('done', `任务 ${task.id} 已完成`);
+    const pending = task.dependsOn.filter((d) => !tasks.tasks.find((t) => t.id === d)?.done);
+    if (pending.length) throw new ForgeError('deps', `任务 ${task.id} 的依赖尚未完成：${pending.join(', ')}`);
+  } else {
+    task = nextTask(tasks);
+    if (!task) throw new ForgeError('no_task', '没有可做的任务（全部完成，或剩余任务的依赖未完成）');
+  }
+
+  const facts = readSpecFacts(store, changeId);
+  const design = readDesignFacts(store, changeId);
+  const tasksPath = `openspec/changes/${changeId}/tasks.md`;
+  const policy = implementPolicy(config.protectedPaths);
+  const ctx = {
+    changeId,
+    title: state.change.title,
+    task: { id: task.id, title: task.title, acRefs: task.acRefs, structureRefs: task.structureRefs },
+    sources: [
+      ...facts.sources,
+      ...(design.text ? [{ path: design.path, text: design.text }] : []),
+      { path: tasksPath, text: readFileSync(join(store.root, tasksPath), 'utf8') },
+    ],
+    decisions: state.questions
+      .filter((q) => q.status === 'confirmed')
+      .map((q) => ({ id: q.id, question: q.question, answer: q.revisions.at(-1)!.text })),
+    verifyCommands: config.verify,
+    forbidden: policy.forbidden,
+    conventions: readConventions(store.root),
+  };
+
+  const base = headSha(store.root);
+  const wt = createWorktree(store.root, base);
+  const draft = emptyImplementDraft();
+  const reject = (type: string, reason: string, extra: Record<string, unknown> = {}): never => {
+    store.append({ type, actor, changeId, payload: { taskId: task.id, base, reason, ...extra } });
+    throw new ForgeError('implement_rejected', `任务 ${task.id} 的改动未被接受：${reason}`);
+  };
+  try {
+    log(`实现任务 ${task.id}：${task.title}（worktree ${wt}）`);
+    const { result, profile } = await runReadOnly(
+      store,
+      changeId,
+      actor,
+      'implementer',
+      () => ({
+        role: 'implementer',
+        systemPrompt: IMPLEMENTER_SYSTEM_PROMPT,
+        prompt: implementerPrompt(ctx),
+        tools: implementerTools(draft, ctx),
+        isComplete: () => draft.finished || !!draft.blocked,
+        reset: () => Object.assign(draft, emptyImplementDraft()),
+      }),
+      opts,
+      { cwd: wt, readOnly: false, pathPolicy: policy },
+    );
+    if (draft.blocked) reject('implement.blocked', `agent 报告阻塞：${draft.blocked}`);
+    if (headSha(store.root) !== base) reject('implement.rejected', '实现期间项目 HEAD 发生了变化');
+
+    const files = stageAllChanges(wt, base);
+    if (!files.length) reject('implement.rejected', 'agent 没有产生任何改动');
+    const violations = checkPathPolicy(files, policy);
+    if (violations.length) {
+      reject('implement.rejected', `改动越界：${violations.map((v) => `${v.path}（${v.reason}）`).join('；')}`, { files, violations });
+    }
+
+    // 引擎勾选任务并提交（任务清单属于 openspec/，agent 无权修改）
+    const wtTasks = join(wt, tasksPath);
+    writeFileSync(wtTasks, markTaskDone(readFileSync(wtTasks, 'utf8'), task.id));
+    git(wt, ['add', tasksPath]);
+    const agent = agentActor('implementer', result, profile);
+    git(wt, [
+      'commit',
+      '-q',
+      '-m',
+      `${task.id}: ${task.title}\n\n${draft.summary ?? ''}\n\nSpecForge-Change: ${changeId}\nSpecForge-Task: ${task.id}\nSpecForge-Agent: ${agent.name}`,
+    ]);
+    const sha = headSha(wt);
+    git(store.root, ['merge', '--ff-only', '-q', sha]);
+    store.append({
+      type: 'implement.committed',
+      actor: agent,
+      changeId,
+      payload: { taskId: task.id, base, sha, files, summary: draft.summary, testsAdded: draft.testsAdded, sessionId: result.sessionId },
+    });
+    log(`✓ 任务 ${task.id} 已提交 ${sha.slice(0, 7)}（${files.length} 个文件）`);
+    for (const f of files) log(`  ${f}`);
+    if (draft.summary) log(`总结：${draft.summary}`);
+    const next = nextTask(readTasksFacts(store, changeId)!);
+    log(next ? `下一个任务：${next.id} ${next.title}` : '全部任务已完成，可以 sf advance 进入收尾');
+  } finally {
+    removeWorktree(store.root, wt);
+  }
 }

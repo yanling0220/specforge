@@ -1,4 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 export function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, {
@@ -59,4 +62,28 @@ export function diffStat(cwd: string, from: string, to: string): string {
 
 export function fullDiff(cwd: string, from: string, to: string): string {
   return git(cwd, ['diff', `${from}..${to}`]);
+}
+
+/** 在临时目录创建指向 sha 的分离 worktree */
+export function createWorktree(repo: string, sha: string, prefix = 'specforge-wt-'): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  git(repo, ['worktree', 'add', '--detach', dir, sha]);
+  return dir;
+}
+
+export function removeWorktree(repo: string, dir: string): void {
+  gitTry(repo, ['worktree', 'remove', '--force', dir]);
+  rmSync(dir, { recursive: true, force: true });
+  gitTry(repo, ['worktree', 'prune']);
+}
+
+/**
+ * 把 worktree 中相对 base 的全部改动（含 agent 自己的提交、未跟踪文件）放进暂存区，
+ * 返回改动的文件列表。HEAD 会被软重置回 base。
+ */
+export function stageAllChanges(dir: string, base: string): string[] {
+  git(dir, ['reset', '--soft', base]);
+  git(dir, ['add', '-A']);
+  const out = git(dir, ['diff', '--cached', '--name-only', base]);
+  return out ? out.split('\n') : [];
 }

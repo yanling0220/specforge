@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-12 · Claude Code（Opus 5.5） · T2.5 完成
+最后更新：2026-11-12 · Claude Code（Opus 5.5） · T2.6 完成
 
 ---
 
 ## 当前快照
 
-- 测试：67 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
+- 测试：80 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T2.6`**（可写的实现 agent；单元测试用假后端，真实运行需用户同意费用）；`T2.3c` 需要 Codex 登录，可穿插
+- **下一个建议任务：`T2.6v`**（真实模型跑实现，需用户同意费用）或 `T2.7`（G5 TDD 门，纯代码）；`T2.3c` 需要 Codex 登录
 
 ---
 
@@ -40,7 +40,8 @@
 | T2.3c | Codex 后端实测 | todo | T2.3 | 需要 Codex 登录；跑一次 `sf agent review --backend codex` 成功写入审查记录 |
 | T2.4 | G3 方案门：解析 `design.md`；必须覆盖全部 AC、不得引用不存在的 AC；必须有「## 结构变更」清单（`- [S-n] …` 或 `- 无：<原因>`）；L 档或结构变更涉及受保护路径时需人工审批（绑定 design + spec 哈希） | done | T1.3 | `packages/core/test/design.test.ts`；状态机加入 `design` 阶段；`sf design approve`；审查 agent 读取结构变更清单判断计划外新增；CLI 端到端演示通过 |
 | T2.5 | G4 任务门：解析 `tasks.md`（`- [ ] T-n 标题（AC-n, S-n）依赖 T-m`）；每个任务关联 AC；引用必须存在；每个 AC 与结构变更都有任务负责；依赖存在、无自依赖、无环；绑定任务结构而非原文（勾选进度不使 G4 失效） | done | T2.4 | `packages/core/test/tasks.test.ts`；状态机加入 `tasks` 阶段；`executionOrder` 供 T2.6 使用；CLI 端到端演示通过 |
-| T2.6 | 可写的实现 agent：按任务实现；每轮结束用已有的 `checkPathPolicy` 做事后路径校验，越界即回滚拒收；禁止改 spec 与受保护路径 | todo | T2.5 | 测试：越界写入被回滚并记录事件 |
+| T2.6 | 可写的实现 agent `sf agent implement [--task T-n]`：独立 worktree；写文件执行时拦截（Claude canUseTool / openai-compatible 写工具）+ 引擎事后路径校验（`implementPolicy`：禁 openspec/、.specforge/、.git/、受保护路径）；主工作区指纹兜底；agent 自己的提交会被收拢；引擎勾选任务、提交（带 SpecForge-* trailer）、fast-forward 合入；`implement.committed / rejected / blocked` 事件 | done | T2.5 | `apps/cli/test/implement.test.ts`（8 个场景）、`packages/agents/test/implementer.test.ts` |
+| T2.6v | 用真实模型跑一次 `sf agent implement`（建议 DeepSeek，示例项目） | verify | T2.6 | 需要用户同意费用；记录到实测记录 |
 | T2.7 | G5 TDD 门：引擎先确认新测试失败（RED），实现后通过（GREEN），绑定任务尝试与 commit | todo | T2.6 | runner 支持只跑指定测试；测试覆盖"先红后绿"和"测试一开始就通过"两种情况 |
 | T2.8 | 生成类 agent：spec-writer（proposal→spec）、architect（→design）、planner（→tasks），只能写 `openspec/changes/<id>/**` | todo | T2.4, T2.5 | 生成结果仍需过 G2/G3/G4 |
 | T2.9 | 问题回流：所有阶段的 agent 都能 `raise_question`；新阻塞问题使 G1 失效并暂停相关任务 | todo | T2.6 | 测试：实现阶段提问后 `advance` 被拦截 |
@@ -77,6 +78,7 @@
 | 身份自行声明，无登录 | 任何人都能以产品身份确认 | T4.1 |
 | 兼容接口（DeepSeek 等）不返回费用，`--budget` 不生效 | 只能看 token 数 | 可加按 token 的上限 |
 | AC 列表读工作区，AC 覆盖读 commit | 未提交的 spec 改动会影响 G6 判断 | T2.10 |
+| 实现 agent 的 Bash / run_command 能执行任意命令（如联网、写 worktree 外） | 写主工作区会被指纹检测拦截，但写其他目录无法发现 | 后续可接入沙箱（容器或 Claude SDK sandbox） |
 | 本机没有 `rtk` 命令 | `AGENTS.md`（用户目录）要求的 rtk 前缀无法使用 | 用原生命令 |
 
 ---
@@ -111,4 +113,5 @@ T2.3v 分类结果：Q-1 范围、Q-3 用户与角色（能否导入 admin）、
 - 2026-11-12 · Claude Code (Opus 5.5) · — · 建立本任务清单与交接规则 · `4df0a08`
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.3v, T2.3w · DeepSeek 干净仓库实测（部分通过）；新增追加确认角色命令 · `0e66087`
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.4 · G3 方案门、design 阶段、`sf design approve` · `a3f30a4`
-- 2026-11-12 · Claude Code (Opus 5.5) · T2.5 · G4 任务门、tasks 阶段 · （本次提交）
+- 2026-11-12 · Claude Code (Opus 5.5) · T2.5 · G4 任务门、tasks 阶段 · `536f636`
+- 2026-11-12 · Claude Code (Opus 5.5) · T2.6 · 可写实现 agent（worktree 隔离、双重路径校验、引擎提交） · （本次提交）

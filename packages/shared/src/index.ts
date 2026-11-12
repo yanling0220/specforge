@@ -40,7 +40,7 @@ export interface ProjectConfig {
  */
 export type AgentBackend = 'claude' | 'deepseek' | 'codex' | 'openai-compatible';
 
-export type AgentRole = 'analyst' | 'reviewer';
+export type AgentRole = 'analyst' | 'reviewer' | 'implementer';
 
 export interface AgentProfile {
   backend: AgentBackend;

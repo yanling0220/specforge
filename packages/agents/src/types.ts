@@ -1,3 +1,5 @@
+import { checkPathPolicy, type PathPolicy } from '@specforge/core';
+import { relative as relativePath, resolve as resolvePath, sep as sepChar } from 'node:path';
 import type { AgentProfile, AgentRole } from '@specforge/shared';
 import { z as zImpl, type z } from 'zod';
 
@@ -21,6 +23,8 @@ export interface AgentRunSpec {
   cwd: string;
   /** 只读角色：不允许任何写文件或执行命令的工具 */
   readOnly: boolean;
+  /** 可写角色的路径策略（相对 cwd）；执行时拦截，引擎事后还会再校验一次 */
+  pathPolicy?: PathPolicy;
   profile: AgentProfile;
   tools: PlatformTool[];
   /** 平台工具在后端中的命名空间 */
@@ -82,4 +86,15 @@ export function zodObject(t: PlatformTool) {
 export function toolJsonSchema(t: PlatformTool): Record<string, unknown> {
   const { $schema: _ignored, ...schema } = zImpl.toJSONSchema(zodObject(t), { io: 'input' }) as Record<string, unknown>;
   return schema;
+}
+
+/** 可写角色检查目标路径：必须在 cwd 内，且符合路径策略。返回拒绝原因，允许时返回 undefined */
+export function writeDenial(cwd: string, filePath: string, policy: PathPolicy | undefined): string | undefined {
+  const root = resolvePath(cwd);
+  const abs = resolvePath(root, filePath);
+  if (abs !== root && !abs.startsWith(root + sepChar)) return `路径在工作目录之外：${filePath}`;
+  const rel = relativePath(root, abs).split(sepChar).join('/');
+  if (!policy) return '没有配置路径策略';
+  const [violation] = checkPathPolicy([rel], policy);
+  return violation ? `${rel}：${violation.reason}` : undefined;
 }

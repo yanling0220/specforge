@@ -41,7 +41,9 @@ export function submissionInstructions(spec: AgentRunSpec): string {
   const lines = spec.tools.map((t) => `- ${t.name}：${t.description.replace(/\n/g, ' ')}\n  参数 JSON Schema：${JSON.stringify(toolJsonSchema(t))}`);
   return [
     '## 提交方式',
-    '你在只读沙箱中运行，可以用 shell 命令（cat、ls、grep、rg 等）查看项目，但不能修改任何文件。',
+    spec.readOnly
+      ? '你在只读沙箱中运行，可以用 shell 命令（cat、ls、grep、rg 等）查看项目，但不能修改任何文件。'
+      : '你可以在当前工作目录内修改文件、运行测试；不要修改 openspec/、.specforge/ 和受保护路径，越界改动会被整体丢弃。',
     '调查完成后，最终回复必须是符合输出 schema 的 JSON：calls 是按顺序执行的平台工具调用列表，',
     '每项的 args_json 是该工具参数对象的 JSON 字符串。可用的平台工具：',
     ...lines,
@@ -82,12 +84,13 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
-    if (!spec.readOnly) throw new ForgeError('not_supported', 'codex 后端当前只支持只读角色');
+    if (!spec.readOnly && !spec.pathPolicy) throw new ForgeError('no_policy', '可写角色必须提供路径策略');
     const t0 = Date.now();
     const threadOptions: ThreadOptions = {
       model: spec.profile.model,
       workingDirectory: spec.cwd,
-      sandboxMode: 'read-only',
+      // 可写角色限制在 worktree 内写入；更细的路径约束由引擎事后校验
+      sandboxMode: spec.readOnly ? 'read-only' : 'workspace-write',
       approvalPolicy: 'never',
       networkAccessEnabled: false,
       webSearchMode: 'disabled',
@@ -118,7 +121,7 @@ export class CodexAdapter implements AgentAdapter {
         result.tokens!.input += turn.usage?.input_tokens ?? 0;
         result.tokens!.output += turn.usage?.output_tokens ?? 0;
         for (const item of turn.items) {
-          if (item.type === 'file_change') {
+          if (item.type === 'file_change' && spec.readOnly) {
             // 只读沙箱下不应出现；出现即视为越权，事后工作区校验也会兜底
             result.deniedTools.push({ name: 'file_change', reason: '只读角色试图修改文件' });
             spec.onEvent?.({ kind: 'denied', name: 'file_change', reason: '只读角色试图修改文件' });

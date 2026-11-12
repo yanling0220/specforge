@@ -422,6 +422,7 @@ specforge/
 | **第一期** | shared / core / runner / cli；G1、G2、G6；问题节点 + 双方核对 + 留痕；哈希链；引擎验证 | 在示例项目上跑通：问题未确认被拦截 → 确认后通过；跳过测试被拦截；新提交使 G6 失效 |
 | **第二期** | agents（Claude 优先，再接 Codex、DeepSeek）、MCP 平台工具、G3/G4/G5、server + 只读 Web 控制台 | AI 在约束下自动跑完 M 档流程 |
 | 　↳ 已完成 | Claude 适配层（进程内 MCP 平台工具 + canUseTool 拦截 + 运行前后工作区指纹校验）；需求分析 agent；独立审查 agent（6B） | `sf agent analyze` / `sf agent review` |
+| 　↳ 已完成 | G3 方案门、G4 任务门；可写实现 agent（worktree 隔离 + 执行时拦截 + 事后路径校验 + 引擎提交） | `sf agent implement` |
 | 　↳ 已完成 | DeepSeek（两种接入）、Codex、通用 OpenAI 兼容后端 | `--backend deepseek\|codex\|openai-compatible` |
 | **第三期** | 交互：行内评论、审批、打回、接管；并行任务；测试数量检查 | 开发者只在控制台完成全部人工决策 |
 | **第四期** | 团队：身份与权限、多项目、Postgres、通知（IM） | 产品方直接登录确认问题 |

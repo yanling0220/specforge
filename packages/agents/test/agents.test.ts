@@ -145,7 +145,7 @@ describe('Claude 适配层的工具拦截', () => {
   it('只读角色只放行读工具和本角色的平台工具', async () => {
     const denied: string[] = [];
     const can = makeCanUseTool(
-      { readOnly: true, toolNamespace: 'specforge', tools: [{ name: 'submit_review', description: '', shape: {}, handler: () => '' }] },
+      { readOnly: true, cwd: '.', toolNamespace: 'specforge', tools: [{ name: 'submit_review', description: '', shape: {}, handler: () => '' }] },
       (name) => denied.push(name),
     );
     const sig = { signal: new AbortController().signal, toolUseID: 't' } as never;

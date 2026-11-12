@@ -36,7 +36,7 @@ import type {
   Severity,
   Tier,
 } from '@specforge/shared';
-import { cmdAgentAnalyze, cmdAgentReview } from './agent-cmds.ts';
+import { cmdAgentAnalyze, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
 import { bindingNow, evaluateAll } from './engine.ts';
 import { defaultConfig, FORGE_DIR, parseActor, Store, type ChangeState } from './store.ts';
 
@@ -85,6 +85,8 @@ change
 
 AI agent
   sf agent analyze <id>                           需求分析 agent：复述、分解树、假设、维度、问题节点
+  sf agent implement <id> [--task T-n]            实现 agent：在独立 worktree 中实现下一个（或指定）任务，
+                                                  越界改动整体丢弃，通过后由引擎提交并 fast-forward 合入
   sf agent review <id>                            独立审查 agent（G6 6B），针对当前 HEAD
                [--backend claude|deepseek|codex|openai-compatible] [--provider deepseek|ollama]
                [--model <模型>] [--effort low|medium|high|xhigh|max] [--budget <美元上限>] [--verbose]
@@ -133,6 +135,7 @@ const { values: opts, positionals: args } = parseArgs({
     effort: { type: 'string' },
     budget: { type: 'string' },
     verbose: { type: 'boolean', short: 'v' },
+    task: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -588,6 +591,7 @@ async function main(): Promise<void> {
       const agentOpts = { override: agentOverride(), verbose: !!opts.verbose };
       if (sub === 'analyze') return cmdAgentAnalyze(store, id, actor, agentOpts);
       if (sub === 'review') return cmdAgentReview(store, id, actor, agentOpts);
+      if (sub === 'implement') return cmdAgentImplement(store, id, actor, { ...agentOpts, taskId: opts.task });
       throw new ForgeError('bad_cmd', `未知命令 sf agent ${sub ?? ''}`);
     }
     default:

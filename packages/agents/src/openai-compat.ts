@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { ForgeError } from '@specforge/core';
 import type { AgentProfile } from '@specforge/shared';
 import { callPlatformTool, toolJsonSchema, type AgentAdapter, type AgentRunResult, type AgentRunSpec, type PlatformTool } from './types.ts';
-import { workspaceTools } from './workspace-tools.ts';
+import { workspaceTools, writableWorkspaceTools } from './workspace-tools.ts';
 
 // 引擎自带的最小 agent 循环，适用于任何 OpenAI 兼容的 Chat Completions 接口。
 // 模型能用的工具只有引擎提供的：只读工作区工具 + 本角色的平台工具，因此天然无法写文件或执行命令。
@@ -68,18 +68,25 @@ export class OpenAICompatAdapter implements AgentAdapter {
   }
 
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
-    if (!spec.readOnly) throw new ForgeError('not_supported', 'openai-compatible 后端当前只支持只读角色');
+    if (!spec.readOnly && !spec.pathPolicy) throw new ForgeError('no_policy', '可写角色必须提供路径策略');
     const t0 = Date.now();
     const provider = resolveProvider(spec.profile);
     const client: ChatClient =
       this.client ?? new OpenAI({ baseURL: provider.baseUrl, apiKey: provider.apiKey ?? 'not-needed' }).chat.completions;
 
-    const builtins = workspaceTools(spec.cwd);
+    const builtins = [...workspaceTools(spec.cwd), ...(spec.readOnly ? [] : writableWorkspaceTools(spec.cwd, spec.pathPolicy!))];
     const all = [...builtins, ...spec.tools];
     const tools = all.map(toOpenAiTool);
     const messages: Message[] = [
       { role: 'system', content: spec.systemPrompt },
-      { role: 'user', content: spec.prompt + '\n\n（可用 read_file / list_files / grep 查看项目文件；结论只能通过平台工具提交。）' },
+      {
+        role: 'user',
+        content:
+          spec.prompt +
+          (spec.readOnly
+            ? '\n\n（可用 read_file / list_files / grep 查看项目文件；结论只能通过平台工具提交。）'
+            : '\n\n（可用 read_file / list_files / grep 查看，write_file / replace_in_file 修改，run_command 运行测试；完成后通过平台工具提交。）'),
+      },
     ];
     const result: AgentRunResult = {
       ok: false,

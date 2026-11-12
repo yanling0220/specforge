@@ -81,3 +81,8 @@ export function findAddedSkips(diff: string, patterns: string[], testGlobs: stri
     .filter((a) => matchesAny(a.file, testGlobs))
     .flatMap((a) => regs.filter(({ re }) => re.test(a.line)).map(({ p }) => ({ file: a.file, line: a.line.trim(), pattern: p })));
 }
+
+/** 实现阶段的路径策略：默认可写全部，禁止 spec / 平台状态 / git 内部 / 受保护路径 */
+export function implementPolicy(protectedPaths: string[], writable: string[] = ['**']): PathPolicy {
+  return { writable, forbidden: [...new Set(['openspec/**', '.specforge/**', '.git/**', ...protectedPaths])] };
+}
