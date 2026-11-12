@@ -20,7 +20,7 @@ import {
 } from '@specforge/agents';
 import { acIdsOf, ForgeError } from '@specforge/core';
 import { diffStat, fullDiff, headSha, workspaceFingerprint } from '@specforge/runner';
-import type { Actor, AgentProfile, AgentRole } from '@specforge/shared';
+import type { Actor, AgentProfile, AgentRole, ProjectConfig } from '@specforge/shared';
 import { readSpecFacts } from './engine.ts';
 import type { Store } from './store.ts';
 
@@ -39,6 +39,12 @@ function readConventions(root: string): string {
   return CONVENTION_FILES.filter((f) => existsSync(join(root, f)))
     .map((f) => `### ${f}\n${readFileSync(join(root, f), 'utf8').slice(0, 20_000)}`)
     .join('\n\n');
+}
+
+/** 问题分类 = 确认策略中的类别 ∪ 分析维度；未在策略中列出的按 default 确认 */
+function questionCategories(config: ProjectConfig): { name: string; roles: string[] }[] {
+  const names = [...new Set([...Object.keys(config.confirmPolicy).filter((k) => k !== 'default'), ...config.dimensions, '技术约束', '其他'])];
+  return names.map((name) => ({ name, roles: config.confirmPolicy[name] ?? config.confirmPolicy.default }));
 }
 
 function printer(verbose: boolean, log: (l: string) => void) {
@@ -124,6 +130,7 @@ export async function cmdAgentAnalyze(store: Store, changeId: string, actor: Act
     title: state.change.title,
     proposal,
     dimensions: config.dimensions,
+    categories: questionCategories(config),
     conventions: readConventions(store.root),
     existing: {
       restatement: r ? { text: r.text, confirmed: !!r.confirmation && r.confirmation.hash === r.hash } : undefined,

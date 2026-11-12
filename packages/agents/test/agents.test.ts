@@ -50,7 +50,7 @@ const fullAnalysis = [
     },
   },
   { tool: 'raise_question', args: { category: '性能', severity: 'minor', question: '单次最多多少行？', why: '决定是否异步', dependsOn: ['D-1'] } },
-  { tool: 'set_dimension', args: { dimension: '性能', status: 'question', questionIds: ['D-2'] } },
+  { tool: 'set_dimension', args: { dimension: '性能', status: 'question', reason: '行数上限见 D-2', questionIds: ['D-2'] } },
   { tool: 'set_dimension', args: { dimension: '安全与权限', status: 'covered' } },
   { tool: 'finish_analysis', args: { summary: '主要风险是文件大小' } },
 ];
@@ -67,8 +67,16 @@ describe('需求分析 agent 的平台工具', () => {
     expect(applied.idMap).toEqual({ 'D-1': 'Q-1', 'D-2': 'Q-2' });
     expect(applied.questions[0]).toMatchObject({ id: 'Q-1', requiredRoles: ['dev', 'product'], raisedBy: agent, status: 'open' });
     expect(applied.questions[1]!.dependsOn).toEqual(['Q-1']);
-    expect(applied.analysis.dimensions.find((d) => d.dimension === '性能')).toMatchObject({ status: 'question', questionIds: ['Q-2'] });
+    expect(applied.analysis.dimensions.find((d) => d.dimension === '性能')).toMatchObject({ status: 'question', reason: '行数上限见 Q-2', questionIds: ['Q-2'] });
     expect(applied.analysis.restatement?.confirmation).toBeUndefined();
+  });
+
+  it('问题分类必须来自确认策略，防止业务问题绕过产品确认', () => {
+    const draft = emptyAnalysisDraft();
+    const tools = analystTools(draft, { ...analystCtx(), categories: [{ name: '业务规则', roles: ['dev', 'product'] }, { name: '性能', roles: ['dev'] }] });
+    const raise = tools.find((t) => t.name === 'raise_question')!;
+    expect(() => raise.handler({ category: '输入与校验', severity: 'minor', question: '列定义？', why: '影响解析', options: [], dependsOn: [] })).toThrow(/category 必须是/);
+    expect(raise.handler({ category: '业务规则', severity: 'minor', question: '列定义？', why: '影响解析', options: [], dependsOn: [] })).toBe('已记录问题 D-1');
   });
 
   it('校验失败的调用返回错误给模型，不写入草稿', async () => {

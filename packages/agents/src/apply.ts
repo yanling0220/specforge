@@ -62,7 +62,8 @@ export function applyAnalysisDraft(
       continue;
     }
     const questionIds = (d.draftQuestionIds ?? []).map((id) => idMap[id] ?? id);
-    a = setDimension(a, d.dimension, d.status, { reason: d.reason, questionIds });
+    const reason = d.reason?.replace(/\bD-\d+\b/g, (m) => idMap[m] ?? m);
+    a = setDimension(a, d.dimension, d.status, { reason, questionIds });
   }
   return { analysis: a, questions: qs, idMap, restatementChanged, skippedDimensions };
 }

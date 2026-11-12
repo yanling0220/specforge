@@ -34,6 +34,8 @@ export interface AnalystContext {
   /** proposal.md 原文（开发者写的需求描述） */
   proposal: string;
   dimensions: string[];
+  /** 允许的问题分类，及每类需要哪些角色确认（来自 confirmPolicy） */
+  categories?: { name: string; roles: string[] }[];
   /** 项目约定（AGENTS.md / CLAUDE.md 等） */
   conventions?: string;
   existing: {
@@ -51,6 +53,7 @@ const severity = z.enum(['blocking', 'important', 'minor']);
 
 export function analystTools(draft: AnalysisDraft, ctx: AnalystContext): PlatformTool[] {
   const knownDims = new Set(ctx.dimensions);
+  const categoryNames = ctx.categories?.map((c) => c.name) ?? [];
   const existingQ = new Set(ctx.existing.questions.map((q) => q.id));
   const requireOpen = () => {
     if (draft.finished) throw new Error('已经调用过 finish_analysis，不能再提交');
@@ -123,6 +126,9 @@ export function analystTools(draft: AnalysisDraft, ctx: AnalystContext): Platfor
       },
       handler: (q) => {
         requireOpen();
+        if (categoryNames.length && !categoryNames.includes(q.category)) {
+          throw new Error(`category 必须是以下之一：${categoryNames.join('、')}`);
+        }
         if (q.severity === 'blocking' && q.defaultOptionId) throw new Error('blocking 问题不能设默认选项');
         if (q.defaultOptionId && !q.options.some((o) => o.id === q.defaultOptionId)) throw new Error('默认选项不在选项列表中');
         if (q.nodeId && !draft.nodes.some((n) => n.id === q.nodeId)) throw new Error(`节点 ${q.nodeId} 不在需求分解树中，请先提交分解树`);
@@ -192,6 +198,14 @@ export function analystPrompt(ctx: AnalystContext): string {
   const parts = [`# 需求：${ctx.title}（change: ${ctx.changeId}）`, '', '## 需求描述（proposal.md）', ctx.proposal.trim() || '（空）'];
   if (ctx.conventions?.trim()) parts.push('', '## 项目约定', ctx.conventions.trim());
   parts.push('', '## 分析维度（每个都要用 set_dimension 下结论）', ctx.dimensions.map((d) => `- ${d}`).join('\n'));
+  if (ctx.categories?.length) {
+    parts.push(
+      '',
+      '## 问题分类（raise_question 的 category 只能从中选择）',
+      ctx.categories.map((c) => `- ${c.name}：需要 ${c.roles.join(' + ')} 确认`).join('\n'),
+      '只要问题的答案取决于业务决策（做不做、给谁用、规则怎么定、用户看到什么），就必须选需要 product 确认的分类，即使它同时涉及技术细节。',
+    );
+  }
 
   const { restatement, questions, assumptions } = ctx.existing;
   if (restatement || questions.length || assumptions.length) {
