@@ -24,7 +24,7 @@ import {
   type AgentRunSpec,
   type RaisedQuestion,
 } from '@specforge/agents';
-import { acIdsOf, checkPathPolicy, ForgeError, implementPolicy, markTaskDone, nextTask, pausedTasks, type PathPolicy } from '@specforge/core';
+import { acIdsOf, checkPathPolicy, ForgeError, implementPolicy, isResolved, markTaskDone, nextTask, openFixRound, pausedTasks, type PathPolicy } from '@specforge/core';
 import {
   createWorktree,
   diffStat,
@@ -39,6 +39,7 @@ import {
 import type { Actor, AgentProfile, AgentRole, ProjectConfig } from '@specforge/shared';
 import { commitTree, readDesignFacts, readSpecFacts, readTasksFacts } from './engine.ts';
 import type { Store } from './store.ts';
+import { recordReview } from './review.ts';
 import { checkTdd } from './tdd.ts';
 
 const MAX_DIFF_CHARS = 150_000;
@@ -300,18 +301,21 @@ export async function cmdAgentReview(store: Store, changeId: string, actor: Acto
   recordRaisedQuestions(store, changeId, agent, draft.questions, log);
   if (headSha(store.root) !== sha) throw new ForgeError('head_moved', '审查期间 HEAD 发生了变化，结论作废，请重新审查');
   const record = reviewRecordFromDraft(draft, sha, agent, new Date().toISOString());
-  store.mutate(changeId, agent, 'review.recorded', (s) => ({ ...s, reviews: [...s.reviews, record] }), () => ({ ...record, sessionId: result.sessionId }));
   log(`审查结论：${record.verdict}（commit ${sha.slice(0, 7)}，覆盖 ${record.coverage.join(', ') || '无'}）`);
   for (const f of record.findings) {
     log(`  ${f.severity === 'blocking' ? '🔴' : '⚪'} ${f.anchor ? `[${f.anchor}] ` : ''}${f.kind ? `(${f.kind}) ` : ''}${f.text}`);
   }
   if (record.note) log(`总结：${record.note}`);
+  recordReview(store, changeId, agent, record, { sessionId: result.sessionId }, log);
 }
 
 export async function cmdAgentImplement(store: Store, changeId: string, actor: Actor, opts: AgentCmdOptions & { taskId?: string }): Promise<void> {
   const log = opts.log ?? console.log;
   const state = store.load(changeId);
   const config = store.config();
+  if (state.change.escalation) {
+    throw new ForgeError('escalated', `${changeId} 已升级给人处理（${state.change.escalation.reason}），实现 agent 不再运行`);
+  }
   if (state.change.stage !== 'implement') throw new ForgeError('bad_stage', `实现在 implement 阶段进行，当前是 ${state.change.stage}`);
   if (isDirty(store.root)) {
     throw new ForgeError('dirty', '项目工作区有未提交的改动（.specforge/ 除外），请先提交：实现在独立 worktree 中进行，并以 fast-forward 合入');
@@ -326,19 +330,28 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
   if (!tasks?.tasks.length) throw new ForgeError('no_tasks', `openspec/changes/${changeId}/tasks.md 中没有任务`);
   // 问题回流：未解决的阻塞问题暂停关联任务，互不相关的任务可以继续
   const paused = pausedTasks(tasks.tasks.filter((t) => !t.done), state.questions);
-  let task;
-  if (opts.taskId) {
-    task = tasks.tasks.find((t) => t.id === opts.taskId);
-    if (!task) throw new ForgeError('not_found', `任务 ${opts.taskId} 不存在`);
-    if (task.done) throw new ForgeError('done', `任务 ${task.id} 已完成`);
-    const pending = task.dependsOn.filter((d) => !tasks.tasks.find((t) => t.id === d)?.done);
-    if (pending.length) throw new ForgeError('deps', `任务 ${task.id} 的依赖尚未完成：${pending.join(', ')}`);
-    if (paused.has(task.id)) throw new ForgeError('paused', `任务 ${task.id} 已暂停，等待阻塞问题的回答：${paused.get(task.id)!.join(', ')}`);
+  // 修复轮次：审查打回后只修复本轮的阻塞问题，不做新任务
+  const fix = openFixRound(state.change);
+  let task: { id: string; title: string; acRefs: string[]; structureRefs: string[] };
+  if (fix) {
+    if (opts.taskId) throw new ForgeError('fix_pending', `第 ${fix.round} 轮修复进行中，不能指定任务`);
+    const waiting = state.questions.filter((q) => q.severity === 'blocking' && !isResolved(q)).map((q) => q.id);
+    if (waiting.length) throw new ForgeError('paused', `修复暂停，等待阻塞问题的回答：${waiting.join(', ')}`);
+    task = { id: `FIX-${fix.round}`, title: `修复第 ${fix.round} 轮审查问题`, acRefs: [], structureRefs: [] };
+  } else if (opts.taskId) {
+    const found = tasks.tasks.find((t) => t.id === opts.taskId);
+    if (!found) throw new ForgeError('not_found', `任务 ${opts.taskId} 不存在`);
+    if (found.done) throw new ForgeError('done', `任务 ${found.id} 已完成`);
+    const pending = found.dependsOn.filter((d) => !tasks.tasks.find((t) => t.id === d)?.done);
+    if (pending.length) throw new ForgeError('deps', `任务 ${found.id} 的依赖尚未完成：${pending.join(', ')}`);
+    if (paused.has(found.id)) throw new ForgeError('paused', `任务 ${found.id} 已暂停，等待阻塞问题的回答：${paused.get(found.id)!.join(', ')}`);
+    task = found;
   } else {
-    task = nextTask(tasks, paused);
-    if (!task) {
+    const found = nextTask(tasks, paused);
+    if (!found) {
       throw new ForgeError('no_task', `没有可做的任务（全部完成，或剩余任务的依赖未完成${paused.size ? `；暂停中：${pauseText(paused)}` : ''}）`);
     }
+    task = found;
   }
 
   const facts = readSpecFacts(store, changeId, tree);
@@ -364,8 +377,9 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
       categories: questionCategories(config),
       questionIds: state.questions.map((q) => q.id),
       taskIds: tasks.tasks.map((t) => t.id),
-      defaultTaskIds: [task.id],
+      defaultTaskIds: fix ? [] : [task.id],
     },
+    fix: fix && { round: fix.round, findings: fix.findings, note: fix.note },
   };
 
   const wt = createWorktree(store.root, base);
@@ -407,23 +421,31 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
       reject('implement.rejected', `改动越界：${violations.map((v) => `${v.path}（${v.reason}）`).join('；')}`, { files, violations });
     }
 
-    // 引擎勾选任务并提交（任务清单属于 openspec/，agent 无权修改）
-    const wtTasks = join(wt, tasksPath);
-    writeFileSync(wtTasks, markTaskDone(readFileSync(wtTasks, 'utf8'), task.id));
-    git(wt, ['add', tasksPath]);
+    // 引擎勾选任务并提交（任务清单属于 openspec/，agent 无权修改）；修复轮次不勾选任务
+    if (!fix) {
+      const wtTasks = join(wt, tasksPath);
+      writeFileSync(wtTasks, markTaskDone(readFileSync(wtTasks, 'utf8'), task.id));
+      git(wt, ['add', tasksPath]);
+    }
     const agent = agentActor('implementer', result, profile);
+    const trailer = fix ? `SpecForge-Fix-Round: ${fix.round}` : `SpecForge-Task: ${task.id}`;
     git(wt, [
       'commit',
       '-q',
       '-m',
-      `${task.id}: ${task.title}\n\n${draft.summary ?? ''}\n\nSpecForge-Change: ${changeId}\nSpecForge-Task: ${task.id}\nSpecForge-Agent: ${agent.name}`,
+      `${task.id}: ${task.title}\n\n${draft.summary ?? ''}\n\nSpecForge-Change: ${changeId}\n${trailer}\nSpecForge-Agent: ${agent.name}`,
     ]);
     const sha = headSha(wt);
 
-    // G5：引擎亲自确认新测试先红后绿，通过后才合入
-    const tdd = checkTdd(store, changeId, actor, { taskId: task.id, base, sha }, log);
-    if (tdd.failures.length) {
-      reject('implement.rejected', `G5 TDD 门未通过：${tdd.failures.map((c) => c.detail).join('；')}`, { sha, files, tddEvidenceId: tdd.evidence.id });
+    // G5：引擎亲自确认新测试先红后绿，通过后才合入。修复提交不做 G5（任务的 G5 证据仍然有效），
+    // 由回到收尾后的重新验证与重新审查（G6）把关
+    let tddEvidenceId: string | undefined;
+    if (!fix) {
+      const tdd = checkTdd(store, changeId, actor, { taskId: task.id, base, sha }, log);
+      tddEvidenceId = tdd.evidence.id;
+      if (tdd.failures.length) {
+        reject('implement.rejected', `G5 TDD 门未通过：${tdd.failures.map((c) => c.detail).join('；')}`, { sha, files, tddEvidenceId });
+      }
     }
 
     git(store.root, ['merge', '--ff-only', '-q', sha]);
@@ -431,11 +453,15 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
       type: 'implement.committed',
       actor: agent,
       changeId,
-      payload: { taskId: task.id, base, sha, files, summary: draft.summary, testsAdded: draft.testsAdded, tddEvidenceId: tdd.evidence.id, sessionId: result.sessionId },
+      payload: { taskId: task.id, ...(fix ? { fixRound: fix.round } : {}), base, sha, files, summary: draft.summary, testsAdded: draft.testsAdded, tddEvidenceId, sessionId: result.sessionId },
     });
     log(`✓ 任务 ${task.id} 已提交 ${sha.slice(0, 7)}（${files.length} 个文件）`);
     for (const f of files) log(`  ${f}`);
     if (draft.summary) log(`总结：${draft.summary}`);
+    if (fix) {
+      log(`第 ${fix.round} 轮修复已提交：sf advance ${changeId} 回到收尾，重新 sf verify 与审查`);
+      return;
+    }
     const after = readTasksFacts(store, changeId)!;
     const stillPaused = pausedTasks(after.tasks.filter((t) => !t.done), store.load(changeId).questions);
     const next = nextTask(after, stillPaused);

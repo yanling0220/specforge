@@ -32,6 +32,12 @@ export interface ProjectConfig {
   agents?: AgentsConfig;
   /** G5 TDD 门：只跑指定测试的方式；未配置时 G5 不通过 */
   tdd?: TddConfig;
+  workflow?: WorkflowConfig;
+}
+
+export interface WorkflowConfig {
+  /** 审查不通过时自动打回实现的最大次数，超过后升级给人；默认 3 */
+  maxFixRounds?: number;
 }
 
 export interface TddConfig {
@@ -87,6 +93,24 @@ export interface Change {
   baseSha: string;
   createdAt: string;
   createdBy: Actor;
+  /** 审查不通过后的修复轮次（打回记录） */
+  fixRounds?: FixRound[];
+  /** 修复轮次用尽后升级给人；之后不再自动打回，实现 agent 不再运行 */
+  escalation?: { at: string; reason: string; rounds: number };
+}
+
+export interface FixRound {
+  round: number;
+  /** 打回时（审查所针对）的 commit；出现新提交后本轮才算处理过 */
+  sha: string;
+  source: 'agent' | 'human';
+  reviewer: Actor;
+  /** 需要修复的阻塞问题（只兑现锚点，见设计文档 2.2） */
+  findings: ReviewFinding[];
+  note?: string;
+  at: string;
+  /** 本轮修复后离开实现阶段时的 HEAD */
+  resolvedSha?: string;
 }
 
 // ---------- 需求分析 ----------

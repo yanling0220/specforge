@@ -3,11 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createQuestion, emptyAnalysis, nextStage } from '@specforge/core';
+import { createQuestion, emptyAnalysis, nextStage, resolveFixRound } from '@specforge/core';
 import { callPlatformTool, type AgentAdapter, type AgentRunSpec } from '@specforge/agents';
 import { headSha } from '@specforge/runner';
 import type { Actor } from '@specforge/shared';
-import { cmdAgentImplement } from '../src/agent-cmds.ts';
+import { cmdAgentImplement, cmdAgentReview } from '../src/agent-cmds.ts';
 import { evaluateAll } from '../src/engine.ts';
 import { checkTdd } from '../src/tdd.ts';
 import { defaultConfig, Store } from '../src/store.ts';
@@ -293,5 +293,80 @@ describe('问题回流（T2.9）', () => {
     await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: adapter(ask({ taskIds: ['T-9'] })) })).rejects.toThrow(/不存在的任务：T-9/);
     await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: adapter(ask({ dependsOn: ['Q-7'] })) })).rejects.toThrow(/不存在的问题：Q-7/);
     await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('x', 'AC-1'), { questions: [ask()] }) })).rejects.toThrow(/已提出阻塞问题/);
+  });
+});
+
+describe('打回与修复轮次（T2.11）', () => {
+  const failingReviewer: AgentAdapter = {
+    backend: 'fake',
+    async run(spec) {
+      const out = callPlatformTool(spec.tools, 'submit_review', {
+        verdict: 'fail',
+        coverage: ['AC-1', 'AC-2'],
+        findings: [{ severity: 'blocking', kind: 'missing', anchor: 'AC-1', text: 'x 应当是 2' }, { severity: 'non-blocking', text: '命名可以更清楚' }],
+        summary: '漏做',
+      });
+      if (out.isError) throw new Error(out.text);
+      return { ok: true, backend: 'fake', turns: 1, costUsd: 0, durationMs: 0, deniedTools: [] };
+    },
+  };
+  const toStage = (store: Store, stage: 'closing') =>
+    store.mutate('c1', dev, 'stage.advanced', (s) => ({ ...s, change: { ...resolveFixRound(s.change, headSha(store.root)), stage } }), () => ({ to: stage }));
+
+  it('审查不通过 → 打回实现 → 实现 agent 只修复本轮问题 → 再次不通过且轮次用尽 → 升级给人', async () => {
+    const store = project({ workflow: { maxFixRounds: 1 } });
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('x', 'AC-1')) });
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('y', 'AC-2'), { tests: ['[AC-2] 另一个'] }) });
+    toStage(store, 'closing');
+    const reviewed = headSha(store.root);
+
+    // 第 1 次审查不通过：自动打回
+    await cmdAgentReview(store, 'c1', dev, { ...quiet, adapter: failingReviewer });
+    let change = store.load('c1').change;
+    expect(change.stage).toBe('implement');
+    expect(change.fixRounds).toHaveLength(1);
+    expect(change.fixRounds![0]).toMatchObject({ round: 1, sha: reviewed, source: 'agent', findings: [{ anchor: 'AC-1', text: 'x 应当是 2' }] });
+    expect(types(store).slice(-2)).toEqual(['review.recorded', 'stage.sent_back']);
+
+    // 修复：prompt 带上本轮问题；不勾选任务、不做 G5；提交带修复轮次
+    let prompt = '';
+    const fixer = writer({ 'src/x.mjs': 'export const x = 2;\n', 'test/x.test.mjs': testOf('x', 'AC-1')['test/x.test.mjs']!.replace('equal(x, 1)', 'equal(x, 2)') }, {
+      extra: (spec) => (prompt = spec.prompt),
+    });
+    const tasksBefore = readFileSync(join(store.root, 'openspec/changes/c1/tasks.md'), 'utf8');
+    const tddCount = types(store).filter((t) => t === 'tdd.recorded').length;
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: fixer });
+    expect(prompt).toContain('第 1 轮修复');
+    expect(prompt).toContain('[AC-1] (missing) x 应当是 2');
+    expect(prompt).not.toContain('命名可以更清楚');
+    expect(g(store.root, 'log', '-1', '--format=%B')).toMatch(/^FIX-1: 修复第 1 轮审查问题[\s\S]*SpecForge-Fix-Round: 1/);
+    expect(readFileSync(join(store.root, 'openspec/changes/c1/tasks.md'), 'utf8')).toBe(tasksBefore);
+    expect(types(store).filter((t) => t === 'tdd.recorded')).toHaveLength(tddCount);
+    expect(store.events().at(-1)).toMatchObject({ type: 'implement.committed', payload: { taskId: 'FIX-1', fixRound: 1 } });
+
+    // 回到收尾（结清本轮），第 2 次审查仍不通过：轮次用尽，升级给人
+    toStage(store, 'closing');
+    expect(store.load('c1').change.fixRounds![0]!.resolvedSha).toBe(headSha(store.root));
+    await cmdAgentReview(store, 'c1', dev, { ...quiet, adapter: failingReviewer });
+    change = store.load('c1').change;
+    expect(change.stage).toBe('closing');
+    expect(change.escalation).toMatchObject({ rounds: 1 });
+    expect(types(store).at(-1)).toBe('change.escalated');
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer({}) })).rejects.toThrow(/已升级给人处理/);
+    expect(store.outOfBand('c1')).toBeUndefined();
+  });
+
+  it('修复轮次中有未回答的阻塞问题：修复暂停', async () => {
+    const store = project();
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('x', 'AC-1')) });
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('y', 'AC-2'), { tests: ['[AC-2] 另一个'] }) });
+    toStage(store, 'closing');
+    await cmdAgentReview(store, 'c1', dev, { ...quiet, adapter: failingReviewer });
+    store.mutate('c1', dev, 'question.raised', (s) => ({
+      ...s,
+      questions: [createQuestion({ id: 'Q-1', category: '业务规则', severity: 'blocking', question: 'x 到底是几？', raisedAtStage: 'implement' }, store.config(), dev, 'T')],
+    }), () => ({}));
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer({}) })).rejects.toThrow(/修复暂停.*Q-1/);
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, taskId: 'T-1', adapter: writer({}) })).rejects.toThrow(/修复进行中，不能指定任务/);
   });
 });

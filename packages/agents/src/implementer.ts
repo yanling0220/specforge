@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ReviewFinding } from '@specforge/shared';
 import { RAISE_QUESTION_RULE, raiseQuestionTool, type RaiseContext, type RaisedQuestion } from './raise-question.ts';
 import { defineTool, type PlatformTool } from './types.ts';
 
@@ -25,6 +26,8 @@ export interface ImplementerContext {
   forbidden: string[];
   conventions?: string;
   raise?: RaiseContext;
+  /** 修复轮次：审查打回的阻塞问题 */
+  fix?: { round: number; findings: ReviewFinding[]; note?: string };
 }
 
 export function emptyImplementDraft(): ImplementDraft {
@@ -40,7 +43,9 @@ export function implementerTools(draft: ImplementDraft, ctx: ImplementerContext)
       name: 'finish_task',
       description: [
         `完成任务 ${ctx.task.id}。调用前应已实现代码、补充测试并运行通过。`,
-        `testsAdded 列出新增或修改的测试名称；测试名称中必须包含对应的 AC 编号（${ctx.task.acRefs.join(', ')}），例如 "[AC-1] …"。`,
+        ctx.task.acRefs.length
+          ? `testsAdded 列出新增或修改的测试名称；测试名称中必须包含对应的 AC 编号（${ctx.task.acRefs.join(', ')}），例如 "[AC-1] …"。`
+          : 'testsAdded 列出新增、修改或用来确认修复的测试名称。',
       ].join('\n'),
       shape: { summary: z.string().min(4), testsAdded: z.array(z.string()).min(1) },
       handler: ({ summary, testsAdded }) => {
@@ -88,6 +93,17 @@ export function implementerPrompt(ctx: ImplementerContext): string {
     '## 已批准的材料',
     ...ctx.sources.map((s) => `### ${s.path}\n${s.text.trim()}`),
   ];
+  if (ctx.fix) {
+    parts.push(
+      '',
+      `## 本次是第 ${ctx.fix.round} 轮修复：审查打回了以下阻塞问题`,
+      ...(ctx.fix.findings.length
+        ? ctx.fix.findings.map((f) => `- ${f.anchor ? `[${f.anchor}] ` : ''}${f.kind ? `(${f.kind}) ` : ''}${f.text}`)
+        : [`- ${ctx.fix.note ?? '（审查没有给出具体问题，请对照规格自查）'}`]),
+      '只修复这些问题，并且只兑现它们锚定的已批准材料（AC / 已确认答案）；审查里的新架构或额外功能建议不构成授权。',
+      '所有任务都已完成，不要修改任务清单。需要时补充或修正测试。',
+    );
+  }
   if (ctx.decisions.length) parts.push('', '## 已确认的需求决定', ...ctx.decisions.map((d) => `- ${d.id}：${d.question}\n  答：${d.answer}`));
   if (ctx.conventions?.trim()) parts.push('', '## 项目约定', ctx.conventions.trim());
   parts.push(

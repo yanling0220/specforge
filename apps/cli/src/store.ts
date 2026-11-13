@@ -37,6 +37,7 @@ export function defaultConfig(): ProjectConfig {
       '\\bt\\.Skip\\(',
     ],
     tdd: { setup: 'npm ci', command: 'npm test -- {files}' },
+    workflow: { maxFixRounds: 3 },
     confirmPolicy: {
       业务规则: ['dev', 'product'],
       范围: ['dev', 'product'],

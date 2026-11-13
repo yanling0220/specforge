@@ -9,3 +9,4 @@ export * from './questions.ts';
 export * from './spec.ts';
 export * from './design.ts';
 export * from './tasks.ts';
+export * from './workflow.ts';

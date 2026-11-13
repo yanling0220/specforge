@@ -14,8 +14,11 @@ import {
   invalidateQuestion,
   missingRoles,
   nextQuestionId,
+  maxFixRounds,
   nextStage,
+  openFixRound,
   pausedTasks,
+  resolveFixRound,
   proposeAnswer,
   rejectAnswer,
   requireRole,
@@ -27,6 +30,7 @@ import {
 import { git, headSha, repoRoot, runVerification } from '@specforge/runner';
 import type {
   AgentBackend,
+  Change,
   Role,
   AgentProfile,
   GateEvaluation,
@@ -38,6 +42,7 @@ import type {
   Tier,
 } from '@specforge/shared';
 import { cmdAgentAnalyze, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
+import { recordReview } from './review.ts';
 import { checkTdd } from './tdd.ts';
 import { bindingNow, evaluateAll, factsTree, readTasksFacts, uncommittedSpecChanges } from './engine.ts';
 import { defaultConfig, FORGE_DIR, parseActor, Store, type ChangeState } from './store.ts';
@@ -246,6 +251,7 @@ function cmdStatus(store: Store, id: string): void {
   const upstream = upstreamGates(change.stage, change.tier).filter((g) => evals[g]?.status !== 'passed');
   if (upstream.length) console.log(`⚠️  上游门禁已失效：${upstream.join(', ')}（需要重新满足后才能继续推进）`);
   console.log();
+  printFixState(change, maxFixRounds(store.config()));
   if (change.stage === 'implement') {
     const tasks = readTasksFacts(store, id, tree);
     const paused = tasks ? pausedTasks(tasks.tasks.filter((t) => !t.done), state.questions) : new Map<string, string[]>();
@@ -257,13 +263,24 @@ function cmdStatus(store: Store, id: string): void {
   }
 }
 
+function printFixState(change: Change, max: number): void {
+  if (change.escalation) console.log(`⚠️  已升级给人：${change.escalation.reason}（${change.escalation.at}）`);
+  const open = openFixRound(change);
+  if (!open) return;
+  console.log(`↩️  第 ${open.round}/${max} 轮修复进行中（${open.source === 'agent' ? 'agent 审查' : '开发者'}打回 ${open.sha.slice(0, 7)}）：`);
+  for (const f of open.findings) console.log(`     ${f.anchor ? `[${f.anchor}] ` : ''}${f.kind ? `(${f.kind}) ` : ''}${f.text}`);
+  if (!open.findings.length && open.note) console.log(`     ${open.note}`);
+}
+
 function cmdAdvance(store: Store, id: string): void {
   const actor = store.identity(opts.as);
   const state = store.load(id);
   const evals = evaluateAll(store, state);
   let to;
+  let change = state.change;
   try {
     to = nextStage(state.change.stage, state.change.tier, evals);
+    if (state.change.stage === 'implement') change = resolveFixRound(state.change, headSha(store.root));
   } catch (e) {
     store.append({ type: 'stage.advance_rejected', actor, changeId: id, payload: { from: state.change.stage, reason: (e as Error).message } });
     throw e;
@@ -272,10 +289,11 @@ function cmdAdvance(store: Store, id: string): void {
     id,
     actor,
     'stage.advanced',
-    (s) => ({ ...s, change: { ...s.change, stage: to } }),
+    (s) => ({ ...s, change: { ...change, stage: to } }),
     () => ({
       from: state.change.stage,
       to,
+      ...(change !== state.change ? { fixRoundResolved: change.fixRounds!.at(-1) } : {}),
       gates: Object.fromEntries(Object.entries(evals).map(([g, ev]) => [g, { status: ev.status, boundTo: ev.boundTo.value }])),
     }),
   );
@@ -421,8 +439,8 @@ function cmdReview(store: Store, id: string): void {
     findings: report.findings ?? [],
     note: opts.note,
   };
-  store.mutate(id, actor, 'review.recorded', (s) => ({ ...s, reviews: [...s.reviews, record] }), () => ({ ...record }));
   console.log(`已记录 ${kind === 'agent' ? 'agent 审查' : '开发者签字'}：${verdict}（commit ${sha.slice(0, 7)}）`);
+  recordReview(store, id, actor, record, {}, console.log);
 }
 
 function cmdLog(store: Store, sub?: string, id?: string): void {
