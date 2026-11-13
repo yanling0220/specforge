@@ -31,6 +31,7 @@ import { git, headSha, repoRoot, runVerification } from '@specforge/runner';
 import type {
   AgentBackend,
   Change,
+  StepEvidence,
   Role,
   AgentProfile,
   GateEvaluation,
@@ -602,19 +603,21 @@ async function main(): Promise<void> {
     case 'verify': {
       const id = need(sub, '<id>');
       const actor = store.identity(opts.as);
-      store.load(id);
+      const { change } = store.load(id);
       const config = store.config();
       const sha = headSha(store.root);
+      const onStep = (s: StepEvidence) => console.log(`  ${s.exitCode === 0 ? '✓' : '✗'} ${s.name}（${s.durationMs}ms，退出码 ${s.timedOut ? '超时' : s.exitCode}）`);
       console.log(`在干净 worktree 中验证 commit ${sha.slice(0, 7)}…`);
-      const ev = runVerification({
-        repo: store.root,
-        steps: config.verify,
-        sha,
-        onStep: (s) => console.log(`  ${s.exitCode === 0 ? '✓' : '✗'} ${s.name}（${s.durationMs}ms，退出码 ${s.timedOut ? '超时' : s.exitCode}）`),
-      });
+      const ev = runVerification({ repo: store.root, steps: config.verify, sha, onStep });
       if (ev.mainTreeDirty) console.log('  ⚠️ 工作区有未提交的改动；它们不在本次验证范围内');
       const file = store.saveEvidence(id, ev, actor);
       console.log(`证据已记录：${store.rel(file)}`);
+      // 测试数量不得下降：基线 commit 只需验证一次
+      if (change.baseSha !== sha && !store.latestEvidence(id, change.baseSha)) {
+        console.log(`记录基线测试数量：验证基线 commit ${change.baseSha.slice(0, 7)}…`);
+        const base = runVerification({ repo: store.root, steps: config.verify, sha: change.baseSha, onStep });
+        console.log(`基线证据已记录：${store.rel(store.saveEvidence(id, base, actor))}`);
+      }
       return;
     }
     case 'tdd': {

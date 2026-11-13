@@ -33,6 +33,15 @@ export interface ProjectConfig {
   /** G5 TDD 门：只跑指定测试的方式；未配置时 G5 不通过 */
   tdd?: TddConfig;
   workflow?: WorkflowConfig;
+  /** 测试数量检查（G6A）：从哪个验证步骤的输出解析测试总数 */
+  testReport?: TestReportConfig;
+}
+
+export interface TestReportConfig {
+  /** 验证步骤名，默认 test */
+  step?: string;
+  /** 自定义正则，第一个捕获组为测试总数；不填则自动识别 node / vitest / jest / pytest / mocha / cargo */
+  pattern?: string;
 }
 
 export interface WorkflowConfig {

@@ -10,6 +10,8 @@ import {
   evaluateTwin,
   evaluateUnderstanding,
   evaluateVerification,
+  matchesAny,
+  parseTestCount,
   parseDesign,
   parseSpec,
   parseTasks,
@@ -18,7 +20,7 @@ import {
   type ParsedSpec,
 } from '@specforge/core';
 import { acCoverage, antiCheat, git, headSha, isAncestor, listFilesAt, readFileAt } from '@specforge/runner';
-import type { GateEvaluation, GateId } from '@specforge/shared';
+import type { GateEvaluation, GateId, VerificationEvidence } from '@specforge/shared';
 import type { ChangeState, Store } from './store.ts';
 
 /** 读取 OpenSpec 文件的来源：工作区，或某个 commit（路径均相对仓库根目录） */
@@ -166,16 +168,30 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
     }
     const acIds = acIdsOf(facts.specs);
     const cheat = antiCheat(store.root, change.baseSha, sha, config);
+    const evidence = store.latestEvidence(change.id, sha);
+    const baseEvidence = store.latestEvidence(change.id, change.baseSha);
+    const step = config.testReport?.step ?? 'test';
+    const count = (ev?: VerificationEvidence) => {
+      const out = ev?.steps.find((s) => s.name === step)?.outputTail;
+      return out === undefined ? undefined : parseTestCount(out, config.testReport?.pattern)?.total;
+    };
     const a = evaluateVerification(
       {
         headSha: sha,
         requiredSteps: config.verify.map((s) => s.name),
-        evidence: store.latestEvidence(change.id, sha),
+        evidence,
         acIds,
         requireAc: change.tier !== 'S',
         acCoverage: acCoverage(store.root, sha, acIds, config.testGlobs),
         skipHits: cheat.skipHits,
         protectedChanges: cheat.protectedChanges,
+        testCount: {
+          step,
+          head: count(evidence),
+          baseEvidence: !!baseEvidence,
+          base: count(baseEvidence),
+          baseHasTests: listFilesAt(store.root, change.baseSha, '.').some((f) => matchesAny(f, config.testGlobs)),
+        },
       },
       now,
     );

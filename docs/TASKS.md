@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11 完成
+最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6 完成
 
 ---
 
 ## 当前快照
 
-- 测试：113 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
+- 测试：127 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T2.8`**（生成类 agent，需要真实模型实测，先征得用户同意费用）；纯代码可选 `T3.6`（测试数量不得下降）或进入第三期 `T3.1`。注意：已有项目需在 `.specforge/config.json` 中配置 `tdd.command`，否则 G5 不通过、`sf agent implement` 拒绝运行
+- **下一个建议任务：`T2.8`**（生成类 agent，需要真实模型实测，先征得用户同意费用）或进入第三期 `T3.1`（server）。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
 
 ---
 
@@ -57,7 +57,7 @@
 | T3.3 | 需求分析视图：分解树 + 问题卡片 + 完整核对历史 | todo | T3.2 | |
 | T3.4 | 交互：回答/确认/驳回问题、审批 spec、签字、打回、接管 | todo | T3.3 | 所有写操作仍走 `Store.mutate`，写入哈希链 |
 | T3.5 | 产物审阅器：spec/design 行内评论，评论回传给 agent | todo | T3.4, T2.8 | |
-| T3.6 | 测试数量不得下降（解析各语言测试报告） | todo | — | |
+| T3.6 | 测试数量不得下降（解析各语言测试报告） | done | — | `packages/core/src/testcount.ts`（node / vitest / jest / pytest / mocha / cargo + 自定义 `testReport.pattern`）；G6A 新增「测试数量没有下降」；`sf verify` 首次同时验证基线。测试：`testcount.test.ts`（各格式样例、判定规则）、`engine.test.ts`（真实 node --test：删测试不通过、补回通过）；CLI 实测（`/tmp/sf-t27`：基线 1 → 当前 4） |
 
 ## 第四期：团队化
 
@@ -80,7 +80,7 @@
 | 实现 agent 的 Bash / run_command 能执行任意命令（如联网、写 worktree 外） | 写主工作区会被指纹检测拦截，但写其他目录无法发现 | 后续可接入沙箱（容器或 Claude SDK sandbox） |
 | 升级给人后没有"解除升级"命令 | 人只能在 closing 阶段手工修复、重新验证和审查后交付；不能再让 agent 修复 | 需要时加 `sf escalation resolve` |
 | 验证（6A）失败不自动打回 | 需要人判断后手工修复 | 视使用情况再定 |
-| G5 以测试文件为粒度 | 修改已有测试文件时，文件中任一测试先失败即算 RED，不能确认每个新测试都先失败 | 需要解析测试报告（可与 T3.6 一起做） |
+| G5 以测试文件为粒度 | 修改已有测试文件时，文件中任一测试先失败即算 RED，不能确认每个新测试都先失败 | 需要逐个测试的结果（如 JUnit XML / TAP 逐条解析）；T3.6 只解析了总数 |
 | 本机没有 `rtk` 命令 | `AGENTS.md`（用户目录）要求的 rtk 前缀无法使用 | 用原生命令 |
 
 ---
@@ -130,4 +130,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T2.7 · G5 TDD 门（runner 只跑指定测试、实现合入前先红后绿、`sf tdd`） · `8fc8cff`
 - 2026-11-13 · Claude Code (Opus 5.5) · T2.10 · 实现阶段起 OpenSpec 文件按 HEAD 读取 · `76dd751`
 - 2026-11-13 · Claude Code (Opus 5.5) · T2.9 · 问题回流：后续阶段 agent 提问、任务级暂停 · `adc28f8`
-- 2026-11-13 · Claude Code (Opus 5.5) · T2.11 · 打回与修复轮次上限、升级给人 · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · T2.11 · 打回与修复轮次上限、升级给人 · `6597904`
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.6 · 测试数量不得下降（G6A） · （本次提交）

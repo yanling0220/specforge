@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { acIdsOf, emptyAnalysis } from '@specforge/core';
 import { callPlatformTool, type AgentAdapter } from '@specforge/agents';
-import { headSha } from '@specforge/runner';
+import { headSha, runVerification } from '@specforge/runner';
 import type { Actor, Stage } from '@specforge/shared';
 import { cmdAgentReview } from '../src/agent-cmds.ts';
 import { commitTree, evaluateAll, readSpecFacts, uncommittedSpecChanges, workTree } from '../src/engine.ts';
@@ -132,5 +132,40 @@ describe('审查 agent 提问（T2.9）', () => {
     expect(state.questions[0]!.taskIds).toBeUndefined();
     expect(state.reviews.at(-1)).toMatchObject({ verdict: 'fail' });
     expect(evaluateAll(store, state).G1!.status).toBe('failed');
+  });
+});
+
+describe('测试数量不得下降（T3.6）', () => {
+  const nodeTest = (names: string[]) =>
+    `import { test } from 'node:test';\n${names.map((n) => `test('${n}', () => {});`).join('\n')}\n`;
+
+  it('基线与当前都由引擎跑 node --test；删掉测试后 G6A 不通过，补回后通过', () => {
+    const store = project('closing');
+    writeFileSync(join(store.root, '.specforge', 'config.json'), JSON.stringify({ ...defaultConfig(), verify: [{ name: 'test', command: 'node --test' }] }));
+    const base = store.load('c1').change.baseSha;
+    // 基线：2 个测试
+    g(store.root, 'checkout', '-q', base);
+    write(store.root, { 'test/a.test.mjs': nodeTest(['a', 'b']) });
+    g(store.root, 'add', '-A');
+    g(store.root, 'commit', '-qm', '基线测试');
+    const newBase = headSha(store.root);
+    store.mutate('c1', dev, 'test.rebase', (s) => ({ ...s, change: { ...s.change, baseSha: newBase } }), () => ({}));
+    // 当前：删掉一个测试
+    write(store.root, { 'test/a.test.mjs': nodeTest(['[AC-1] a']), [SPEC]: spec('AC-1') });
+    g(store.root, 'add', '-A');
+    g(store.root, 'commit', '-qm', '删测试');
+
+    const verify = (sha: string) => store.saveEvidence('c1', runVerification({ repo: store.root, steps: store.config().verify, sha }), dev);
+    const count = () => evaluateAll(store, store.load('c1')).G6A!.checks.find((c) => c.id === 'test-count')!;
+    verify(headSha(store.root));
+    expect(count().detail).toMatch(/没有基线 commit 的验证证据/);
+    verify(newBase);
+    expect(count()).toMatchObject({ passed: false, detail: '测试数量从 2 降到 1' });
+
+    write(store.root, { 'test/b.test.mjs': nodeTest(['c', 'd']) });
+    g(store.root, 'add', '-A');
+    g(store.root, 'commit', '-qm', '补测试');
+    verify(headSha(store.root));
+    expect(count()).toMatchObject({ passed: true, detail: '基线 2 → 当前 3' });
   });
 });

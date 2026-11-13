@@ -211,7 +211,7 @@ confirmed ──(需要改答案)──▶ 新建修订版本（必须填写变�
 - 引擎在**干净 worktree**（从该 commit 检出）中执行项目声明的全部验证步骤（install / lint / typecheck / test / build），所有步骤退出码为 0。
 - **AC 覆盖**：spec 中每个 AC 编号都出现在该 commit 的测试文件中。
 - **防作弊**：从 change 基线到该 commit 的 diff 中，不得新增跳过测试的标记（`.skip`、`xit`、`@Ignore`、`pytest.mark.skip`、`t.Skip` 等）；不得改动受保护路径（CI 配置、测试配置、lint 规则、覆盖率阈值）。命中的话转为人工审批。
-- 测试数量不得下降（第二期，需要解析测试报告）。
+- **测试数量不得下降**：从验证步骤（默认 `test`，可配 `testReport.step`）的输出解析测试总数，自动识别 node --test / vitest / jest / pytest / mocha / cargo，其他运行器用 `testReport.pattern`（第一个捕获组为总数）。基线是 change 的 `baseSha`：`sf verify` 首次运行时同时验证基线并记录证据。当前数量 < 基线数量、无法解析、缺基线证据都不通过；基线中没有测试文件时基线视为 0。
 
 **6B 审查门（独立判断）**
 - **独立审查 agent**：新开上下文，只看 spec、design 和 diff，不看实现过程；必须给出覆盖范围回执；不能有阻塞问题。

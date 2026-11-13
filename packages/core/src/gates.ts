@@ -349,6 +349,28 @@ export interface VerificationInputs {
   acCoverage: Record<string, string[]>;
   skipHits: { file: string; line: string }[];
   protectedChanges: string[];
+  /** 测试数量不得下降（T3.6）；不提供时不检查 */
+  testCount?: TestCountInputs;
+}
+
+export interface TestCountInputs {
+  step: string;
+  /** 当前 commit 解析出的测试总数；undefined 表示无证据或无法解析 */
+  head?: number;
+  /** 是否有基线 commit 的验证证据 */
+  baseEvidence: boolean;
+  base?: number;
+  /** 基线 commit 中是否有测试文件；没有时基线视为 0 */
+  baseHasTests: boolean;
+}
+
+function testCountFailures(t: TestCountInputs, hasHeadEvidence: boolean): string[] {
+  if (!hasHeadEvidence) return ['无证据'];
+  if (t.head === undefined) return [`无法从 ${t.step} 步骤的输出解析测试数量（可在 testReport.pattern 中配置正则）`];
+  if (!t.baseEvidence) return ['没有基线 commit 的验证证据，请运行 sf verify（会同时验证基线）'];
+  const base = t.base ?? (t.baseHasTests ? undefined : 0);
+  if (base === undefined) return [`无法从基线 commit 的 ${t.step} 步骤输出解析测试数量`];
+  return t.head < base ? [`测试数量从 ${base} 降到 ${t.head}`] : [];
 }
 
 export function evaluateVerification(inputs: VerificationInputs, now: string): GateEvaluation {
@@ -396,6 +418,11 @@ export function evaluateVerification(inputs: VerificationInputs, now: string): G
   checks.push(
     check('protected', '没有改动受保护路径', inputs.protectedChanges.map((p) => `${p}（需要人工审批）`)),
   );
+  if (inputs.testCount) {
+    const t = inputs.testCount;
+    const failures = testCountFailures(t, !!ev && ev.sha === inputs.headSha);
+    checks.push({ ...check('test-count', '测试数量没有下降', failures), ...(failures.length ? {} : { detail: `基线 ${t.base ?? 0} → 当前 ${t.head}` }) });
+  }
   return evaluation('G6A', checks, { kind: 'commit', value: inputs.headSha }, now);
 }
 

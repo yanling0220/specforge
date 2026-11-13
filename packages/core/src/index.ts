@@ -10,3 +10,4 @@ export * from './spec.ts';
 export * from './design.ts';
 export * from './tasks.ts';
 export * from './workflow.ts';
+export * from './testcount.ts';
