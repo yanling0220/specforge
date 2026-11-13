@@ -87,3 +87,18 @@ export function stageAllChanges(dir: string, base: string): string[] {
   const out = git(dir, ['diff', '--cached', '--name-only', base]);
   return out ? out.split('\n') : [];
 }
+
+/** 指定 commit 中某目录下的全部文件（相对仓库根目录） */
+export function listFilesAt(cwd: string, sha: string, dir: string): string[] {
+  const { code, out } = gitTry(cwd, ['ls-tree', '-r', '--name-only', sha, '--', dir]);
+  return code === 0 && out ? out.split('\n') : [];
+}
+
+/** 读取指定 commit 中的文件；不存在时返回 undefined */
+export function readFileAt(cwd: string, sha: string, path: string): string | undefined {
+  try {
+    return execFileSync('git', ['show', `${sha}:${path}`], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    return undefined;
+  }
+}

@@ -17,9 +17,18 @@ import {
   type ParsedDesign,
   type ParsedSpec,
 } from '@specforge/core';
-import { acCoverage, antiCheat, headSha, isAncestor } from '@specforge/runner';
+import { acCoverage, antiCheat, git, headSha, isAncestor, listFilesAt, readFileAt } from '@specforge/runner';
 import type { GateEvaluation, GateId } from '@specforge/shared';
 import type { ChangeState, Store } from './store.ts';
+
+/** 读取 OpenSpec 文件的来源：工作区，或某个 commit（路径均相对仓库根目录） */
+export interface SourceTree {
+  kind: 'worktree' | 'commit';
+  /** commit 来源的 SHA */
+  sha?: string;
+  list(dir: string): string[];
+  read(path: string): string | undefined;
+}
 
 function walk(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -29,18 +38,40 @@ function walk(dir: string): string[] {
   });
 }
 
+export function workTree(root: string): SourceTree {
+  return {
+    kind: 'worktree',
+    list: (dir) => walk(join(root, dir)).map((f) => relative(root, f)),
+    read: (path) => (existsSync(join(root, path)) ? readFileSync(join(root, path), 'utf8') : undefined),
+  };
+}
+
+export function commitTree(root: string, sha: string): SourceTree {
+  return { kind: 'commit', sha, list: (dir) => listFilesAt(root, sha, dir), read: (path) => readFileAt(root, sha, path) };
+}
+
+/** 进入实现阶段后，代码与证据都绑定 commit，门禁也按 HEAD 中的 OpenSpec 文件评估 */
+export function factsTree(store: Store, state: ChangeState): SourceTree {
+  return COMMITTED_STAGES.includes(state.change.stage) ? commitTree(store.root, headSha(store.root)) : workTree(store.root);
+}
+
+const COMMITTED_STAGES = ['implement', 'closing', 'delivered'];
+
+const changeDir = (changeId: string) => `openspec/changes/${changeId}`;
+
 export interface SpecFacts {
   specs: ParsedSpec[];
   sources: { path: string; text: string }[];
 }
 
 /** 读取 OpenSpec change 目录下的 proposal.md 与 specs/**\/spec.md */
-export function readSpecFacts(store: Store, changeId: string): SpecFacts {
-  const dir = store.openspecChangeDir(changeId);
-  const files = [join(dir, 'proposal.md'), ...walk(join(dir, 'specs')).filter((f) => f.endsWith('spec.md'))]
-    .filter((f) => existsSync(f))
-    .sort();
-  const sources = files.map((f) => ({ path: relative(store.root, f), text: readFileSync(f, 'utf8') }));
+export function readSpecFacts(store: Store, changeId: string, tree: SourceTree = workTree(store.root)): SpecFacts {
+  const dir = changeDir(changeId);
+  const files = [`${dir}/proposal.md`, ...tree.list(`${dir}/specs`).filter((f) => f.endsWith('spec.md'))].sort();
+  const sources = files.flatMap((path) => {
+    const text = tree.read(path);
+    return text === undefined ? [] : [{ path, text }];
+  });
   const specs = sources.filter((s) => s.path.endsWith('spec.md')).map((s) => parseSpec(s.path, s.text));
   return { specs, sources };
 }
@@ -51,17 +82,23 @@ export interface DesignFacts {
   design?: ParsedDesign;
 }
 
-export function readDesignFacts(store: Store, changeId: string): DesignFacts {
-  const file = join(store.openspecChangeDir(changeId), 'design.md');
-  const path = relative(store.root, file);
-  if (!existsSync(file)) return { path, text: '' };
-  const text = readFileSync(file, 'utf8');
+export function readDesignFacts(store: Store, changeId: string, tree: SourceTree = workTree(store.root)): DesignFacts {
+  const path = `${changeDir(changeId)}/design.md`;
+  const text = tree.read(path);
+  if (text === undefined) return { path, text: '' };
   return { path, text, design: parseDesign(path, text) };
 }
 
-export function readTasksFacts(store: Store, changeId: string) {
-  const file = join(store.openspecChangeDir(changeId), 'tasks.md');
-  return existsSync(file) ? parseTasks(relative(store.root, file), readFileSync(file, 'utf8')) : undefined;
+export function readTasksFacts(store: Store, changeId: string, tree: SourceTree = workTree(store.root)) {
+  const path = `${changeDir(changeId)}/tasks.md`;
+  const text = tree.read(path);
+  return text === undefined ? undefined : parseTasks(path, text);
+}
+
+/** 进入实现阶段后，OpenSpec 目录中未提交的改动不参与评估，需要提示 */
+export function uncommittedSpecChanges(store: Store, changeId: string): string[] {
+  const out = git(store.root, ['status', '--porcelain', '--untracked-files=all', '--', changeDir(changeId)]);
+  return out ? out.split('\n').map((l) => l.slice(3)) : [];
 }
 
 export type Evaluations = Partial<Record<GateId, GateEvaluation>>;
@@ -75,7 +112,8 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
   const g1 = evaluateUnderstanding(analysis, questions, change.tier, now);
   const out: Evaluations = { G1: g1 };
 
-  const facts = readSpecFacts(store, change.id);
+  const tree = factsTree(store, state);
+  const facts = readSpecFacts(store, change.id, tree);
   if (change.tier !== 'S') {
     out.G2 = evaluateSpec(
       {
@@ -90,7 +128,7 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
   }
 
   if (change.tier !== 'S' && out.G2) {
-    const design = readDesignFacts(store, change.id);
+    const design = readDesignFacts(store, change.id, tree);
     out.G3 = evaluateDesign(
       {
         design: design.design,
@@ -105,7 +143,7 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
     );
     out.G4 = evaluateTasks(
       {
-        tasks: readTasksFacts(store, change.id),
+        tasks: readTasksFacts(store, change.id, tree),
         acIds: acIdsOf(facts.specs),
         structureIds: design.design?.changes.map((c) => c.id) ?? [],
         designBinding: out.G3.boundTo.value,
@@ -120,7 +158,7 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
       out.G5 = evaluateTdd(
         {
           configured: !!config.tdd?.command,
-          tasks: readTasksFacts(store, change.id),
+          tasks: readTasksFacts(store, change.id, tree),
           records: store.tddEvidence(change.id).map((evidence) => ({ evidence, reachable: isAncestor(store.root, evidence.sha, sha) })),
         },
         now,

@@ -35,7 +35,7 @@ import {
   workspaceFingerprint,
 } from '@specforge/runner';
 import type { Actor, AgentProfile, AgentRole, ProjectConfig } from '@specforge/shared';
-import { readDesignFacts, readSpecFacts, readTasksFacts } from './engine.ts';
+import { commitTree, readDesignFacts, readSpecFacts, readTasksFacts } from './engine.ts';
 import type { Store } from './store.ts';
 import { checkTdd } from './tdd.ts';
 
@@ -227,7 +227,9 @@ export async function cmdAgentReview(store: Store, changeId: string, actor: Acto
     throw new ForgeError('bad_stage', `独立审查在 closing 阶段进行，当前是 ${state.change.stage}`);
   }
   const sha = headSha(store.root);
-  const facts = readSpecFacts(store, changeId);
+  // 审查绑定 commit：规格与方案也读该 commit 中的版本
+  const tree = commitTree(store.root, sha);
+  const facts = readSpecFacts(store, changeId, tree);
   let diff = fullDiff(store.root, state.change.baseSha, sha);
   if (diff.length > MAX_DIFF_CHARS) {
     diff = diff.slice(0, MAX_DIFF_CHARS) + `\n…（diff 过长已截断，请用 Read 查看完整文件）`;
@@ -240,7 +242,7 @@ export async function cmdAgentReview(store: Store, changeId: string, actor: Acto
     acIds: acIdsOf(facts.specs),
     // 方案（含结构变更清单）供审查判断“计划外新增”
     sources: (() => {
-      const d = readDesignFacts(store, changeId);
+      const d = readDesignFacts(store, changeId, tree);
       return d.text ? [...facts.sources, { path: d.path, text: d.text }] : facts.sources;
     })(),
     decisions: state.questions
@@ -288,7 +290,10 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
   if (!config.tdd?.command) {
     throw new ForgeError('no_tdd', '.specforge/config.json 缺少 tdd.command（只跑指定测试的命令，如 "node --test {files}"），无法执行 G5 TDD 门');
   }
-  const tasks = readTasksFacts(store, changeId);
+  // 工作区已确认干净：实现基于 HEAD，材料也读 HEAD 中的版本
+  const base = headSha(store.root);
+  const tree = commitTree(store.root, base);
+  const tasks = readTasksFacts(store, changeId, tree);
   if (!tasks?.tasks.length) throw new ForgeError('no_tasks', `openspec/changes/${changeId}/tasks.md 中没有任务`);
   let task;
   if (opts.taskId) {
@@ -302,8 +307,8 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
     if (!task) throw new ForgeError('no_task', '没有可做的任务（全部完成，或剩余任务的依赖未完成）');
   }
 
-  const facts = readSpecFacts(store, changeId);
-  const design = readDesignFacts(store, changeId);
+  const facts = readSpecFacts(store, changeId, tree);
+  const design = readDesignFacts(store, changeId, tree);
   const tasksPath = `openspec/changes/${changeId}/tasks.md`;
   const policy = implementPolicy(config.protectedPaths);
   const ctx = {
@@ -313,7 +318,7 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
     sources: [
       ...facts.sources,
       ...(design.text ? [{ path: design.path, text: design.text }] : []),
-      { path: tasksPath, text: readFileSync(join(store.root, tasksPath), 'utf8') },
+      { path: tasksPath, text: tree.read(tasksPath)! },
     ],
     decisions: state.questions
       .filter((q) => q.status === 'confirmed')
@@ -323,7 +328,6 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
     conventions: readConventions(store.root),
   };
 
-  const base = headSha(store.root);
   const wt = createWorktree(store.root, base);
   const draft = emptyImplementDraft();
   const reject = (type: string, reason: string, extra: Record<string, unknown> = {}): never => {

@@ -38,7 +38,7 @@ import type {
 } from '@specforge/shared';
 import { cmdAgentAnalyze, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
 import { checkTdd } from './tdd.ts';
-import { bindingNow, evaluateAll, readTasksFacts } from './engine.ts';
+import { bindingNow, evaluateAll, factsTree, readTasksFacts, uncommittedSpecChanges } from './engine.ts';
 import { defaultConfig, FORGE_DIR, parseActor, Store, type ChangeState } from './store.ts';
 
 const HELP = `SpecForge CLI（第一期）
@@ -236,6 +236,10 @@ function cmdStatus(store: Store, id: string): void {
   const oob = store.outOfBand(id, state);
   if (oob) console.log(`⚠️  状态文件被绕过引擎修改（${oob}）`);
   const evals = evaluateAll(store, state);
+  const tree = factsTree(store, state);
+  const pending = tree.kind === 'commit' ? uncommittedSpecChanges(store, id) : [];
+  console.log(`门禁按${tree.kind === 'commit' ? ` HEAD（${tree.sha!.slice(0, 7)}）` : '工作区'}中的 OpenSpec 文件评估`);
+  if (pending.length) console.log(`⚠️  以下 OpenSpec 改动尚未提交，不参与评估：${pending.join(', ')}`);
   const upstream = upstreamGates(change.stage, change.tier).filter((g) => evals[g]?.status !== 'passed');
   if (upstream.length) console.log(`⚠️  上游门禁已失效：${upstream.join(', ')}（需要重新满足后才能继续推进）`);
   console.log();
