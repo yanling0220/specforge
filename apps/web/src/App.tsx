@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Role } from '@specforge/shared';
-import { api, UNAUTHORIZED_EVENT } from './api.ts';
+import { api, PROJECT_ERROR, PROJECT_ID, UNAUTHORIZED_EVENT } from './api.ts';
 import { MeProvider, useMe } from './me.tsx';
 import { useData, useLive, type LiveStatus } from './live.ts';
 import { href, parseRoute, type Route } from './model.ts';
@@ -9,6 +9,8 @@ import { ChangeView } from './views/ChangeView.tsx';
 import { EvidenceView } from './views/EvidenceView.tsx';
 import { Login } from './views/Login.tsx';
 import { Timeline } from './views/Timeline.tsx';
+import { ProjectPicker } from './views/ProjectPicker.tsx';
+import { rememberProject } from './project.ts';
 
 function useRoute(): Route {
   const [route, setRoute] = useState(() => parseRoute(location.hash));
@@ -23,21 +25,65 @@ function useRoute(): Route {
 const LIVE_TEXT: Record<LiveStatus, string> = { connecting: '连接中', live: '实时', offline: '已断开，重连中' };
 
 export function App() {
+  if (PROJECT_ERROR) return <div className="app"><main><div className="error">{PROJECT_ERROR}</div><a href="/">返回项目入口</a></main></div>;
+  return <ConnectedApp />;
+}
+
+function ConnectedApp() {
+  const mode = useData(async () => {
+    if (PROJECT_ID) return 'project';
+    const response = await fetch('/api/health', { cache: 'no-store' });
+    if (!response.ok) throw new Error('无法读取服务模式');
+    const health = await response.json() as { mode?: string };
+    return health.mode === 'multi-project' ? 'picker' : 'single';
+  }, []);
+  if (!mode.data) return <div className="app"><main>{mode.error ? <div className="error">{mode.error.message}</div> : '正在连接…'}</main></div>;
+  if (mode.data === 'picker') return <ProjectPicker />;
+  return <ProjectConsole />;
+}
+
+function ProjectConsole() {
   const [authVersion, setAuthVersion] = useState(0);
-  const me = useData(() => api.me(), [authVersion]);
+  const me = useData(async () => {
+    const session = await api.me();
+    if (PROJECT_ID && session.user) {
+      const project = await api.project();
+      if (project.id !== PROJECT_ID) throw new Error('项目上下文不匹配，拒绝加载');
+      rememberProject(PROJECT_ID);
+    }
+    return session;
+  }, [authVersion]);
   useEffect(() => {
-    const on = () => setAuthVersion((v) => v + 1);
+    if (!PROJECT_ID || !me.data?.user || me.loading || me.error) return;
+    const projectId = PROJECT_ID;
+    const remember = () => rememberProject(projectId);
+    remember();
+    window.addEventListener('hashchange', remember);
+    return () => window.removeEventListener('hashchange', remember);
+  }, [me.data, me.loading, me.error]);
+  useEffect(() => {
+    const on = () => {
+      if (PROJECT_ID) rememberProject(PROJECT_ID, true);
+      setAuthVersion((version) => version + 1);
+    };
     window.addEventListener(UNAUTHORIZED_EVENT, on);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, on);
   }, []);
-  if (!me.data) return <div className="app"><main>{me.error ? <div className="error">无法连接 server：{me.error.message}</div> : null}</main></div>;
-  if (me.data.required && !me.data.user) return <div className="app"><main><Login onLogin={() => setAuthVersion((v) => v + 1)} /></main></div>;
-  const logout = me.data.user ? () => void api.logout().then(() => setAuthVersion((v) => v + 1)) : undefined;
+  if (me.loading || me.error || !me.data) return <div className="app"><ProjectHeader /><main>{me.error ? <div className="error">无法连接项目：{me.error.message} <button onClick={() => setAuthVersion((version) => version + 1)}>重试</button></div> : '正在核对登录状态…'}</main></div>;
+  if (me.data.required && !me.data.user) return <div className="app"><ProjectHeader /><main><Login onLogin={() => setAuthVersion((v) => v + 1)} /></main></div>;
+  const logout = me.data.user ? () => void api.logout().then(() => {
+    if (PROJECT_ID) rememberProject(PROJECT_ID, true);
+    setAuthVersion((version) => version + 1);
+  }).catch(() => setAuthVersion((version) => version + 1)) : undefined;
   return (
     <MeProvider user={me.data.user}>
       <Console onLogout={logout} />
     </MeProvider>
   );
+}
+
+function ProjectHeader() {
+  return <header className="topbar"><span className="brand">SpecForge</span>{PROJECT_ID && <><span className="project-current">项目：{PROJECT_ID}</span><a className="project-switch" href="/">切换项目</a></>}</header>;
 }
 
 function Console({ onLogout }: { onLogout?: () => void }) {
@@ -53,6 +99,7 @@ function Console({ onLogout }: { onLogout?: () => void }) {
         <a className="brand" href={href({ page: 'board' })}>
           SpecForge
         </a>
+        {PROJECT_ID && <><span className="project-current">项目：{PROJECT_ID}</span><a className="project-switch" href="/">切换项目</a></>}
         <nav>
           <a className={route.page === 'board' ? 'active' : ''} href={href({ page: 'board' })}>
             看板

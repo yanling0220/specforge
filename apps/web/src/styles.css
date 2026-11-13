@@ -113,6 +113,20 @@ h2 {
   font-size: 16px;
   color: var(--text);
 }
+.project-current {
+  font-weight: 600;
+}
+.project-history {
+  max-width: 640px;
+  margin: 20px auto;
+}
+.project-link {
+  display: inline-block;
+  padding: 8px 16px;
+  margin: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
 .topbar nav {
   display: flex;
   gap: 12px;

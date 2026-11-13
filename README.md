@@ -73,7 +73,7 @@ sf user add pam --role product --as devon:dev
 链接中不携带登录令牌，打开链接本身不会确认答案。
 其他人修订答案时，旧操作表单会关闭；需要核对新版本后重新确认。
 
-## 多项目服务（T4.3b/c）
+## 多项目服务（T4.3b～d）
 
 管理员先在每个独立 Git 仓库中执行 `sf init` 并启用用户名册，再编写服务端项目登记文件，例如 `/srv/specforge/projects.json`：
 
@@ -88,6 +88,7 @@ sf user add pam --role product --as devon:dev
 ```
 
 ```bash
+npm run web:build
 node /opt/specforge/apps/server/src/main.ts --projects /srv/specforge/projects.json --port 4317
 ```
 
@@ -95,7 +96,13 @@ node /opt/specforge/apps/server/src/main.ts --projects /srv/specforge/projects.j
 
 各项目独立登录：`POST /p/alpha/api/auth/login`，JSON 正文为 `{ "name": "用户名", "token": "登录令牌" }`；会话 Cookie 的名称与路径按项目隔离。令牌不写入登记文件或 URL。读接口使用 `/p/alpha/api/...`，订阅使用 `/p/alpha/ws?changeId=<id>&after=<seq>`；B 的接口对应 `/p/beta/...`，需另行登录。
 
-后台查询、订阅与既有业务写接口均按项目隔离，写操作仍要求有效会话及对应角色；Web 项目切换和 Postgres 尚未实现。每个项目使用独立内存 SQLite 索引，不能同时传 `--db`。全局 `/api/health` 只报告服务模式，不提供项目列表。不可用项目返回通用 `503 project_unavailable`，健康项目继续服务；启动时不可用的项目需修复后重启，运行中修复可恢复访问，已关闭的订阅需重连。
+浏览器打开 `http://127.0.0.1:4317/`，输入管理员提供的项目 ID；也可直接访问 `/p/alpha/#/changes/<变更ID>/analysis/<Q-n>`。登录后保留原问题链接，本人确认只绑定当前答案版本。每个项目分别登录，同名账号也不共用会话。
+
+顶栏「切换项目」返回入口。本标签页访问记录只列出已访问且重新核对权限后仍可用的项目，保留各项目最后的页面链接；没有服务器项目目录。切换会重新加载页面，重置角色选择、未提交表单、请求状态和 WebSocket 游标。返回旧页面也会重新核对登录；未提交草稿不保留。退出或撤销某项目会话不影响其他项目。
+
+后台查询、订阅与既有业务写接口均按项目隔离，写操作仍要求有效会话及对应角色；Postgres 尚未实现。每个项目使用独立内存 SQLite 索引，不能同时传 `--db`。全局 `/api/health` 只报告服务模式，不提供项目列表。不可用项目返回通用 `503 project_unavailable`，健康项目继续服务；启动时不可用的项目需修复后重启，运行中修复可恢复访问，已关闭的订阅需重连。未知或不可用的项目入口仍提供通用外壳与切换链接，不回退读取其他项目。
+
+浏览器验收：先 `npm run web:build`，再运行 `npm run web:e2e:projects`（需要本机 Chrome，可用 `CHROME` 指定路径）；既有单项目回归仍为 `npm run web:e2e`。两者都只创建临时项目，不调用模型。
 
 省略 `--projects` 仍使用原单项目 CLI / Web 模式。自动日志锚定按各仓库原有配置运行；非本机访问仍需 HTTPS 反向代理。
 

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { API_BASE, UNAUTHORIZED_EVENT } from './api.ts';
+import { socketUrl } from './project.ts';
 
 // 订阅 server 的 WebSocket 推送。收到 event / changes / rebuilt 时 version 加一，
 // 页面以 version 作为依赖重新拉取数据（数据本身仍以 REST 读取为准）。
@@ -18,17 +20,14 @@ export function useLive(changeId?: string): { version: number; status: LiveStatu
     lastSeq.current = undefined;
 
     const connect = () => {
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const params = new URLSearchParams();
-      if (changeId) params.set('changeId', changeId);
-      if (lastSeq.current !== undefined) params.set('after', String(lastSeq.current));
-      ws = new WebSocket(`${proto}://${location.host}/ws?${params}`);
+      ws = new WebSocket(socketUrl(API_BASE, location.origin, changeId, lastSeq.current));
       setStatus('connecting');
       ws.onopen = () => {
         retry = 0;
         setStatus('live');
       };
       ws.onmessage = (e) => {
+        if (stopped) return;
         const msg = JSON.parse(String(e.data)) as { type: string; lastSeq?: number; event?: { seq: number } };
         if (msg.type === 'hello') {
           // 断线期间可能有变化：重连后刷新一次
@@ -40,8 +39,12 @@ export function useLive(changeId?: string): { version: number; status: LiveStatu
         if (msg.type === 'rebuilt') lastSeq.current = 0;
         if (msg.type === 'changes' || msg.type === 'rebuilt') setVersion((v) => v + 1);
       };
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         if (stopped) return;
+        if (event.code === 1008) {
+          window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+          return;
+        }
         setStatus('offline');
         timer = setTimeout(connect, Math.min(1000 * 2 ** retry++, 15_000));
       };

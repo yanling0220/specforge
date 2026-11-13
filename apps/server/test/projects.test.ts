@@ -215,8 +215,11 @@ describe('多项目 REST 与会话（T4.3b）', () => {
     const child = fork(worker, [first.root, 'hold'], { execArgv: [], stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     children.push(child);
     const exited = once(child, 'exit');
-    await once(child, 'message');
-    const locked = once(child, 'message'); child.send('go'); await locked;
+    let workerError = '';
+    child.stderr!.on('data', (data) => { workerError += String(data); });
+    const message = () => Promise.race([once(child, 'message'), exited.then(([code, signal]) => { throw new Error(`持锁测试进程提前退出（${code ?? signal}）：${workerError}`); })]);
+    await message();
+    const locked = message(); child.send('go'); await locked;
     const post = () => fetchProject('a', '/api/changes/same/questions/Q-1/answer', session, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role: 'dev', text: 'after lock' }) });
     const blocked = await post();
     expect(blocked.status).toBe(409);
@@ -386,6 +389,40 @@ describe('多项目 WebSocket（T4.3b）', () => {
 });
 
 describe('服务入口（T4.3b）', () => {
+  it('多项目 Web 外壳无需登录且不枚举项目，静态资源不受项目损坏影响，未知 API 不回退 HTML', async () => {
+    const first = project('A');
+    const web = mkdtempSync(join(tmpdir(), 'sf-project-web-'));
+    directories.push(web);
+    mkdirSync(join(web, 'assets'));
+    writeFileSync(join(web, 'index.html'), '<div id="root">public-shell</div>');
+    writeFileSync(join(web, 'assets', 'test.js'), 'export const publicAsset = true;');
+    symlinkSync(first.path('config.json'), join(web, 'assets', 'escape.json'));
+    const server = await startMultiProjectServer({ projects: [{ id: 'a', root: first.root }], port: 0, webDir: web });
+    servers.push(server);
+    const shell = await (await fetch(`${server.url}/`)).text();
+    expect(shell).toContain('public-shell');
+    expect(shell).not.toContain(first.root);
+    for (const path of ['/p/a', '/p/a/', '/p/unknown/', '/p/Invalid/']) expect(await (await fetch(`${server.url}${path}`)).text()).toBe(shell);
+    const asset = await fetch(`${server.url}/assets/test.js`);
+    expect(asset.headers.get('content-type')).toContain('javascript');
+    expect(asset.headers.get('cache-control')).toBe('no-store');
+    expect(await asset.text()).toContain('publicAsset');
+    expect(await (await fetch(`${server.url}/assets/escape.json`)).text()).not.toContain('confirmPolicy');
+    for (const path of ['/p/a/api/project', '/p/a/api/nope']) {
+      const response = await fetch(`${server.url}${path}`);
+      expect(response.status).toBe(401);
+      expect(response.headers.get('content-type')).toContain('json');
+    }
+    for (const path of ['/api/projects', '/api/changes', '/p/unknown/api/project']) {
+      const response = await fetch(`${server.url}${path}`);
+      expect(response.status).toBe(404);
+      expect(response.headers.get('content-type')).toContain('json');
+    }
+    writeFileSync(first.path('config.json'), 'invalid');
+    expect(await (await fetch(`${server.url}/p/a/`)).text()).toBe(shell);
+    expect((await fetch(`${server.url}/p/a/api/auth/me`)).status).toBe(503);
+  });
+
   it('--projects 可从项目外启动，并拒绝与 --db 混用', async () => {
     const store = project('A');
     const file = join(store.root, 'projects.json');

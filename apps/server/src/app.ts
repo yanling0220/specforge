@@ -1,5 +1,3 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { extname, join, normalize, sep } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { activeClaims, ForgeError, isResolved, missingRoles, pausedTasks, pipelineFor, publicUsers, resolveIdentity, upstreamGates } from '@specforge/core';
 import {
@@ -26,6 +24,7 @@ import {
 import type { Actor, AnswerReference, ReviewFinding, Role } from '@specforge/shared';
 import { Auth, mountAuthRoutes, type AuthEnv } from './auth.ts';
 import type { ForgeIndex } from './index-db.ts';
+import { webResponse } from './web.ts';
 
 // 只读 REST 接口（T3.1）。写操作在 T3.4 加入，届时仍然只能走 Store.mutate。
 // 列表与过滤查索引；详情、门禁评估、链校验直接读文件并实时计算（不缓存）。
@@ -35,17 +34,6 @@ const intParam = (v: string | undefined): number | undefined => {
   const n = Number(v);
   if (!Number.isInteger(n) || n < 0) throw new ForgeError('bad_arg', `参数必须是非负整数：${v}`);
   return n;
-};
-
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.json': 'application/json',
-  '.ico': 'image/x-icon',
-  '.png': 'image/png',
-  '.woff2': 'font/woff2',
 };
 
 export interface AppOptions {
@@ -141,16 +129,10 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
   });
 
   app.notFound((c) => {
-    const web = opts.webDir;
-    const isApi = c.req.path.startsWith('/api/') || c.req.path === '/ws';
-    if (c.req.method === 'GET' && !isApi && web && existsSync(join(web, 'index.html'))) {
-      // 只允许读 webDir 内的文件；其余路径交给前端路由（index.html）
-      const rel = normalize(decodeURIComponent(c.req.path)).replace(/^[/\\]+/, '');
-      const file = join(web, rel);
-      const inside = file.startsWith(web.endsWith(sep) ? web : web + sep);
-      const target = inside && existsSync(file) && statSync(file).isFile() ? file : join(web, 'index.html');
-      return c.body(readFileSync(target), 200, { 'content-type': MIME[extname(target)] ?? 'application/octet-stream' });
-    }
+    const path = localPath(c);
+    const isApi = path === '/api' || path.startsWith('/api/') || path === '/ws';
+    const page = c.req.method === 'GET' && !isApi ? webResponse(opts.webDir, decodeURIComponent(path)) : undefined;
+    if (page) return page;
     return c.json({ error: { code: 'not_found', message: `没有这个接口：${c.req.method} ${c.req.path}` } }, 404);
   });
 

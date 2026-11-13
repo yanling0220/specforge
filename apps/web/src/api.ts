@@ -17,6 +17,7 @@ import type {
   TddEvidence,
   VerificationEvidence,
 } from '@specforge/shared';
+import { projectBase, projectFromPath } from './project.ts';
 
 // server（apps/server）只读接口的类型与请求函数
 
@@ -103,6 +104,13 @@ export interface ChainStatus {
 }
 
 export const UNAUTHORIZED_EVENT = 'specforge:unauthorized';
+const projectScope = (() => {
+  try { return { id: typeof location === 'undefined' ? undefined : projectFromPath(location.pathname) }; }
+  catch (error) { return { error: (error as Error).message }; }
+})();
+export const PROJECT_ID = projectScope.id;
+export const PROJECT_ERROR = projectScope.error;
+export const API_BASE = projectBase(PROJECT_ID);
 
 export class ApiError extends Error {
   status: number;
@@ -125,7 +133,8 @@ async function get<T>(path: string): Promise<T> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
+  if (PROJECT_ERROR) throw new ApiError(400, 'bad_project', PROJECT_ERROR);
+  const res = await fetch(`${API_BASE}${path}`, { ...init, credentials: 'same-origin', cache: 'no-store' });
   const body = (await res.json().catch(() => ({}))) as { error?: { code: string; message: string } };
   if (!res.ok) {
     // 会话过期、用户被停用或令牌被重置：通知界面回到登录页
@@ -145,6 +154,7 @@ function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
 const PAGE = 1000;
 
 export const api = {
+  project: () => get<{ id: string; readOnly: boolean }>('/api/project'),
   changes: () => get<{ changes: ChangeRow[] }>('/api/changes').then((r) => r.changes),
   change: (id: string) => get<ChangeDetail>(`/api/changes/${enc(id)}`),
   gates: (id: string) => get<GatesResponse>(`/api/changes/${enc(id)}/gates`),

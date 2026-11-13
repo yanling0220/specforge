@@ -16,7 +16,8 @@ const HELP = `SpecForge server + Web 控制台
   sf-server --projects <项目登记.json> [--port 4317] [--host 127.0.0.1]
   配置：{"version":1,"projects":[{"id":"demo","root":"/srv/demo"}]}
   项目接口：/p/<项目ID>/api/...；登录 /p/<项目ID>/api/auth/login；订阅 /p/<项目ID>/ws。
-  各项目使用独立内存索引和读写接口；不支持 --db，多项目 Web 界面尚未实现。
+  Web 入口：/；项目链接：/p/<项目ID>/#/changes/<变更ID>/analysis/<问题ID>。
+  各项目使用独立内存索引和读写接口；不支持 --db，不公开项目目录。
 
 REST
   GET /api/health
@@ -57,6 +58,7 @@ async function main(): Promise<void> {
     if (opts.db) throw new ForgeError('bad_arg', '--projects 不能与 --db 同时使用');
     const server = await startMultiProjectServer({ projects: readProjects(opts.projects), port, host: opts.host });
     console.log(`SpecForge 多项目服务：${server.url}（项目独立登录，接口前缀 /p/<项目ID>）`);
+    console.log(existsSync(join(DEFAULT_WEB_DIR, 'index.html')) ? `Web 控制台：${server.url}/（使用管理员提供的项目 ID 或 /p/<项目ID>/ 链接）` : 'Web 控制台未构建：npm run web:build');
     if (opts.host && !isLoopback(opts.host)) console.log('非本机访问请放在 HTTPS 反向代理之后使用');
     const stop = () => void server.close().then(() => process.exit(0));
     process.on('SIGINT', stop);

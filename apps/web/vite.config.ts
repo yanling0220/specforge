@@ -12,6 +12,7 @@ export default defineConfig({
     proxy: {
       '/api': target,
       '/ws': { target: target.replace(/^http/, 'ws'), ws: true },
+      '^/p/[^/]+/(api|ws)(/|\\?|$)': { target, ws: true },
     },
   },
 });

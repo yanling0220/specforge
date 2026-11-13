@@ -9,6 +9,7 @@ import { createProjectRuntime, type ProjectRuntime } from './project-runtime.ts'
 import type { AuthEnv } from './auth.ts';
 import type { ForgeIndex } from './index-db.ts';
 import { registerProjects, type ProjectRegistration } from './projects.ts';
+import { webResponse } from './web.ts';
 
 export type { PushMessage } from './project-runtime.ts';
 
@@ -35,6 +36,7 @@ export interface MultiProjectOptions {
   host?: string;
   port?: number;
   pollMs?: number;
+  webDir?: string;
 }
 
 export interface RunningMultiProjectServer {
@@ -103,6 +105,11 @@ export async function startMultiProjectServer(opts: MultiProjectOptions): Promis
     await next();
   });
   app.get('/api/health', (context) => context.json({ ok: true, mode: 'multi-project', readOnly: false }));
+  const frontend: import('hono').Handler<AuthEnv> = (context) => webResponse(opts.webDir ?? DEFAULT_WEB_DIR, context.req.path.startsWith('/assets/') ? context.req.path : '/') ?? context.json({ error: { code: 'web_unavailable', message: 'Web 控制台未构建，请先运行 npm run web:build' } }, 503);
+  app.get('/', frontend);
+  app.get('/assets/*', frontend);
+  app.get('/p/:id', frontend);
+  app.get('/p/:id/', frontend);
   for (const project of projects) {
     const basePath = `/p/${project.id}`;
     try {
