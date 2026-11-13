@@ -5,17 +5,17 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Codex（GPT-6） · T4.2 复核完成
+最后更新：2026-11-13 · Codex（GPT-6） · T4.3a 范围草案完成，待用户确认
 
 ---
 
 ## 当前快照
 
-- 测试：218 个全部通过（`npm test`，26 个文件）；浏览器端到端 `npm run web:e2e` 通过（含问题深链接登录、外部 CLI 修订后的实时刷新与旧确认表单关闭）；类型检查无错误（`npm run typecheck`，含 `apps/web`）；`npm run web:build` 通过
-- 远程：https://github.com/yanling0220/specforge （`main`）；T4.4 已推送（`edbb883`）；本次 T4.2 复核与修复仅本地提交，待用户同意后推送
-- **下一个建议任务：`T4.3`**（先明确多项目隔离、文件与 Postgres 的职责及迁移方式）。可选：用 DeepSeek 在 `/tmp/sf-t35` 重跑修订模式，验证 spec-writer 会使用 `outOfScope`（约 2 万 token，需用户同意）；`T2.3c` 需要 Codex 登录。
+- 测试：本轮重新验证 218 个全部通过（`npm test`，26 个文件），类型检查无错误（`npm run typecheck`，含 `apps/web`）。Web 构建与浏览器端到端在上轮 T4.2 复核时通过（含问题深链接登录、外部 CLI 修订后的实时刷新与旧确认表单关闭）；本轮仅文档变更，不重复运行
+- 远程：https://github.com/yanling0220/specforge （`main`）；T4.4（`edbb883`）与 T4.2（`3f42aa1`）均已推送；本次 T4.3a 为本地方案提交，未推送、不含业务代码变更
+- **下一个建议动作：确认 `T4.3a` 首版边界**（见 [范围方案](t4.3-plan.md)）：建议先沿用项目独立账号、登记服务器已有仓库、SQLite 默认且 Postgres 可选；用户验收后再开始 `T4.3b`，不自动继续。可选：用 DeepSeek 在 `/tmp/sf-t35` 重跑修订模式，验证 spec-writer 会使用 `outOfScope`（约 2 万 token，需用户同意）；`T2.3c` 需要 Codex 登录。
 - **使用提示**：Web 控制台需先 `npm run web:build`，再在项目目录运行 server；在控制台修改需要启用用户名册（`sf user add … --admin`）。已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit。浏览器端到端：`npm run web:e2e`（需本机 Chrome）。
-- **与用户的协作约定**：每完成一个任务就停下汇报并等待确认，推送前先问；给出多种改法时逐个写明优缺点。
+- **与用户的协作约定**：每完成一个任务就汇报当前工作的整体状态、验证结果和遗留项，给出下一步计划与选项，等待用户选择；需要用户参与或产生费用的验证先询问，推送前先问；给出多种改法时逐个写明优缺点。
 
 ---
 
@@ -67,7 +67,13 @@
 |---|---|---|---|
 | T4.1 | 身份与登录、角色权限（目前身份是自己声明的） | done | 用户名册 `.specforge/users.json`（`sf user add / list / set / token / disable`），修改写入哈希链，篡改即拒绝使用；CLI 身份（`whoami`、`--as`、`--on-behalf`）按名册校验角色；server 令牌登录（HttpOnly + SameSite=Strict 会话、12 小时过期、停用或重置令牌立即失效、失败 5 次锁定 10 分钟），启用名册后接口与 WebSocket 都需要登录，无名册时只能监听本机；Web 登录页与 401 自动回到登录。测试：`core/test/users.test.ts`、`cli/test/users.test.ts`、`server/test/auth.test.ts`。实测：`/tmp/sf-t33` 启用名册、角色与代录校验、curl 登录、登录页截图。依据见 design.md 9.3 |
 | T4.2 | 产品方直接登录或通过链接确认问题（替代代录） | done | T4.1 + T3.4 已覆盖本人登录确认；浏览器验证登录后保留问题深链接，确认身份来自会话且无代录人。复核发现旧页面可能确认 / 驳回新答案，已补必填 `rev` + `answerHash` 的 HTTP 契约与引擎原子校验（冲突 409、状态和事件不变），实时修订关闭旧表单。新增 6 个回归测试；全量 218/218、typecheck、Web 构建及浏览器端到端通过。普通链接仍需登录；免登录一次性确认链接未实现，属于另行定义的需求，见 design.md 9.7 |
-| T4.3 | Postgres、多项目 | todo | |
+| T4.3 | Postgres、多项目 | doing | 2026-11-13 · Codex（GPT-6）；用户选定单服务器托管多个项目、文件为准、Postgres 先作索引的方向；先做 T4.3a 范围设计，业务实现尚未开始 |
+| T4.3a | 范围设计与验收拆分 | verify | 2026-11-13 · Codex（GPT-6）；[范围方案](t4.3-plan.md) 已完成，包含已确认方向、建议首版边界、10 条验收标准与子任务依赖；install、typecheck、218/218 测试通过。待用户验收边界，尚未实现多项目或 Postgres |
+| T4.3b | 服务端多项目上下文与独立会话（先只读） | todo | 依赖 T4.3a；项目登记、路径校验、REST / WebSocket / 会话隔离，不开放多项目写操作；验收范围见方案 |
+| T4.3c | 仓库级跨进程写入保护与多项目写接口 | todo | 依赖 T4.3b；所有引擎写入口共用仓库级保护，多进程并发及中断恢复测试，不能只锁 HTTP |
+| T4.3d | Web 多项目入口、切换及本人确认 | todo | 依赖 T4.3c；项目独立登录、深链接、角色 / 表单 / 缓存 / 重连游标隔离，SQLite 下多项目浏览器验收 |
+| T4.3e | 可选 Postgres 索引与迁移 / 回退 | todo | 依赖 T4.3d；异步索引接口、项目级查询与唯一键、schema、失败状态、SQLite / Postgres 契约测试；文件仍为权威 |
+| T4.3f | 真实 Postgres 与多项目全量验收 | todo | 依赖 T4.3e；真实测试库、浏览器、迁移 / 回退、故障和兼容性验证；需要环境时先询问，不以假客户端代替真实验证 |
 | T4.4 | 哈希链头定期锚定（git 提交或服务端），防止整条链被重写 | done | `sf log anchor` 保存到独立 `specforge-audit` 分支；`audit.anchorIntervalMs` 启用 server 定期锚定；CLI / REST 对比全部历史锚定；`sf log verify --anchor <可信 commit>` 检测本地分支整体重建；控制台展示锚定状态与异常原因。新增 14 个测试（`core/test/events-policy.test.ts`、`store/test/audit.test.ts`、`server/test/server.test.ts`），覆盖整链重算、截断/清空、并发冲突、受损审计历史、暂存区不变和独立 Git 仓库保存。全量 212/212、typecheck、Web 构建及浏览器端到端通过；信任边界见 design.md 7.1 |
 | T4.5 | IM 通知（待确认问题、待签字） | todo | |
 
@@ -96,6 +102,14 @@
 ---
 
 ## 实测记录
+
+### 2026-11-13 · Codex（GPT-6）· T4.3a 范围设计
+
+- 用户确认单服务器托管多个 Git 项目、文件为权威、Postgres 先作索引和分步验收的方向；本轮只完成范围草案，没有开始业务实现。
+- 开工核对 `origin/main` 与本地均为 T4.2 提交 `3f42aa1`、工作区干净；修正快照中仍写着 T4.2 未推送的旧记录，并补齐 T4.2 变更日志的提交号。
+- `npm install --cache /tmp/specforge-npm-cache --no-audit --no-fund` 完成；`npm run typecheck`、`npm test` 通过，仍为 218/218（26 个文件）。HTTP / WebSocket 测试在沙箱外运行；本机仍无 rtk，按已知环境说明使用原生命令。
+- 新增 `docs/t4.3-plan.md`，同步 design.md 与本任务清单；项目独立账号、已有仓库登记、可选 Postgres 等首版边界待用户验收。未安装或连接数据库、未调用真实模型，未重复执行上轮已通过的 Web 构建与浏览器测试。
+- T4.3a 为文档交付，状态为 verify；T4.3 整体仍 doing，T4.3b～f 均未开始。本次本地提交后停下，不自动开始实现或推送。
 
 ### 2026-11-13 · Codex（GPT-6）· T4.2 复核（假客户端与临时示例项目）
 
@@ -170,4 +184,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 用户选定方案：spec-writer 可向 proposal「范围外」追加引用已确认问题的条目（只追加） · `9ece245`
 - 2026-11-13 · Claude Code (Opus 5.5) · — · 当日收工：更新快照，打节点 `checkpoint-2026-11-13` · `24163e9`
 - 2026-11-13 · Codex（GPT-6） · T4.4 · Git 链头锚定、server 定时器、可信 commit 校验、控制台锚定状态；新增 14 个测试，全量 212/212、typecheck、Web 构建及浏览器端到端通过 · `edbb883`
-- 2026-11-13 · Codex（GPT-6） · T4.2 · 复核产品本人登录确认；修复旧页面确认 / 驳回新答案，绑定版本与哈希、实时修订关闭旧表单；新增 6 个回归测试，全量 218/218、typecheck、Web 构建及浏览器端到端通过 · （本次提交）
+- 2026-11-13 · Codex（GPT-6） · T4.2 · 复核产品本人登录确认；修复旧页面确认 / 驳回新答案，绑定版本与哈希、实时修订关闭旧表单；新增 6 个回归测试，全量 218/218、typecheck、Web 构建及浏览器端到端通过 · `3f42aa1`
+- 2026-11-13 · Codex（GPT-6） · T4.3a · 单服务器多项目范围草案、文件 / 索引职责、权限与并发边界、10 条验收标准及分步任务；仅文档，待用户确认；基线 218/218、typecheck 通过 · （本次提交）
