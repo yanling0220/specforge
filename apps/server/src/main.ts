@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ForgeError } from '@specforge/core';
 import { Store } from '@specforge/store';
-import { DEFAULT_WEB_DIR, startServer } from './server.ts';
+import { DEFAULT_WEB_DIR, isLoopback, startServer } from './server.ts';
 
 const HELP = `SpecForge server（只读）+ Web 控制台
 
@@ -25,7 +25,9 @@ REST
 WebSocket
   /ws[?changeId=&after=]                         推送 hello / event / changes / rebuilt
 
-注意：目前没有登录（T4.1），默认只监听本机。`;
+登录：启用用户名册（sf user add）后，用 sf user add / sf user token 生成的令牌登录；
+  POST /api/auth/login {name, token}、GET /api/auth/me、POST /api/auth/logout。
+  未启用名册时无需登录，且只能监听本机。`;
 
 const { values: opts } = parseArgs({
   options: {
@@ -45,9 +47,10 @@ async function main(): Promise<void> {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new ForgeError('bad_arg', '--port 必须是 0–65535 的整数');
   const store = Store.find(process.cwd());
   const server = await startServer({ store, port, host: opts.host, dbPath: opts.db });
-  if (opts.host && !['127.0.0.1', 'localhost', '::1'].includes(opts.host)) {
-    console.log('⚠️  正在监听非本机地址；目前没有登录，任何能访问该地址的人都能读取全部数据');
+  if (opts.host && !isLoopback(opts.host)) {
+    console.log('⚠️  正在监听非本机地址：登录令牌与会话 Cookie 以明文 HTTP 传输，请放在 HTTPS 反向代理之后使用');
   }
+  console.log(store.users() ? '已启用用户名册：需要用令牌登录' : '未启用用户名册：无需登录，仅限本机访问（sf user add 启用）');
   console.log(`SpecForge server：${server.url}（项目 ${store.root}，${server.index.changes().length} 个 change）`);
   console.log(existsSync(join(DEFAULT_WEB_DIR, 'index.html')) ? `Web 控制台：${server.url}/` : 'Web 控制台未构建：npm run build -w @specforge/web（或开发时 npm run dev -w @specforge/web）');
   const stop = () => void server.close().then(() => process.exit(0));

@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { serve, type ServerType } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import type { WSContext } from 'hono/ws';
+import { ForgeError } from '@specforge/core';
 import type { Store } from '@specforge/store';
 import type { ForgeEvent } from '@specforge/shared';
 import { createApp } from './app.ts';
@@ -47,8 +48,16 @@ interface Client {
 
 const PAGE = 1000;
 
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1']);
+export const isLoopback = (host: string) => LOOPBACK.has(host);
+
 export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const { store } = opts;
+  const hostname = opts.host ?? '127.0.0.1';
+  // 没有用户名册就没有登录：只允许本机访问
+  if (!isLoopback(hostname) && !store.users()) {
+    throw new ForgeError('no_registry', `项目还没有启用用户名册（没有登录），只能监听本机。先 sf user add <名字> --role dev --admin，再监听 ${hostname}`);
+  }
   const index = new ForgeIndex(store, opts.dbPath);
   index.sync();
   const app = createApp(store, index, { webDir: opts.webDir ?? DEFAULT_WEB_DIR });
@@ -137,7 +146,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   }, opts.pollMs ?? 300);
 
   const server: ServerType = await new Promise((resolve) => {
-    const s = serve({ fetch: app.fetch, hostname: opts.host ?? '127.0.0.1', port: opts.port ?? 4317 }, () => resolve(s));
+    const s = serve({ fetch: app.fetch, hostname, port: opts.port ?? 4317 }, () => resolve(s));
   });
   injectWebSocket(server);
   const addr = server.address() as AddressInfo;

@@ -78,6 +78,8 @@ export interface ChainStatus {
   outOfBand: { changeId: string; problem: string }[];
 }
 
+export const UNAUTHORIZED_EVENT = 'specforge:unauthorized';
+
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -88,10 +90,24 @@ export class ApiError extends Error {
   }
 }
 
+export interface SessionUser {
+  name: string;
+  roles: Role[];
+  admin: boolean;
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+  return request<T>(path);
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, init);
   const body = (await res.json().catch(() => ({}))) as { error?: { code: string; message: string } };
-  if (!res.ok) throw new ApiError(res.status, body.error?.code ?? 'http', body.error?.message ?? `请求失败：${res.status}`);
+  if (!res.ok) {
+    // 会话过期、用户被停用或令牌被重置：通知界面回到登录页
+    if (res.status === 401 && body.error?.code === 'unauthorized') window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    throw new ApiError(res.status, body.error?.code ?? 'http', body.error?.message ?? `请求失败：${res.status}`);
+  }
   return body as T;
 }
 
@@ -116,4 +132,8 @@ export const api = {
   evidence: (id: string) => get<{ evidence: EvidenceEntry[] }>(`/api/changes/${enc(id)}/evidence`).then((r) => r.evidence),
   evidenceDetail: (id: string, eid: string) => get<EvidenceDetail>(`/api/changes/${enc(id)}/evidence/${enc(eid)}`),
   chain: () => get<ChainStatus>('/api/log/verify'),
+  me: () => get<{ required: boolean; user: SessionUser | null }>('/api/auth/me'),
+  login: (name: string, token: string) =>
+    request<{ user: SessionUser }>('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, token }) }),
+  logout: () => request<{ ok: true }>('/api/auth/logout', { method: 'POST' }),
 };

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   addAssumption,
+  checkProxySubject,
   confirmAnswer,
   confirmRestatement,
   createQuestion,
@@ -22,6 +23,7 @@ import {
   proposeAnswer,
   rejectAnswer,
   requireRole,
+  resolveIdentity,
   setDimension,
   setRestatement,
   upstreamGates,
@@ -42,6 +44,7 @@ import type {
   Severity,
   Tier,
 } from '@specforge/shared';
+import { cmdUserAdd, cmdUserDisable, cmdUserList, cmdUserSet, cmdUserToken } from './users.ts';
 import { cmdAgentAnalyze, cmdAgentGenerate, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
 import { recordReview } from './review.ts';
 import { checkTdd } from './tdd.ts';
@@ -64,6 +67,13 @@ const HELP = `SpecForge CLI（第一期）
   sf init                                         在当前 git 仓库初始化 .specforge/
   sf whoami [--set <名字>:<dev|product>]           查看或设置本机身份
   （任何命令都可以加 --as <名字>:<角色> 临时指定身份）
+
+用户名册（启用后身份必须在名册中，且角色已授予；Web 控制台用令牌登录）
+  sf user add <名字> --role dev[,product] [--admin]   添加用户并生成登录令牌（第一个用户必须是管理员）
+  sf user list
+  sf user set <名字> [--role dev,product] [--admin|--no-admin]
+  sf user token <名字>                              重置登录令牌（管理员或本人），旧会话失效
+  sf user disable <名字> --reason <原因>              停用用户（历史记录保留）
 
 change
   sf change new <id> --title <标题> [--tier S|M|L]
@@ -150,6 +160,8 @@ const { values: opts, positionals: args } = parseArgs({
     'on-behalf': { type: 'string' },
     kind: { type: 'string' },
     role: { type: 'string' },
+    admin: { type: 'boolean' },
+    'no-admin': { type: 'boolean' },
     verdict: { type: 'string' },
     reviewer: { type: 'string' },
     coverage: { type: 'string' },
@@ -377,6 +389,7 @@ function cmdQuestion(store: Store, sub: string, id: string, qid?: string): void 
 
   const target = need(qid, '<Q-n>');
   const onBehalfOf = opts['on-behalf'] ? parseActor(opts['on-behalf']) : undefined;
+  if (onBehalfOf) checkProxySubject(store.users(), onBehalfOf);
   const ops: Record<string, { type: string; apply: (q: Question) => Question; payload: (q: Question) => Record<string, unknown> }> = {
     answer: {
       type: 'question.answered',
@@ -472,7 +485,12 @@ function cmdLog(store: Store, sub?: string, id?: string): void {
         console.log(`❌ ${c}：状态文件被绕过引擎修改（${msg}）`);
       }
     }
-    if (!problems.length && !oob) console.log(`✅ 哈希链完整（${events.length} 条事件），所有 change 状态与日志一致`);
+    const users = store.usersOutOfBand();
+    if (users) {
+      oob++;
+      console.log(`❌ 用户名册${users}`);
+    }
+    if (!problems.length && !oob) console.log(`✅ 哈希链完整（${events.length} 条事件），所有 change 状态${existsSync(store.path('users.json')) ? '、用户名册' : ''}与日志一致`);
     if (problems.length || oob) process.exitCode = 1;
     return;
   }
@@ -511,10 +529,33 @@ async function main(): Promise<void> {
   const store = Store.find(process.cwd());
 
   switch (cmd) {
+    case 'user': {
+      const name = a1;
+      const roles = opts.role ? list(opts.role) : undefined;
+      if (opts.admin && opts['no-admin']) throw new ForgeError('bad_arg', '--admin 与 --no-admin 只能选一个');
+      const admin = opts.admin ? true : opts['no-admin'] ? false : undefined;
+      const out =
+        sub === 'add'
+          ? cmdUserAdd(store, need(name, '<名字>'), need(roles?.length ? roles : undefined, '--role'), !!admin, opts.as)
+          : sub === 'list'
+            ? cmdUserList(store)
+            : sub === 'set'
+              ? cmdUserSet(store, need(name, '<名字>'), { roles, admin }, opts.as)
+              : sub === 'token'
+                ? cmdUserToken(store, need(name, '<名字>'), opts.as)
+                : sub === 'disable'
+                  ? cmdUserDisable(store, need(name, '<名字>'), need(opts.reason, '--reason'), opts.as)
+                  : undefined;
+      if (!out) throw new ForgeError('bad_cmd', `未知命令 sf user ${sub ?? ''}`);
+      out.lines.forEach((l) => console.log(l));
+      return;
+    }
     case 'whoami': {
       if (opts.set) {
-        store.setIdentity(parseActor(opts.set));
-        console.log(`身份已设置为 ${opts.set}（仅本机，不提交）`);
+        // 有用户名册时只能设为名册中拥有该角色的用户
+        const me = resolveIdentity(store.users(), parseActor(opts.set));
+        store.setIdentity(me);
+        console.log(`身份已设置为 ${me.name}:${me.role}（仅本机，不提交）${store.users() ? '' : '；尚未启用用户名册，身份为自行声明'}`);
       } else {
         const me = store.identity(opts.as);
         console.log(`${me.name}:${me.role}`);

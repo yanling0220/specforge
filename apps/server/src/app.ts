@@ -3,6 +3,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import { Hono } from 'hono';
 import { ForgeError, isResolved, missingRoles, pausedTasks, pipelineFor, upstreamGates, verifyChain } from '@specforge/core';
 import { evaluateAll, factsTree, readTasksFacts, uncommittedSpecChanges, type Store } from '@specforge/store';
+import { Auth, mountAuthRoutes, type AuthEnv } from './auth.ts';
 import type { ForgeIndex } from './index-db.ts';
 
 // 只读 REST 接口（T3.1）。写操作在 T3.4 加入，届时仍然只能走 Store.mutate。
@@ -29,10 +30,22 @@ const MIME: Record<string, string> = {
 export interface AppOptions {
   /** Web 控制台构建产物目录（apps/web/dist）；存在时由 server 托管 */
   webDir?: string;
+  /** 登录与会话；默认按项目的用户名册新建 */
+  auth?: Auth;
 }
 
-export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}): Hono {
-  const app = new Hono();
+/** 不需要登录的接口 */
+const PUBLIC_API = new Set(['/api/health', '/api/auth/me', '/api/auth/login', '/api/auth/logout']);
+
+export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}): Hono<AuthEnv> {
+  const app = new Hono<AuthEnv>();
+  const auth = opts.auth ?? new Auth(store);
+
+  // 启用用户名册后，除公开接口外都需要登录（含 WebSocket）
+  const guard = auth.guard();
+  app.use('/api/*', (c, next) => (PUBLIC_API.has(c.req.path) ? next() : guard(c, next)));
+  app.use('/ws', guard);
+  mountAuthRoutes(app, auth);
 
   // 每次请求前与文件同步，保证列表不落后于文件
   app.use('/api/*', async (_, next) => {

@@ -431,10 +431,19 @@ specforge/
 - **同步**：每个 REST 请求前、以及事件日志变化时（轮询 `events.jsonl`）按事件序号增量同步，只重建有新事件的 change；已索引的最后一条事件与文件不一致（日志被改写或截断）时全量重建。
 - **REST（只读）**：`/api/changes`、`/api/changes/:id`（含带外修改与 OpenSpec 读取来源）、`/gates`、`/questions`、`/questions/:qid`、`/events`、`/api/events`、`/api/log/verify`。写操作在 T3.4 加入，仍只能走 `Store.mutate`。
 - **WebSocket `/ws`**：推送 `hello` / `event` / `changes` / `rebuilt`；`?changeId=` 过滤，`?after=` 断线补发。推送进度独立于索引同步，REST 先同步也不会漏推。
-- **安全**：没有登录（T4.1），默认只监听 127.0.0.1；监听其他地址时启动会警告。
+- **安全**：默认只监听 127.0.0.1。启用用户名册后需要登录（见 9.3）；未启用时拒绝监听非本机地址。
 - **证据接口**（T3.2）：`/api/changes/:id/evidence[/:eid]`，从事件日志列出验证证据与 G5 证据，`hashOk` 表示证据文件与事件中记录的哈希一致。`/gates` 同时返回 `pipeline`（阶段与出口门禁，来自 core 的 `pipelineFor`），前端不重复实现流程规则。
 
-### 9.3 Web 控制台（T3.2，只读）
+### 9.3 身份与登录（T4.1）
+
+- **用户名册** `.specforge/users.json`：用户名、角色（dev / product，可多个）、是否管理员、是否停用、Web 登录令牌的 SHA-256。只能通过 `sf user add | set | token | disable` 修改（`Store.mutateUsers`），每次修改写入哈希链（`user.*` 事件记录名册哈希，事件中不含令牌哈希）。名册与最后一条 `user.*` 事件不一致、被删除、或不是由 sf user 创建时，一律拒绝使用（失败即关闭），不会退回兼容模式。
+- **初始化**：名册为空时任何人可以添加第一个用户，且必须是管理员；之后只有管理员能加人、改角色、停用；令牌可由管理员或本人重置。不能失去最后一个可用管理员。
+- **兼容模式**：没有名册时身份仍自行声明（旧行为），server 只能监听本机。
+- **CLI**：启用后 `whoami --set`、`--as`、`--on-behalf` 的身份必须在名册中、未停用、且角色已授予；agent 角色不能由人声明。**局限**：CLI 直接读写本地文件，名册只能防止误用和冒名记录，不能防止有文件写权限的人篡改——篡改会被 `sf log verify` 与名册校验发现。
+- **Web 登录**：令牌为 256 位随机数（`sf_` 前缀），只在生成时显示一次。`POST /api/auth/login`（仅接受 JSON）成功后发放 HttpOnly、SameSite=Strict 的会话 Cookie，12 小时过期；会话只在内存中，server 重启需重新登录。每次请求都回到名册核对，用户停用或令牌重置后会话立即失效。同一来源与用户名连续失败 5 次锁定 10 分钟。启用名册后，除 `/api/health` 与 `/api/auth/*` 外的接口（含 `/ws`）都需要登录。
+- **传输**：server 不提供 HTTPS。监听非本机地址时会提示放在 HTTPS 反向代理之后。
+
+### 9.4 Web 控制台（T3.2，只读）
 
 - `apps/web`：React + Vite，hash 路由。`npm run web:build` 后由 server 托管（`apps/web/dist`，不提交）；开发时 `npm run web:dev`，接口代理到 4317。
 - 页面：看板（按阶段分列，红点标出等人处理：阻塞问题、升级、修复轮次）；change 详情（阶段条，上游失效标黄；提示条：带外修改、升级、阻塞问题、修复轮次、未提交的 OpenSpec 改动；门禁面板逐项 ✓/✗，G5 / G6A 可点开证据）；证据页（RED / GREEN 或各验证步骤的命令、退出码、输出末尾，哈希不一致时警示）；事件时间线（按类别过滤，可展开载荷）。

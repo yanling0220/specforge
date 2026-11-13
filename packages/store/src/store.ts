@@ -1,6 +1,7 @@
+import { randomBytes } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { chainEvent, ForgeError, hashOf } from '@specforge/core';
+import { chainEvent, emptyRegistry, ForgeError, hashOf, resolveIdentity, sha256 } from '@specforge/core';
 import type {
   Actor,
   Analysis,
@@ -13,6 +14,7 @@ import type {
   ReviewRecord,
   Role,
   TddEvidence,
+  UserRegistry,
   VerificationEvidence,
 } from '@specforge/shared';
 
@@ -128,7 +130,13 @@ export class Store {
 
   // ---------- 身份 ----------
 
+  /** 当前身份：--as 优先，否则读本机设置；有用户名册时必须是名册中拥有该角色的用户 */
   identity(override?: string): Actor {
+    return resolveIdentity(this.users(), this.claimedIdentity(override));
+  }
+
+  /** 未经名册校验的声明身份 */
+  claimedIdentity(override?: string): Actor {
     if (override) return parseActor(override);
     const file = this.path('identity.local.json');
     if (!existsSync(file)) {
@@ -139,6 +147,36 @@ export class Store {
 
   setIdentity(actor: Actor): void {
     writeJson(this.path('identity.local.json'), actor);
+  }
+
+  // ---------- 用户名册（T4.1） ----------
+
+  /**
+   * 用户名册；undefined 表示尚未启用（兼容模式：身份自行声明）。
+   * 名册与最后一条 user.* 事件记录的哈希不一致（被绕过引擎修改或删除）时拒绝使用。
+   */
+  users(): UserRegistry | undefined {
+    const problem = this.usersOutOfBand();
+    if (problem) throw new ForgeError('out_of_band', `用户名册${problem}，拒绝使用。请从版本库恢复 .specforge/users.json`);
+    const file = this.path('users.json');
+    return existsSync(file) ? readJson<UserRegistry>(file) : undefined;
+  }
+
+  /** 名册与事件日志不一致时返回说明 */
+  usersOutOfBand(): string | undefined {
+    const file = this.path('users.json');
+    const last = this.events().filter((e) => e.type.startsWith('user.') && e.stateHash).at(-1);
+    if (!existsSync(file)) return last ? '文件缺失，但事件日志中有用户记录' : undefined;
+    if (!last) return '没有任何事件记录（不是通过 sf user 命令创建的）';
+    return last.stateHash === hashOf(readJson<UserRegistry>(file)) ? undefined : `被绕过引擎修改（最后一次记录是事件 #${last.seq}）`;
+  }
+
+  /** 修改名册的唯一入口：校验 → 应用 → 落盘 → 写事件（事件中不含令牌哈希） */
+  mutateUsers(actor: Actor, type: string, fn: (reg: UserRegistry) => UserRegistry, payload: Record<string, unknown>): UserRegistry {
+    const next = fn(this.users() ?? emptyRegistry());
+    writeJson(this.path('users.json'), next);
+    this.append({ type, actor, payload, stateHash: hashOf(next) });
+    return next;
   }
 
   // ---------- change 状态 ----------
@@ -342,6 +380,12 @@ export class Store {
   openspecChangeDir(id: string): string {
     return join(this.root, 'openspec', 'changes', id);
   }
+}
+
+/** 生成 Web 登录令牌：256 位随机数；名册只保存它的 SHA-256 */
+export function newToken(): { token: string; hash: string } {
+  const token = `sf_${randomBytes(32).toString('base64url')}`;
+  return { token, hash: sha256(token) };
 }
 
 const ROLES: Role[] = ['dev', 'product', 'agent'];

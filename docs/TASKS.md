@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6、T2.8、T3.1、T3.2、T3.3 完成
+最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6、T2.8、T3.1、T3.2、T3.3、T4.1 完成
 
 ---
 
 ## 当前快照
 
-- 测试：157 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
+- 测试：172 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T3.4`**（交互：在控制台回答 / 确认 / 驳回问题、审批、签字、打回；所有写操作仍走 `Store.mutate`；目前身份仍是自己声明的，见 T4.1）。Web 控制台需先 `npm run web:build`，再在项目目录运行 server。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
+- **下一个建议任务：`T3.4`**（交互：在控制台回答 / 确认 / 驳回问题、审批、签字、打回；写操作以登录用户身份、走 `Store.mutate`；角色按 T4.1 的名册校验）。Web 控制台需先 `npm run web:build`，再在项目目录运行 server。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
 
 ---
 
@@ -63,7 +63,7 @@
 
 | ID | 任务 | 状态 | 验收标准 |
 |---|---|---|---|
-| T4.1 | 身份与登录、角色权限（目前身份是自己声明的） | todo | |
+| T4.1 | 身份与登录、角色权限（目前身份是自己声明的） | done | 用户名册 `.specforge/users.json`（`sf user add / list / set / token / disable`），修改写入哈希链，篡改即拒绝使用；CLI 身份（`whoami`、`--as`、`--on-behalf`）按名册校验角色；server 令牌登录（HttpOnly + SameSite=Strict 会话、12 小时过期、停用或重置令牌立即失效、失败 5 次锁定 10 分钟），启用名册后接口与 WebSocket 都需要登录，无名册时只能监听本机；Web 登录页与 401 自动回到登录。测试：`core/test/users.test.ts`、`cli/test/users.test.ts`、`server/test/auth.test.ts`。实测：`/tmp/sf-t33` 启用名册、角色与代录校验、curl 登录、登录页截图。依据见 design.md 9.3 |
 | T4.2 | 产品方直接登录或通过链接确认问题（替代代录） | todo | |
 | T4.3 | Postgres、多项目 | todo | |
 | T4.4 | 哈希链头定期锚定（git 提交或服务端），防止整条链被重写 | todo | |
@@ -75,13 +75,15 @@
 
 | 问题 | 影响 | 计划 |
 |---|---|---|
-| 身份自行声明，无登录 | 任何人都能以产品身份确认 | T4.1 |
+| 未启用用户名册的项目仍是自行声明身份 | 兼容旧项目；server 此时只能监听本机 | 在项目中 `sf user add … --admin` 启用 |
+| CLI 身份基于本地文件信任 | 名册只能防误用与冒名记录；有文件写权限的人仍可篡改，但会被 `sf log verify` 与名册校验发现 | T4.4（哈希链锚定）可进一步防整体改写 |
+| server 不提供 HTTPS；会话只在内存中 | 非本机访问需放在 HTTPS 反向代理之后；server 重启后需重新登录 | — |
+| 浏览器中的登录流程未做端到端测试 | 登录接口有单元测试并用 curl 实测，登录页只核对了渲染 | 可与 T3.4 的浏览器测试一起做 |
 | 兼容接口（DeepSeek 等）不返回费用，`--budget` 不生效 | 只能看 token 数 | 可加按 token 的上限 |
 | 实现 agent 的 Bash / run_command 能执行任意命令（如联网、写 worktree 外） | 写主工作区会被指纹检测拦截，但写其他目录无法发现 | 后续可接入沙箱（容器或 Claude SDK sandbox） |
 | 升级给人后没有"解除升级"命令 | 人只能在 closing 阶段手工修复、重新验证和审查后交付；不能再让 agent 修复 | 需要时加 `sf escalation resolve` |
 | 验证（6A）失败不自动打回 | 需要人判断后手工修复 | 视使用情况再定 |
 | 生成类 agent 实测中，Q-2/Q-3 由 Claude 按推荐项代答、spec 由 Claude 以演示 dev 身份审批 | 仅限演示项目 `/tmp/sf-t28`，不代表真实产品决定 | — |
-| server 没有登录 | 默认只监听 127.0.0.1；监听其他地址时任何人都能读取全部数据 | T4.1 |
 | server 启动时打印 `node:sqlite` 的 ExperimentalWarning | 仅提示，不影响功能 | Node 稳定后自然消失 |
 | server 索引只在 `events.jsonl` 变化时同步 | 绕过引擎直接改状态文件不会触发推送；详情接口读文件，并会报告带外修改 | — |
 | Web 控制台的实时刷新只在单元测试中验证了 WebSocket 推送 | 浏览器中"写入后自动刷新"没有做端到端测试 | 可在 T3.4 引入浏览器测试 |
@@ -144,4 +146,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T2.8 · 生成类 agent（spec-writer / architect / planner），DeepSeek 实测 · `3039a81`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.1 · server：只读 REST + WebSocket、SQLite 索引；Store 移到 packages/store · `f8768dc`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.2 · Web 只读控制台（看板、门禁面板与证据、事件时间线） · `95f86bf`
-- 2026-11-13 · Claude Code (Opus 5.5) · T3.3 · 需求分析视图（分解树、问题卡片、核对历史） · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.3 · 需求分析视图（分解树、问题卡片、核对历史） · `f581de0`
+- 2026-11-13 · Claude Code (Opus 5.5) · T4.1 · 用户名册、CLI 身份校验、Web 令牌登录；全局测试超时调为 20 秒 · （本次提交）

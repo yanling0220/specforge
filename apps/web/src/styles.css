@@ -712,3 +712,51 @@ pre.output {
   display: block;
   color: inherit;
 }
+
+/* 登录（T4.1） */
+.login {
+  max-width: 380px;
+  margin: 80px auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 24px;
+}
+.login label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.login input {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+.login button {
+  font: inherit;
+  padding: 7px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.login button:disabled {
+  opacity: 0.6;
+}
+.me {
+  font-size: 13px;
+}
+button.link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  margin-left: 6px;
+}

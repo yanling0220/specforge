@@ -7,6 +7,29 @@ export interface Actor {
   role: Role;
 }
 
+/** 人的角色；agent 身份只由引擎生成 */
+export type HumanRole = 'dev' | 'product';
+
+// ---------- 用户名册（T4.1） ----------
+
+export interface UserRecord {
+  name: string;
+  roles: HumanRole[];
+  /** 可以管理用户 */
+  admin: boolean;
+  /** Web 登录令牌的 SHA-256（令牌本身只在生成时显示一次） */
+  tokenHash: string;
+  createdAt: string;
+  createdBy: string;
+  tokenRotatedAt?: string;
+  disabled?: { at: string; by: string; reason: string };
+}
+
+export interface UserRegistry {
+  version: 1;
+  users: UserRecord[];
+}
+
 // ---------- 项目配置（宪法） ----------
 
 export interface VerifyStep {
