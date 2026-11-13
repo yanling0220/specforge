@@ -37,6 +37,7 @@ export function addComment(
     path: input.path,
     line: input.line,
     quote: lines[input.line - 1]!,
+    context: { before: lines[input.line - 2], after: lines[input.line] },
     text: input.text.trim(),
     by: actor,
     at: now,
@@ -109,12 +110,19 @@ export type CommentAnchor = { state: 'exact'; line: number } | { state: 'moved';
 /**
  * 在当前文本中定位评论：原行号上仍是原文 → exact；原文移到了别处 → moved（取离原行号最近的一处）；
  * 原文不在了（或文件不存在）→ outdated。
+ * 记录了上下文时，别处的同文行只有在至少一个非空的相邻行也相同时才算移动——
+ * 否则一模一样的另一行（例如两个场景都写"抛出错误"）会被误认为原评论行（T3.5 DeepSeek 实测发现）。
  */
-export function locateComment(c: Pick<ArtifactComment, 'line' | 'quote'>, text: string | undefined): CommentAnchor {
+export function locateComment(c: Pick<ArtifactComment, 'line' | 'quote' | 'context'>, text: string | undefined): CommentAnchor {
   if (text === undefined) return { state: 'outdated' };
   const lines = text.split('\n');
   if (lines[c.line - 1] === c.quote) return { state: 'exact', line: c.line };
-  const hits = lines.flatMap((l, i) => (l === c.quote ? [i + 1] : []));
-  if (!hits.length || !c.quote.trim()) return { state: 'outdated' };
+  if (!c.quote.trim()) return { state: 'outdated' };
+  const neighbourMatches = (n: number) => {
+    const same = (want: string | undefined, got: string | undefined) => want !== undefined && !!want.trim() && want === got;
+    return same(c.context?.before, lines[n - 2]) || same(c.context?.after, lines[n]);
+  };
+  const hits = lines.flatMap((l, i) => (l === c.quote && (!c.context || neighbourMatches(i + 1)) ? [i + 1] : []));
+  if (!hits.length) return { state: 'outdated' };
   return { state: 'moved', line: hits.reduce((best, n) => (Math.abs(n - c.line) < Math.abs(best - c.line) ? n : best)) };
 }

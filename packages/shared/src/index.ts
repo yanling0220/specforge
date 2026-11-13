@@ -375,6 +375,8 @@ export interface ArtifactComment {
   /** 评论时的行号（从 1 开始）与该行原文，用于文件变化后重新定位 */
   line: number;
   quote: string;
+  /** 评论时上一行与下一行的原文（用于原文不唯一时消歧；T3.5 实测后加入，旧评论没有） */
+  context?: { before?: string; after?: string };
   text: string;
   by: Actor;
   at: string;

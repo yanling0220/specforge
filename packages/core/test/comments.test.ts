@@ -32,6 +32,19 @@ describe('产物评论', () => {
     expect(locateComment({ line: 1, quote: '' }, 'x\n\ny')).toEqual({ state: 'outdated' });
   });
 
+  it('原文不唯一时用上下文消歧：同文的另一行不会被误认为原评论行（DeepSeek 实测回归）', () => {
+    const before = ['#### Scenario: [AC-5] 缺列', '- **WHEN** 缺少 email 列', '- **THEN** 系统抛出错误', '', '#### Scenario: [AC-6] 无数据', '- **WHEN** 只有表头', '- **THEN** 系统抛出错误', ''].join('\n');
+    const [c] = addComment([], { changeId: 'c1', path: SPEC, line: 3, text: '写具体错误信息' }, before, dev, T);
+    expect(c!.context).toEqual({ before: '- **WHEN** 缺少 email 列', after: '' });
+    // AC-5 的那一行被改掉，AC-6 的同文行仍在：应当是 outdated，而不是移动到 AC-6
+    const after = before.replace('- **THEN** 系统抛出错误\n\n#### Scenario: [AC-6]', '- **THEN** 抛出“表头必须包含 email”\n\n#### Scenario: [AC-6]');
+    expect(locateComment(c!, after)).toEqual({ state: 'outdated' });
+    // 上方插入一行：原文连同上下文一起移动
+    expect(locateComment(c!, `# 新标题\n${before}`)).toEqual({ state: 'moved', line: 4 });
+    // 旧评论没有上下文：保持原来的行为
+    expect(locateComment({ line: 3, quote: '- **THEN** 系统抛出错误' }, after)).toEqual({ state: 'moved', line: 7 });
+  });
+
   it('agent 必须逐条回应全部待处理评论；回应只标为"已回应"，由人确认解决', () => {
     const cs = add(add(), { line: 3, text: '场景名太笼统' });
     expect(() => addressComments(cs, 'spec', [{ commentId: 'C-1', response: 'fixed', note: '已改' }], agent, T)).toThrow(/还有评论没有回应：C-2/);

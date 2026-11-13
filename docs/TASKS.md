@@ -11,7 +11,7 @@
 
 ## 当前快照
 
-- 测试：193 个全部通过；浏览器端到端 `npm run web:e2e` 通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
+- 测试：194 个全部通过；浏览器端到端 `npm run web:e2e` 通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
 - **下一个建议任务：`T4.4`**（哈希链头定期锚定，防止整条链被重写）；`T4.2`（产品方直接登录确认）已基本被 T4.1 + T3.4 覆盖，可复核后关闭；`T2.3c` 需要 Codex 登录。Web 控制台需先 `npm run web:build`，再在项目目录运行 server。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
 
@@ -56,7 +56,7 @@
 | T3.2 | Web 只读控制台（React + Vite）：看板、门禁面板（可点开证据）、事件时间线 | done | T3.1 | `apps/web`：看板（等人红点）、change 详情（阶段条、上游失效、提示条、门禁面板）、证据页（G5 RED/GREEN、验证步骤输出、哈希校验）、事件时间线（过滤），WebSocket 实时刷新；server 新增证据接口、托管构建产物（防目录穿越）、`/gates` 返回流水线。测试：`apps/web/test/model.test.ts`、`server.test.ts` 新增 4 个（含按 change 订阅时同批推送只收到自己的编号）。实测：`/tmp/sf-t27` 用 Chrome headless 截图核对看板、门禁、时间线、证据页 |
 | T3.3 | 需求分析视图：分解树 + 问题卡片 + 完整核对历史 | done | T3.2 | 「需求分析」标签页：复述及确认状态、分解树（问题徽标、阻塞数累加）、问题卡片（选项、还缺的确认角色、关联与暂停的任务）、完整核对历史（含代录渠道、驳回、修改原因）、假设、维度；可深链接到问题。server 详情新增 `questionProgress` / `pausedTasks` / `restatementConfirmed`（core 规则计算）。测试：`model.test.ts` 新增 4 个、`server.test.ts` 新增 1 个。实测：`/tmp/sf-t33`（复制自 sf-t28，经 `Store.mutate` 补了分解树与假设）Chrome headless 截图核对 |
 | T3.4 | 交互：回答/确认/驳回问题、审批 spec、签字、打回、接管 | done | T3.3 | 写操作抽到 `packages/store/src/actions.ts`，CLI 与 server 共用；server 写接口（问题 回答/确认/代录/驳回/推迟/作废、确认复述、假设、审批、签字/打回、推进），身份 = 登录用户 + 所选角色（名册校验），无名册不允许写，POST 只收 JSON；控制台按钮与表单、顶栏角色切换。测试：`apps/server/test/actions.test.ts`（8 个）；真实浏览器端到端 `apps/web/e2e/console.e2e.mjs`（连续 3 次通过）。接管（用户确认含义：任务由人接手实现，agent 不再处理）：`sf task list / claim / release`、控制台任务面板，`sf agent implement` 跳过被接管的任务；测试 `workflow.test.ts`、`implement.test.ts`、`actions.test.ts` 各新增 1–2 个，端到端加入接管步骤（3 次通过） |
-| T3.5 | 产物审阅器：spec/design 行内评论，评论回传给 agent | done | T3.4, T2.8 | 行内评论（控制台「产物审阅」、`sf comment add / list / resolve / reopen`），按原文重新定位；未解决评论挡住 G2/G3/G4；有待处理评论时生成类 agent 进入修订模式，必须逐条回应，回应后为「已回应」、由人确认解决。测试：`core/test/comments.test.ts`、`generate.test.ts`（修订模式，ScriptedAdapter）、`actions.test.ts`、`model.test.ts`；浏览器端到端加入评论 → G2 被挡 → 确认解决（3 次通过）。未用真实模型跑修订模式 |
+| T3.5 | 产物审阅器：spec/design 行内评论，评论回传给 agent | done | T3.4, T2.8 | 行内评论（控制台「产物审阅」、`sf comment add / list / resolve / reopen`），按原文重新定位；未解决评论挡住 G2/G3/G4；有待处理评论时生成类 agent 进入修订模式，必须逐条回应，回应后为「已回应」、由人确认解决。测试：`core/test/comments.test.ts`、`generate.test.ts`（修订模式，ScriptedAdapter）、`actions.test.ts`、`model.test.ts`；浏览器端到端加入评论 → G2 被挡 → 确认解决（3 次通过）。DeepSeek 实测修订模式（`/tmp/sf-t35`）：3 条评论分别被修改 / 引用 Q-1 拒绝 / 先提问再引用 Q-4 拒绝，见实测记录；实测发现同文行误定位，已修复 |
 | T3.6 | 测试数量不得下降（解析各语言测试报告） | done | — | `packages/core/src/testcount.ts`（node / vitest / jest / pytest / mocha / cargo + 自定义 `testReport.pattern`）；G6A 新增「测试数量没有下降」；`sf verify` 首次同时验证基线。测试：`testcount.test.ts`（各格式样例、判定规则）、`engine.test.ts`（真实 node --test：删测试不通过、补回通过）；CLI 实测（`/tmp/sf-t27`：基线 1 → 当前 4） |
 
 ## 第四期：团队化
@@ -86,7 +86,8 @@
 | server 启动时打印 `node:sqlite` 的 ExperimentalWarning | 仅提示，不影响功能 | Node 稳定后自然消失 |
 | server 索引只在 `events.jsonl` 变化时同步 | 绕过引擎直接改状态文件不会触发推送；详情接口读文件，并会报告带外修改 | — |
 | Web 控制台的实时刷新只在单元测试中验证了 WebSocket 推送 | 浏览器中「别人写入后自动刷新」没有端到端测试（自己写入后的刷新已覆盖） | 可扩展 `web:e2e` |
-| 修订模式未用真实模型实测 | 逻辑与工具协议已用 ScriptedAdapter 测试；模型是否能按行号修改并如实回应未验证 | 用户同意费用后可用 DeepSeek 在 `/tmp/sf-t28` 上跑一次 |
+| G2 要求每个已确认问题都被 spec 或 proposal 引用，但 spec-writer 只能写 spec | 「范围外」类的决定（如 Q-4 不发欢迎邮件）被 agent 写成了新的 Requirement/AC-8，需求被不必要地扩充 | 可让 spec-writer 也能写 proposal 的「范围外」一节，或允许问题标记为「范围外，无需引用」 |
+| 修复前创建的评论没有上下文 | 原文不唯一时仍可能被定位到同文的另一行 | 只影响旧评论；可重新打开后由人重新评论 |
 | G5 以测试文件为粒度 | 修改已有测试文件时，文件中任一测试先失败即算 RED，不能确认每个新测试都先失败 | 需要逐个测试的结果（如 JUnit XML / TAP 逐条解析）；T3.6 只解析了总数 |
 | 本机没有 `rtk` 命令 | `AGENTS.md`（用户目录）要求的 rtk 前缀无法使用 | 用原生命令 |
 
@@ -113,6 +114,8 @@ T2.3v 分类结果：Q-1 范围、Q-3 用户与角色（能否导入 admin）、
 | T2.8 spec-writer 第 2 次 | `deepseek` | 成功：7 个 AC，引用 Q-1~Q-3，校验规则取自现有 `users.js` | 12 | 8K+8K | 88s |
 | T2.8 architect | `deepseek` | 成功：复用 `requireAdmin` / `createUser`，结构变更 S-1 `src/csv.js`、S-2 `src/import.js`，覆盖 7 个 AC | 15 | 19K+13K | 156s |
 | T2.8 planner | `deepseek` | 成功：2 个任务覆盖全部 AC 与 S，G4 一次通过 | 8 | 7K+10K | 122s |
+| T3.5 修订第 1 次 | `deepseek` | 3 条评论（C-1 细化错误信息 / C-2 role=admin 建管理员 / C-3 发欢迎邮件）：没有直接加功能，就 C-3 提出阻塞问题 Q-4（是否纳入范围），未提交 | 4 | 6K+3K | 40s |
+| T3.5 修订第 2 次（Q-4 答「范围外」后） | `deepseek` | 成功：C-1 已修改（只改 AC-5 一行）；C-2 不修改（引用 Q-1）；C-3 不修改（引用 Q-4），但新增了 Requirement「不发送欢迎邮件」/ AC-8；评论均为「已回应」，G2 仍等人确认 | 6 | 13K+9K | 85s |
 | T2.6v 审查 | `deepseek` | pass，覆盖 AC-1~3；2 条次要意见（缺"CSV 含 role 列"用例、未 trim） | 12 | 13K+5K | 41s |
 
 T2.6v 发现：模型用 `/private/var/...` 写 worktree 文件被误判为"工作目录之外"（macOS `/var` 是符号链接）→ `writeDenial` 改为先解析符号链接，已加回归测试。
@@ -150,4 +153,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T4.1 · 用户名册、CLI 身份校验、Web 令牌登录；全局测试超时调为 20 秒 · `538d0ff`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.4 · 控制台写操作（问题、复述、假设、审批、签字/打回、推进），写操作与 CLI 共用 store/actions；浏览器端到端测试 · `767052e`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.4 · 接管：任务由人接手实现（sf task、控制台任务面板），agent 跳过 · `4cc5c60`
-- 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 产物审阅器：行内评论、门禁、生成类 agent 按评论修订 · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 产物审阅器：行内评论、门禁、生成类 agent 按评论修订 · `2184e14`
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · DeepSeek 实测修订模式；修复同文行导致的评论误定位（评论记录上下文） · （本次提交）
