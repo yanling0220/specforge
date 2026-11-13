@@ -72,7 +72,7 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
     index.close();
     throw error;
   }
-  const app = createApp(store, index, { auth, webDir: opts.webDir, basePath: opts.basePath, projectId: project?.id, readOnly: !!project, check });
+  const app = createApp(store, index, { auth, webDir: opts.webDir, basePath: opts.basePath, projectId: project?.id, check });
   const clients = new Set<Client>();
   const revoke = (client: Client) => {
     clients.delete(client);
@@ -82,7 +82,8 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
     try {
       check();
       return !auth.required() || !!auth.user(client.sid);
-    } catch {
+    } catch (error) {
+      if (error instanceof ForgeError && error.code === 'write_busy') throw error;
       return false;
     }
   };
@@ -105,7 +106,7 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
     return events;
   };
   let pushedSeq = lastSeq();
-  const tick = () => {
+  const tick = () => store.exclusive(() => {
     check();
     for (const client of clients) if (!allowed(client)) revoke(client);
     const { rebuilt } = index.sync();
@@ -121,7 +122,7 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
       for (const event of fresh) send(client, { type: 'event', event });
       if (ids.length) send(client, { type: 'changes', ids });
     }
-  };
+  });
   const validQuery = (context: Context) => {
     const changeId = context.req.query('changeId') || undefined;
     const after = context.req.query('after');
@@ -137,11 +138,14 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
         client.ws = ws;
         clients.add(client);
         try {
-          if (!allowed(client)) { revoke(client); return; }
-          send(client, { type: 'hello', lastSeq: lastSeq() });
-          if (after !== undefined) for (const event of eventsAfter(after, changeId).filter((event) => event.seq <= pushedSeq)) send(client, { type: 'event', event });
-        } catch {
-          revoke(client);
+          store.exclusive(() => {
+            if (!allowed(client)) { revoke(client); return; }
+            send(client, { type: 'hello', lastSeq: lastSeq() });
+            if (after !== undefined) for (const event of eventsAfter(after, changeId).filter((event) => event.seq <= pushedSeq)) send(client, { type: 'event', event });
+          });
+        } catch (error) {
+          if (error instanceof ForgeError && error.code === 'write_busy') { clients.delete(client); client.ws.close(1013, '仓库忙，请重连'); }
+          else revoke(client);
         }
       },
       onClose() { clients.delete(client); },
@@ -159,12 +163,15 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
   let syncFailed = false;
   const poll = () => {
     try {
-      check();
-      for (const client of clients) if (!allowed(client)) revoke(client);
-      const current = signature();
-      if (current !== seen) { tick(); seen = current; }
-      syncFailed = false;
+      store.exclusive(() => {
+        check();
+        for (const client of clients) if (!allowed(client)) revoke(client);
+        const current = signature();
+        if (current !== seen) { tick(); seen = current; }
+        syncFailed = false;
+      });
     } catch (error) {
+      if (error instanceof ForgeError && error.code === 'write_busy') return;
       for (const client of clients) revoke(client);
       if (!project) console.error('同步索引失败：', error);
       else if (!syncFailed) console.error(`项目 ${project.id} 同步索引失败，请检查项目文件`);
@@ -174,6 +181,7 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
   const timer = setInterval(poll, opts.pollMs ?? 300);
   const anchorTimer = audit ? setInterval(() => {
     try { anchor(); } catch (error) {
+      if (error instanceof ForgeError && error.code === 'write_busy') return;
       if (!project) console.error('日志锚定失败：', error);
       else console.error(`项目 ${project.id} 日志锚定失败，请检查日志与审计分支`);
     }

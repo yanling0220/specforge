@@ -7,16 +7,16 @@ import { Store } from '@specforge/store';
 import { DEFAULT_WEB_DIR, isLoopback, startMultiProjectServer, startServer } from './server.ts';
 import { readProjects } from './projects.ts';
 
-const HELP = `SpecForge server（只读）+ Web 控制台
+const HELP = `SpecForge server + Web 控制台
 
 在 SpecForge 项目目录中运行：
   sf-server [--port 4317] [--host 127.0.0.1] [--db <索引文件>]
 
-多项目只读服务（项目各自需要用户名册）：
+多项目服务（项目各自需要用户名册）：
   sf-server --projects <项目登记.json> [--port 4317] [--host 127.0.0.1]
   配置：{"version":1,"projects":[{"id":"demo","root":"/srv/demo"}]}
   项目接口：/p/<项目ID>/api/...；登录 /p/<项目ID>/api/auth/login；订阅 /p/<项目ID>/ws。
-  各项目使用独立内存索引；不支持 --db，不提供多项目 Web 界面或业务写接口。
+  各项目使用独立内存索引和读写接口；不支持 --db，多项目 Web 界面尚未实现。
 
 REST
   GET /api/health
@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   if (opts.projects) {
     if (opts.db) throw new ForgeError('bad_arg', '--projects 不能与 --db 同时使用');
     const server = await startMultiProjectServer({ projects: readProjects(opts.projects), port, host: opts.host });
-    console.log(`SpecForge 多项目只读服务：${server.url}（项目独立登录，接口前缀 /p/<项目ID>）`);
+    console.log(`SpecForge 多项目服务：${server.url}（项目独立登录，接口前缀 /p/<项目ID>）`);
     if (opts.host && !isLoopback(opts.host)) console.log('非本机访问请放在 HTTPS 反向代理之后使用');
     const stop = () => void server.close().then(() => process.exit(0));
     process.on('SIGINT', stop);

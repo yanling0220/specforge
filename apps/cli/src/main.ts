@@ -18,7 +18,7 @@ import {
   setRestatement,
   upstreamGates,
 } from '@specforge/core';
-import { git, headSha, repoRoot, runVerification } from '@specforge/runner';
+import { atomicWrite, git, headSha, repoRoot, runVerification } from '@specforge/runner';
 import type {
   AgentBackend,
   Change,
@@ -142,6 +142,8 @@ AI agent
   sf log verify [--anchor <commit>]                校验哈希链、Git 锚定与带外修改（可指定可信锚定 commit）
   sf log anchor                                   将当前链头写入独立的 specforge-audit 分支（dev）
   sf log ack <id> --reason <说明>                  确认带外修改
+  sf lock status                                  查看仓库锁与未完成写入
+  sf lock recover --reason <说明>                  核对一致性后解除中断锁（不重放写入）
 `;
 
 const { values: opts, positionals: args } = parseArgs({
@@ -264,15 +266,17 @@ function printQuestionHistory(q: Question): void {
 function cmdInit(): void {
   const root = repoRoot(process.cwd());
   const store = new Store(root);
-  if (existsSync(store.path('config.json'))) throw new ForgeError('exists', `${FORGE_DIR}/ 已存在`);
-  mkdirSync(store.path('changes'), { recursive: true });
-  writeFileSync(store.path('config.json'), JSON.stringify(defaultConfig(), null, 2) + '\n');
-  const gi = join(root, '.gitignore');
-  const line = `${FORGE_DIR}/identity.local.json`;
-  const content = existsSync(gi) ? readFileSync(gi, 'utf8') : '';
-  if (!content.split('\n').includes(line)) writeFileSync(gi, content + (content && !content.endsWith('\n') ? '\n' : '') + line + '\n');
-  console.log(`已初始化 ${root}/${FORGE_DIR}/`);
-  console.log('下一步：编辑 .specforge/config.json 中的 verify 步骤，然后运行 sf whoami --set <名字>:dev');
+  store.exclusive(() => {
+    if (existsSync(store.path('config.json'))) throw new ForgeError('exists', `${FORGE_DIR}/ 已存在`);
+    mkdirSync(store.path('changes'), { recursive: true });
+    atomicWrite(store.path('config.json'), JSON.stringify(defaultConfig(), null, 2) + '\n');
+    const gi = join(root, '.gitignore');
+    const line = `${FORGE_DIR}/identity.local.json`;
+    const content = existsSync(gi) ? readFileSync(gi, 'utf8') : '';
+    if (!content.split('\n').includes(line)) writeFileSync(gi, content + (content && !content.endsWith('\n') ? '\n' : '') + line + '\n');
+    console.log(`已初始化 ${root}/${FORGE_DIR}/`);
+    console.log('下一步：编辑 .specforge/config.json 中的 verify 步骤，然后运行 sf whoami --set <名字>:dev');
+  });
 }
 
 function cmdStatus(store: Store, id: string): void {
@@ -473,244 +477,251 @@ async function main(): Promise<void> {
   if (cmd === 'init') return cmdInit();
 
   const store = Store.find(process.cwd());
-
-  switch (cmd) {
-    case 'user': {
-      const name = a1;
-      const roles = opts.role ? list(opts.role) : undefined;
-      if (opts.admin && opts['no-admin']) throw new ForgeError('bad_arg', '--admin 与 --no-admin 只能选一个');
-      const admin = opts.admin ? true : opts['no-admin'] ? false : undefined;
-      const out =
-        sub === 'add'
-          ? cmdUserAdd(store, need(name, '<名字>'), need(roles?.length ? roles : undefined, '--role'), !!admin, opts.as)
-          : sub === 'list'
-            ? cmdUserList(store)
-            : sub === 'set'
-              ? cmdUserSet(store, need(name, '<名字>'), { roles, admin }, opts.as)
-              : sub === 'token'
-                ? cmdUserToken(store, need(name, '<名字>'), opts.as)
-                : sub === 'disable'
-                  ? cmdUserDisable(store, need(name, '<名字>'), need(opts.reason, '--reason'), opts.as)
-                  : undefined;
-      if (!out) throw new ForgeError('bad_cmd', `未知命令 sf user ${sub ?? ''}`);
-      out.lines.forEach((l) => console.log(l));
+  if (cmd === 'lock') {
+    if (sub === 'status') { console.log(JSON.stringify(store.lockStatus(), null, 2)); return; }
+    if (sub === 'recover') {
+      store.recover(need(opts.reason, '--reason'));
+      console.log('仓库一致性已核对，已解除中断锁；没有重放操作或追加成功事件');
       return;
     }
-    case 'comment': {
-      const id = need(a1, '<id>');
-      if (sub === 'list') {
-        const { files, orphanComments } = artifactViews(store, id);
-        const all = [...files.flatMap((f) => f.comments), ...orphanComments.map((c) => ({ ...c, anchor: { state: 'outdated' as const } }))];
-        if (!all.length) return console.log('（没有评论）');
-        const label = { open: '待处理', addressed: '已回应', resolved: '已解决' } as const;
-        for (const c of all.sort((x, y) => Number(x.id.slice(2)) - Number(y.id.slice(2)))) {
-          const where = c.anchor.state === 'outdated' ? `原第 ${c.line} 行（原文已不在）` : `第 ${c.anchor.line} 行${c.anchor.state === 'moved' ? `（原第 ${c.line} 行）` : ''}`;
-          console.log(`${c.id} [${label[c.status]}] ${c.path} ${where} · ${c.by.name}：${c.text}`);
-          const last = c.history.at(-1);
-          if (last) console.log(`     ${last.by.name}：${last.response === 'declined' ? '不修改 · ' : last.response === 'fixed' ? '已修改 · ' : ''}${last.note ?? last.kind}`);
-        }
-        return;
-      }
-      const actor = store.identity(opts.as);
-      if (sub === 'add') {
-        const c = addComment(store, id, actor, { path: need(opts.file, '--file'), line: Number(need(opts.line, '--line')), text: need(opts.text, '--text') });
-        console.log(`已添加 ${c.id}（${c.target}）：第 ${c.line} 行「${c.quote.trim()}」`);
-        console.log(`下一步：sf agent ${c.target === 'tasks' ? 'plan' : c.target} ${id} 让 agent 按评论修订（${c.target} 阶段），或手工修改后 sf comment resolve`);
-      } else if (sub === 'resolve') {
-        resolveComment(store, id, actor, need(a2, '<C-n>'), opts.note);
-        console.log(`${a2} 已解决`);
-      } else if (sub === 'reopen') {
-        reopenComment(store, id, actor, need(a2, '<C-n>'), need(opts.note, '--note'));
-        console.log(`${a2} 已重新打开`);
-      } else throw new ForgeError('bad_cmd', `未知命令 sf comment ${sub ?? ''}`);
-      return;
-    }
-    case 'task': {
-      const id = need(a1, '<id>');
-      if (sub === 'list') {
-        const state = store.load(id);
-        const tasks = readTasksFacts(store, id, factsTree(store, state));
-        if (!tasks?.tasks.length) return console.log('（没有任务）');
-        const claims = activeClaims(state.change);
-        const paused = pausedTasks(tasks.tasks.filter((t) => !t.done), state.questions);
-        for (const t of tasks.tasks) {
-          const c = claims.get(t.id);
-          const tag = t.done ? '✓ 完成' : c ? `👤 ${c.by.name} 接手` : paused.has(t.id) ? `⏸ 等待 ${paused.get(t.id)!.join(', ')}` : '· agent';
-          console.log(`${t.id.padEnd(5)} ${tag.padEnd(14)} ${t.title}${t.dependsOn.length ? `（依赖 ${t.dependsOn.join(', ')}）` : ''}`);
-        }
-        return;
-      }
-      const taskId = need(a2, '<T-n>');
-      const actor = store.identity(opts.as);
-      if (sub === 'claim') {
-        claimTask(store, id, actor, taskId, opts.note);
-        console.log(`${taskId} 由 ${actor.name} 接手实现，实现 agent 不再处理。完成后：提交代码与测试、在 tasks.md 勾选，并运行 sf tdd ${id} ${taskId} --base <开始前的 commit> 补 G5 证据`);
-      } else if (sub === 'release') {
-        releaseTask(store, id, actor, taskId, opts.reason);
-        console.log(`${taskId} 已交还，实现 agent 可以处理`);
-      } else throw new ForgeError('bad_cmd', `未知命令 sf task ${sub ?? ''}`);
-      return;
-    }
-    case 'whoami': {
-      if (opts.set) {
-        // 有用户名册时只能设为名册中拥有该角色的用户
-        const me = resolveIdentity(store.users(), parseActor(opts.set));
-        store.setIdentity(me);
-        console.log(`身份已设置为 ${me.name}:${me.role}（仅本机，不提交）${store.users() ? '' : '；尚未启用用户名册，身份为自行声明'}`);
-      } else {
-        const me = store.identity(opts.as);
-        console.log(`${me.name}:${me.role}`);
-      }
-      return;
-    }
-    case 'change': {
-      if (sub === 'list') {
-        for (const id of store.listChanges()) {
-          const { change } = store.load(id);
-          console.log(`${id}  ${change.tier}  ${change.stage}  ${change.title}`);
-        }
-        return;
-      }
-      if (sub !== 'new') throw new ForgeError('bad_cmd', `未知命令 sf change ${sub ?? ''}`);
-      const id = need(a1, '<id>');
-      if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) throw new ForgeError('bad_id', 'change id 只能包含小写字母、数字和连字符（与 OpenSpec 一致）');
-      const tier = (opts.tier ?? 'M') as Tier;
-      if (!['S', 'M', 'L'].includes(tier)) throw new ForgeError('bad_arg', '--tier 只能是 S|M|L');
-      const actor = store.identity(opts.as);
-      store.create(
-        {
-          change: { id, title: need(opts.title, '--title'), tier, stage: 'analysis', baseSha: headSha(store.root), createdAt: now(), createdBy: actor },
-          analysis: emptyAnalysis(store.config()),
-          questions: [],
-          reviews: [],
-          approvals: [],
-        },
-        actor,
-      );
-      const osDir = store.openspecChangeDir(id);
-      mkdirSync(join(osDir, 'specs'), { recursive: true });
-      if (!existsSync(join(osDir, 'proposal.md'))) {
-        writeFileSync(join(osDir, 'proposal.md'), `# ${opts.title}\n\n## Why\n\n## What Changes\n\n## 范围外\n`);
-      }
-      console.log(`已创建 change ${id}（${tier} 档），OpenSpec 目录：openspec/changes/${id}/`);
-      return;
-    }
-    case 'status':
-      return cmdStatus(store, need(sub, '<id>'));
-    case 'advance':
-      return cmdAdvance(store, need(sub, '<id>'));
-    case 'restate': {
-      const id = need(sub, '<id>');
-      const actor = store.identity(opts.as);
-      if (opts.confirm) {
-        confirmRestatement(store, id, actor, opts.via);
-        console.log('需求复述已确认');
-      } else {
-        store.mutate(id, actor, 'restatement.set', (s) => ({ ...s, analysis: setRestatement(s.analysis, need(opts.text, '--text')) }), (s) => ({ text: s.analysis.restatement!.text, hash: s.analysis.restatement!.hash }));
-        console.log('需求复述已更新（需要重新确认）');
-      }
-      return;
-    }
-    case 'assume': {
-      const id = need(a1, '<id>');
-      const actor = store.identity(opts.as);
-      if (sub === 'add') {
-        const next = store.mutate(id, actor, 'assumption.added', (s) => ({ ...s, analysis: addAssumption(s.analysis, need(opts.text, '--text')) }), (s) => ({ ...s.analysis.assumptions.at(-1)! }));
-        console.log(`已添加 ${next.analysis.assumptions.at(-1)!.id}`);
-      } else if (sub === 'decide') {
-        const aid = need(a2, '<A-n>');
-        if (opts.accept === opts.reject) throw new ForgeError('bad_arg', '需要且只能指定 --accept 或 --reject 之一');
-        const status = opts.accept ? 'accepted' : 'rejected';
-        decideAssumption(store, id, actor, aid, status, opts.note);
-        console.log(`${aid}：${status === 'accepted' ? '已确认' : '已否决'}`);
-      } else throw new ForgeError('bad_cmd', `未知命令 sf assume ${sub ?? ''}`);
-      return;
-    }
-    case 'dim': {
-      const id = need(a1, '<id>');
-      if (sub === 'list') {
-        for (const d of store.load(id).analysis.dimensions) {
-          console.log(`${d.status.padEnd(9)} ${d.dimension}${d.reason ? ` · ${d.reason}` : ''}${d.questionIds?.length ? ` · ${d.questionIds.join(',')}` : ''}`);
-        }
-        return;
-      }
-      if (sub !== 'set') throw new ForgeError('bad_cmd', `未知命令 sf dim ${sub ?? ''}`);
-      const dimension = need(a2, '<维度>');
-      const status = need(args[4], 'covered|na|question') as 'covered' | 'na' | 'question';
-      if (!['covered', 'na', 'question'].includes(status)) throw new ForgeError('bad_arg', '状态只能是 covered|na|question');
-      const actor = store.identity(opts.as);
-      store.mutate(id, actor, 'dimension.set', (s) => ({ ...s, analysis: setDimension(s.analysis, dimension, status, { reason: opts.reason, questionIds: list(opts.questions) }) }), () => ({ dimension, status, reason: opts.reason, questionIds: list(opts.questions) }));
-      console.log(`「${dimension}」→ ${status}`);
-      return;
-    }
-    case 'q':
-      return cmdQuestion(store, need(sub, '子命令'), need(a1, '<id>'), a2);
-    case 'spec':
-    case 'design': {
-      if (sub !== 'approve') throw new ForgeError('bad_cmd', `未知命令 sf ${cmd} ${sub ?? ''}`);
-      const id = need(a1, '<id>');
-      const hash = approve(store, id, store.identity(opts.as), cmd, opts.note);
-      console.log(`已审批当前 ${cmd}（hash ${hash.slice(0, 12)}）；内容或上游再有改动，审批即失效`);
-      return;
-    }
-    case 'verify': {
-      const id = need(sub, '<id>');
-      const actor = store.identity(opts.as);
-      const { change } = store.load(id);
-      const config = store.config();
-      const sha = headSha(store.root);
-      const onStep = (s: StepEvidence) => console.log(`  ${s.exitCode === 0 ? '✓' : '✗'} ${s.name}（${s.durationMs}ms，退出码 ${s.timedOut ? '超时' : s.exitCode}）`);
-      console.log(`在干净 worktree 中验证 commit ${sha.slice(0, 7)}…`);
-      const ev = runVerification({ repo: store.root, steps: config.verify, sha, onStep });
-      if (ev.mainTreeDirty) console.log('  ⚠️ 工作区有未提交的改动；它们不在本次验证范围内');
-      const file = store.saveEvidence(id, ev, actor);
-      console.log(`证据已记录：${store.rel(file)}`);
-      // 测试数量不得下降：基线 commit 只需验证一次
-      if (change.baseSha !== sha && !store.latestEvidence(id, change.baseSha)) {
-        console.log(`记录基线测试数量：验证基线 commit ${change.baseSha.slice(0, 7)}…`);
-        const base = runVerification({ repo: store.root, steps: config.verify, sha: change.baseSha, onStep });
-        console.log(`基线证据已记录：${store.rel(store.saveEvidence(id, base, actor))}`);
-      }
-      return;
-    }
-    case 'tdd': {
-      const id = need(sub, '<id>');
-      const taskId = need(a1, '<T-n>');
-      const actor = store.identity(opts.as);
-      store.load(id);
-      if (!readTasksFacts(store, id)?.tasks.some((t) => t.id === taskId)) throw new ForgeError('not_found', `任务 ${taskId} 不在 tasks.md 中`);
-      const resolve = (ref: string) => {
-        try {
-          return git(store.root, ['rev-parse', '--verify', `${ref}^{commit}`]);
-        } catch {
-          throw new ForgeError('bad_ref', `找不到 commit ${ref}`);
-        }
-      };
-      const base = resolve(need(opts.base, '--base'));
-      const sha = resolve(opts.sha ?? 'HEAD');
-      const { evidence, failures } = checkTdd(store, id, actor, { taskId, base, sha }, console.log);
-      if (failures.length) throw new ForgeError('tdd_failed', `G5 未通过（证据 ${evidence.id}）：${failures.map((c) => c.detail).join('；')}`);
-      console.log(`✓ ${taskId} 先红后绿已确认（${base.slice(0, 7)}..${sha.slice(0, 7)}，证据 ${evidence.id}）`);
-      return;
-    }
-    case 'review':
-      return cmdReview(store, need(sub, '<id>'));
-    case 'log':
-      return cmdLog(store, sub, a1);
-    case 'agent': {
-      const id = need(a1, '<id>');
-      const actor = store.identity(opts.as);
-      const agentOpts = { override: agentOverride(), verbose: !!opts.verbose };
-      if (sub === 'analyze') return cmdAgentAnalyze(store, id, actor, agentOpts);
-      if (sub === 'review') return cmdAgentReview(store, id, actor, agentOpts);
-      if (sub === 'implement') return cmdAgentImplement(store, id, actor, { ...agentOpts, taskId: opts.task });
-      const kinds = { spec: 'spec', design: 'design', plan: 'tasks' } as const;
-      if (sub && sub in kinds) return cmdAgentGenerate(store, id, actor, kinds[sub as keyof typeof kinds], { ...agentOpts, force: !!opts.force });
-      throw new ForgeError('bad_cmd', `未知命令 sf agent ${sub ?? ''}`);
-    }
-    default:
-      throw new ForgeError('bad_cmd', `未知命令 ${cmd}，运行 sf --help 查看用法`);
+    throw new ForgeError('bad_cmd', '用法：sf lock status | sf lock recover --reason "说明"（见 docs/write-recovery.md）');
   }
+
+  return store.exclusive(async () => {
+    switch (cmd) {
+      case 'user': {
+        const name = a1;
+        const roles = opts.role ? list(opts.role) : undefined;
+        if (opts.admin && opts['no-admin']) throw new ForgeError('bad_arg', '--admin 与 --no-admin 只能选一个');
+        const admin = opts.admin ? true : opts['no-admin'] ? false : undefined;
+        const out =
+          sub === 'add'
+            ? cmdUserAdd(store, need(name, '<名字>'), need(roles?.length ? roles : undefined, '--role'), !!admin, opts.as)
+            : sub === 'list'
+              ? cmdUserList(store)
+              : sub === 'set'
+                ? cmdUserSet(store, need(name, '<名字>'), { roles, admin }, opts.as)
+                : sub === 'token'
+                  ? cmdUserToken(store, need(name, '<名字>'), opts.as)
+                  : sub === 'disable'
+                    ? cmdUserDisable(store, need(name, '<名字>'), need(opts.reason, '--reason'), opts.as)
+                    : undefined;
+        if (!out) throw new ForgeError('bad_cmd', `未知命令 sf user ${sub ?? ''}`);
+        out.lines.forEach((l) => console.log(l));
+        return;
+      }
+      case 'comment': {
+        const id = need(a1, '<id>');
+        if (sub === 'list') {
+          const { files, orphanComments } = artifactViews(store, id);
+          const all = [...files.flatMap((f) => f.comments), ...orphanComments.map((c) => ({ ...c, anchor: { state: 'outdated' as const } }))];
+          if (!all.length) return console.log('（没有评论）');
+          const label = { open: '待处理', addressed: '已回应', resolved: '已解决' } as const;
+          for (const c of all.sort((x, y) => Number(x.id.slice(2)) - Number(y.id.slice(2)))) {
+            const where = c.anchor.state === 'outdated' ? `原第 ${c.line} 行（原文已不在）` : `第 ${c.anchor.line} 行${c.anchor.state === 'moved' ? `（原第 ${c.line} 行）` : ''}`;
+            console.log(`${c.id} [${label[c.status]}] ${c.path} ${where} · ${c.by.name}：${c.text}`);
+            const last = c.history.at(-1);
+            if (last) console.log(`     ${last.by.name}：${last.response === 'declined' ? '不修改 · ' : last.response === 'fixed' ? '已修改 · ' : ''}${last.note ?? last.kind}`);
+          }
+          return;
+        }
+        const actor = store.identity(opts.as);
+        if (sub === 'add') {
+          const c = addComment(store, id, actor, { path: need(opts.file, '--file'), line: Number(need(opts.line, '--line')), text: need(opts.text, '--text') });
+          console.log(`已添加 ${c.id}（${c.target}）：第 ${c.line} 行「${c.quote.trim()}」`);
+          console.log(`下一步：sf agent ${c.target === 'tasks' ? 'plan' : c.target} ${id} 让 agent 按评论修订（${c.target} 阶段），或手工修改后 sf comment resolve`);
+        } else if (sub === 'resolve') {
+          resolveComment(store, id, actor, need(a2, '<C-n>'), opts.note);
+          console.log(`${a2} 已解决`);
+        } else if (sub === 'reopen') {
+          reopenComment(store, id, actor, need(a2, '<C-n>'), need(opts.note, '--note'));
+          console.log(`${a2} 已重新打开`);
+        } else throw new ForgeError('bad_cmd', `未知命令 sf comment ${sub ?? ''}`);
+        return;
+      }
+      case 'task': {
+        const id = need(a1, '<id>');
+        if (sub === 'list') {
+          const state = store.load(id);
+          const tasks = readTasksFacts(store, id, factsTree(store, state));
+          if (!tasks?.tasks.length) return console.log('（没有任务）');
+          const claims = activeClaims(state.change);
+          const paused = pausedTasks(tasks.tasks.filter((t) => !t.done), state.questions);
+          for (const t of tasks.tasks) {
+            const c = claims.get(t.id);
+            const tag = t.done ? '✓ 完成' : c ? `👤 ${c.by.name} 接手` : paused.has(t.id) ? `⏸ 等待 ${paused.get(t.id)!.join(', ')}` : '· agent';
+            console.log(`${t.id.padEnd(5)} ${tag.padEnd(14)} ${t.title}${t.dependsOn.length ? `（依赖 ${t.dependsOn.join(', ')}）` : ''}`);
+          }
+          return;
+        }
+        const taskId = need(a2, '<T-n>');
+        const actor = store.identity(opts.as);
+        if (sub === 'claim') {
+          claimTask(store, id, actor, taskId, opts.note);
+          console.log(`${taskId} 由 ${actor.name} 接手实现，实现 agent 不再处理。完成后：提交代码与测试、在 tasks.md 勾选，并运行 sf tdd ${id} ${taskId} --base <开始前的 commit> 补 G5 证据`);
+        } else if (sub === 'release') {
+          releaseTask(store, id, actor, taskId, opts.reason);
+          console.log(`${taskId} 已交还，实现 agent 可以处理`);
+        } else throw new ForgeError('bad_cmd', `未知命令 sf task ${sub ?? ''}`);
+        return;
+      }
+      case 'whoami': {
+        if (opts.set) {
+          // 有用户名册时只能设为名册中拥有该角色的用户
+          const me = resolveIdentity(store.users(), parseActor(opts.set));
+          store.setIdentity(me);
+          console.log(`身份已设置为 ${me.name}:${me.role}（仅本机，不提交）${store.users() ? '' : '；尚未启用用户名册，身份为自行声明'}`);
+        } else {
+          const me = store.identity(opts.as);
+          console.log(`${me.name}:${me.role}`);
+        }
+        return;
+      }
+      case 'change': {
+        if (sub === 'list') {
+          for (const id of store.listChanges()) {
+            const { change } = store.load(id);
+            console.log(`${id}  ${change.tier}  ${change.stage}  ${change.title}`);
+          }
+          return;
+        }
+        if (sub !== 'new') throw new ForgeError('bad_cmd', `未知命令 sf change ${sub ?? ''}`);
+        const id = need(a1, '<id>');
+        if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) throw new ForgeError('bad_id', 'change id 只能包含小写字母、数字和连字符（与 OpenSpec 一致）');
+        const tier = (opts.tier ?? 'M') as Tier;
+        if (!['S', 'M', 'L'].includes(tier)) throw new ForgeError('bad_arg', '--tier 只能是 S|M|L');
+        const actor = store.identity(opts.as);
+        store.create(
+          {
+            change: { id, title: need(opts.title, '--title'), tier, stage: 'analysis', baseSha: headSha(store.root), createdAt: now(), createdBy: actor },
+            analysis: emptyAnalysis(store.config()),
+            questions: [],
+            reviews: [],
+            approvals: [],
+          },
+          actor,
+          `# ${opts.title}\n\n## Why\n\n## What Changes\n\n## 范围外\n`,
+        );
+        console.log(`已创建 change ${id}（${tier} 档），OpenSpec 目录：openspec/changes/${id}/`);
+        return;
+      }
+      case 'status':
+        return cmdStatus(store, need(sub, '<id>'));
+      case 'advance':
+        return cmdAdvance(store, need(sub, '<id>'));
+      case 'restate': {
+        const id = need(sub, '<id>');
+        const actor = store.identity(opts.as);
+        if (opts.confirm) {
+          confirmRestatement(store, id, actor, opts.via);
+          console.log('需求复述已确认');
+        } else {
+          store.mutate(id, actor, 'restatement.set', (s) => ({ ...s, analysis: setRestatement(s.analysis, need(opts.text, '--text')) }), (s) => ({ text: s.analysis.restatement!.text, hash: s.analysis.restatement!.hash }));
+          console.log('需求复述已更新（需要重新确认）');
+        }
+        return;
+      }
+      case 'assume': {
+        const id = need(a1, '<id>');
+        const actor = store.identity(opts.as);
+        if (sub === 'add') {
+          const next = store.mutate(id, actor, 'assumption.added', (s) => ({ ...s, analysis: addAssumption(s.analysis, need(opts.text, '--text')) }), (s) => ({ ...s.analysis.assumptions.at(-1)! }));
+          console.log(`已添加 ${next.analysis.assumptions.at(-1)!.id}`);
+        } else if (sub === 'decide') {
+          const aid = need(a2, '<A-n>');
+          if (opts.accept === opts.reject) throw new ForgeError('bad_arg', '需要且只能指定 --accept 或 --reject 之一');
+          const status = opts.accept ? 'accepted' : 'rejected';
+          decideAssumption(store, id, actor, aid, status, opts.note);
+          console.log(`${aid}：${status === 'accepted' ? '已确认' : '已否决'}`);
+        } else throw new ForgeError('bad_cmd', `未知命令 sf assume ${sub ?? ''}`);
+        return;
+      }
+      case 'dim': {
+        const id = need(a1, '<id>');
+        if (sub === 'list') {
+          for (const d of store.load(id).analysis.dimensions) {
+            console.log(`${d.status.padEnd(9)} ${d.dimension}${d.reason ? ` · ${d.reason}` : ''}${d.questionIds?.length ? ` · ${d.questionIds.join(',')}` : ''}`);
+          }
+          return;
+        }
+        if (sub !== 'set') throw new ForgeError('bad_cmd', `未知命令 sf dim ${sub ?? ''}`);
+        const dimension = need(a2, '<维度>');
+        const status = need(args[4], 'covered|na|question') as 'covered' | 'na' | 'question';
+        if (!['covered', 'na', 'question'].includes(status)) throw new ForgeError('bad_arg', '状态只能是 covered|na|question');
+        const actor = store.identity(opts.as);
+        store.mutate(id, actor, 'dimension.set', (s) => ({ ...s, analysis: setDimension(s.analysis, dimension, status, { reason: opts.reason, questionIds: list(opts.questions) }) }), () => ({ dimension, status, reason: opts.reason, questionIds: list(opts.questions) }));
+        console.log(`「${dimension}」→ ${status}`);
+        return;
+      }
+      case 'q':
+        return cmdQuestion(store, need(sub, '子命令'), need(a1, '<id>'), a2);
+      case 'spec':
+      case 'design': {
+        if (sub !== 'approve') throw new ForgeError('bad_cmd', `未知命令 sf ${cmd} ${sub ?? ''}`);
+        const id = need(a1, '<id>');
+        const hash = approve(store, id, store.identity(opts.as), cmd, opts.note);
+        console.log(`已审批当前 ${cmd}（hash ${hash.slice(0, 12)}）；内容或上游再有改动，审批即失效`);
+        return;
+      }
+      case 'verify': {
+        const id = need(sub, '<id>');
+        const actor = store.identity(opts.as);
+        const { change } = store.load(id);
+        const config = store.config();
+        const sha = headSha(store.root);
+        const onStep = (s: StepEvidence) => console.log(`  ${s.exitCode === 0 ? '✓' : '✗'} ${s.name}（${s.durationMs}ms，退出码 ${s.timedOut ? '超时' : s.exitCode}）`);
+        console.log(`在干净 worktree 中验证 commit ${sha.slice(0, 7)}…`);
+        const ev = runVerification({ repo: store.root, steps: config.verify, sha, onStep });
+        if (ev.mainTreeDirty) console.log('  ⚠️ 工作区有未提交的改动；它们不在本次验证范围内');
+        const file = store.saveEvidence(id, ev, actor);
+        console.log(`证据已记录：${store.rel(file)}`);
+        // 测试数量不得下降：基线 commit 只需验证一次
+        if (change.baseSha !== sha && !store.latestEvidence(id, change.baseSha)) {
+          console.log(`记录基线测试数量：验证基线 commit ${change.baseSha.slice(0, 7)}…`);
+          const base = runVerification({ repo: store.root, steps: config.verify, sha: change.baseSha, onStep });
+          console.log(`基线证据已记录：${store.rel(store.saveEvidence(id, base, actor))}`);
+        }
+        return;
+      }
+      case 'tdd': {
+        const id = need(sub, '<id>');
+        const taskId = need(a1, '<T-n>');
+        const actor = store.identity(opts.as);
+        store.load(id);
+        if (!readTasksFacts(store, id)?.tasks.some((t) => t.id === taskId)) throw new ForgeError('not_found', `任务 ${taskId} 不在 tasks.md 中`);
+        const resolve = (ref: string) => {
+          try {
+            return git(store.root, ['rev-parse', '--verify', `${ref}^{commit}`]);
+          } catch {
+            throw new ForgeError('bad_ref', `找不到 commit ${ref}`);
+          }
+        };
+        const base = resolve(need(opts.base, '--base'));
+        const sha = resolve(opts.sha ?? 'HEAD');
+        const { evidence, failures } = checkTdd(store, id, actor, { taskId, base, sha }, console.log);
+        if (failures.length) throw new ForgeError('tdd_failed', `G5 未通过（证据 ${evidence.id}）：${failures.map((c) => c.detail).join('；')}`);
+        console.log(`✓ ${taskId} 先红后绿已确认（${base.slice(0, 7)}..${sha.slice(0, 7)}，证据 ${evidence.id}）`);
+        return;
+      }
+      case 'review':
+        return cmdReview(store, need(sub, '<id>'));
+      case 'log':
+        return cmdLog(store, sub, a1);
+      case 'agent': {
+        const id = need(a1, '<id>');
+        const actor = store.identity(opts.as);
+        const agentOpts = { override: agentOverride(), verbose: !!opts.verbose };
+        if (sub === 'analyze') return cmdAgentAnalyze(store, id, actor, agentOpts);
+        if (sub === 'review') return cmdAgentReview(store, id, actor, agentOpts);
+        if (sub === 'implement') return cmdAgentImplement(store, id, actor, { ...agentOpts, taskId: opts.task });
+        const kinds = { spec: 'spec', design: 'design', plan: 'tasks' } as const;
+        if (sub && sub in kinds) return cmdAgentGenerate(store, id, actor, kinds[sub as keyof typeof kinds], { ...agentOpts, force: !!opts.force });
+        throw new ForgeError('bad_cmd', `未知命令 sf agent ${sub ?? ''}`);
+      }
+      default:
+        throw new ForgeError('bad_cmd', `未知命令 ${cmd}，运行 sf --help 查看用法`);
+    }
+  });
 }
 
 main().catch((e: unknown) => {

@@ -24,7 +24,7 @@ import {
 import { headSha } from '@specforge/runner';
 import type { Actor, AnswerReference, ArtifactComment, ArtifactTarget, Question, ReviewFinding, ReviewRecord, Role, Stage } from '@specforge/shared';
 import { bindingNow, evaluateAll, factsTree, readDesignFacts, readSpecFacts, readTasksFacts, workTree } from './engine.ts';
-import type { ChangeState, Store } from './store.ts';
+import { withStoreLock, type ChangeState, type Store } from './store.ts';
 
 // 人的写操作（CLI 与 server 共用）。每个操作都经过 Store.mutate 写入哈希链；
 // 校验规则来自 core，这里只负责组装事件。
@@ -59,7 +59,7 @@ const QUESTION_EVENT: Record<QuestionOp['kind'], string> = {
 };
 
 /** 回答 / 确认 / 驳回 / 推迟 / 作废 / 追加确认角色 */
-export function questionAction(store: Store, changeId: string, actor: Actor, qid: string, op: QuestionOp): Question {
+export const questionAction = withStoreLock(function questionAction(store: Store, changeId: string, actor: Actor, qid: string, op: QuestionOp): Question {
   const proxy = op.kind === 'confirm' || op.kind === 'reject' ? op.onBehalfOf : undefined;
   if (proxy) checkProxySubject(store.users(), proxy);
   if (op.kind === 'require' && !['dev', 'product'].includes(op.role)) throw new ForgeError('bad_arg', '追加的角色只能是 dev|product');
@@ -111,7 +111,7 @@ export function questionAction(store: Store, changeId: string, actor: Actor, qid
     () => payload(updated!),
   );
   return updated!;
-}
+});
 
 export function confirmRestatement(store: Store, changeId: string, actor: Actor, via?: string): void {
   store.mutate(
@@ -134,16 +134,16 @@ export function decideAssumption(store: Store, changeId: string, actor: Actor, a
 }
 
 /** 审批当前版本的 spec / 方案（绑定内容哈希）；需要 dev 角色 */
-export function approve(store: Store, changeId: string, actor: Actor, target: 'spec' | 'design', note?: string): string {
+export const approve = withStoreLock(function approve(store: Store, changeId: string, actor: Actor, target: 'spec' | 'design', note?: string): string {
   if (actor.role !== 'dev') throw new ForgeError('bad_role', `${target} 审批需要 dev 角色`);
   const hash = bindingNow(store, store.load(changeId), target === 'spec' ? 'G2' : 'G3');
   if (!hash) throw new ForgeError('no_target', `S 档没有 ${target} 审批`);
   store.mutate(changeId, actor, `${target}.approved`, (s) => ({ ...s, approvals: [...s.approvals, { target, hash, actor, at: now(), note }] }), () => ({ hash, note }));
   return hash;
-}
+});
 
 /** 推进到下一阶段：门禁此刻重新评估，不通过则记录拒绝事件并抛错 */
-export function advance(store: Store, changeId: string, actor: Actor): { from: Stage; to: Stage } {
+export const advance = withStoreLock(function advance(store: Store, changeId: string, actor: Actor): { from: Stage; to: Stage } {
   const state = store.load(changeId);
   const evals = evaluateAll(store, state);
   let to: Stage;
@@ -168,13 +168,13 @@ export function advance(store: Store, changeId: string, actor: Actor): { from: S
     }),
   );
   return { from: state.change.stage, to };
-}
+});
 
 /**
  * 写入审查记录，并按结论推进流程：收尾阶段不通过时打回实现阶段（开启新的修复轮次），
  * 修复轮次用尽则升级给人。两步各写一条事件，都经过 Store.mutate。
  */
-export function recordReview(store: Store, changeId: string, actor: Actor, record: ReviewRecord, extra: Record<string, unknown>, log: (l: string) => void): void {
+export const recordReview = withStoreLock(function recordReview(store: Store, changeId: string, actor: Actor, record: ReviewRecord, extra: Record<string, unknown>, log: (l: string) => void): void {
   store.mutate(changeId, actor, 'review.recorded', (s) => ({ ...s, reviews: [...s.reviews, record] }), () => ({ ...record, ...extra }));
   const max = maxFixRounds(store.config());
   const { outcome } = applyReviewOutcome(store.load(changeId).change, record, max, now());
@@ -192,13 +192,13 @@ export function recordReview(store: Store, changeId: string, actor: Actor, recor
   } else {
     log(`⚠️  审查不通过，修复轮次已用尽（${outcome.rounds}/${max}）：已升级给人处理，不再自动打回，实现 agent 不再运行`);
   }
-}
+});
 
 /**
  * 开发者签字（G6 6B 的人工部分），绑定当前 HEAD。
  * 不通过即"打回"：附上阻塞问题（锚定 AC 或问题编号），在收尾阶段会打回实现或升级。
  */
-export function signOff(
+export const signOff = withStoreLock(function signOff(
   store: Store,
   changeId: string,
   actor: Actor,
@@ -220,15 +220,15 @@ export function signOff(
   };
   recordReview(store, changeId, actor, record, {}, log);
   return record;
-}
+});
 
 /** 接管：任务由人接手实现，实现 agent 不再处理（直到交还） */
-export function claimTask(store: Store, changeId: string, actor: Actor, taskId: string, note?: string): void {
+export const claimTask = withStoreLock(function claimTask(store: Store, changeId: string, actor: Actor, taskId: string, note?: string): void {
   const state = store.load(changeId);
   const task = readTasksFacts(store, changeId, factsTree(store, state))?.tasks.find((t) => t.id === taskId);
   if (!task) throw new ForgeError('not_found', `任务 ${taskId} 不在 tasks.md 中`);
   store.mutate(changeId, actor, 'task.claimed', (s) => ({ ...s, change: claimTaskCore(s.change, task, actor, now(), note) }), () => ({ taskId, note }));
-}
+});
 
 /** 交还给 agent */
 export function releaseTask(store: Store, changeId: string, actor: Actor, taskId: string, reason?: string): void {
@@ -238,7 +238,7 @@ export function releaseTask(store: Store, changeId: string, actor: Actor, taskId
 // ---------------- 产物评论（T3.5） ----------------
 
 /** 在 spec / design / tasks 的某一行上评论（按当前工作区内容锚定） */
-export function addComment(store: Store, changeId: string, actor: Actor, input: { path: string; line: number; text: string }): ArtifactComment {
+export const addComment = withStoreLock(function addComment(store: Store, changeId: string, actor: Actor, input: { path: string; line: number; text: string }): ArtifactComment {
   if (actor.role === 'agent') throw new ForgeError('bad_role', '评论只能由人添加');
   const text = workTree(store.root).read(input.path);
   let added: ArtifactComment | undefined;
@@ -254,7 +254,7 @@ export function addComment(store: Store, changeId: string, actor: Actor, input: 
     () => ({ ...added! }),
   );
   return added!;
-}
+});
 
 export function resolveComment(store: Store, changeId: string, actor: Actor, id: string, note?: string): void {
   store.mutate(changeId, actor, 'comment.resolved', (s) => ({ ...s, comments: resolveCommentCore(s.comments ?? [], id, actor, now(), note) }), () => ({ commentId: id, note }));

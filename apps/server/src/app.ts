@@ -73,7 +73,7 @@ function parseFindings(v: unknown): ReviewFinding[] {
 }
 
 /** 错误码 → HTTP 状态 */
-const STATUS_OF: Record<string, 400 | 403 | 404 | 409> = {
+const STATUS_OF: Record<string, 400 | 403 | 404 | 409 | 503> = {
   no_change: 404,
   not_found: 404,
   bad_role: 403,
@@ -86,6 +86,8 @@ const STATUS_OF: Record<string, 400 | 403 | 404 | 409> = {
   claimed: 409,
   out_of_band: 409,
   stale_answer: 409,
+  write_busy: 409,
+  recovery_required: 503,
 };
 
 /** 不需要登录的接口 */
@@ -95,6 +97,10 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
   const app = new Hono<AuthEnv>();
   const auth = opts.auth ?? new Auth(store);
   const localPath = (c: Context) => c.req.path.slice(opts.basePath?.length ?? 0);
+  app.use('*', async (c, next) => {
+    if (['POST', 'PUT', 'PATCH'].includes(c.req.method)) await c.req.arrayBuffer();
+    return store.exclusive(() => next());
+  });
   if (opts.check) app.use('*', async (_, next) => { opts.check!(); await next(); });
 
   // 启用用户名册后，除公开接口外都需要登录（含 WebSocket）

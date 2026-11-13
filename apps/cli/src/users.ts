@@ -1,5 +1,5 @@
 import { addUser, disableUser, ForgeError, publicUsers, rotateToken, updateUser } from '@specforge/core';
-import { newToken, type Store } from '@specforge/store';
+import { newToken, withStoreLock, type Store } from '@specforge/store';
 import type { Actor } from '@specforge/shared';
 
 // sf user …：用户名册管理（T4.1）。所有修改走 Store.mutateUsers，写入哈希链。
@@ -23,7 +23,7 @@ function caller(store: Store, as?: string): Actor | undefined {
   return store.identity(as);
 }
 
-export function cmdUserAdd(store: Store, name: string, roles: string[], admin: boolean, as?: string): UserCmdResult {
+export const cmdUserAdd = withStoreLock(function cmdUserAdd(store: Store, name: string, roles: string[], admin: boolean, as?: string): UserCmdResult {
   const by = caller(store, as);
   const bootstrap = !store.users()?.users.length;
   const { token, hash } = newToken();
@@ -39,7 +39,7 @@ export function cmdUserAdd(store: Store, name: string, roles: string[], admin: b
       `Web 登录令牌（只显示这一次，请转交本人妥善保存）：${token}`,
     ],
   };
-}
+});
 
 export function cmdUserList(store: Store): UserCmdResult {
   const reg = store.users();
@@ -51,29 +51,29 @@ export function cmdUserList(store: Store): UserCmdResult {
   };
 }
 
-export function cmdUserSet(store: Store, name: string, change: { roles?: string[]; admin?: boolean }, as?: string): UserCmdResult {
+export const cmdUserSet = withStoreLock(function cmdUserSet(store: Store, name: string, change: { roles?: string[]; admin?: boolean }, as?: string): UserCmdResult {
   if (!change.roles && change.admin === undefined) throw new ForgeError('bad_arg', '需要 --role 或 --admin / --no-admin');
   const by = store.identity(as);
   requireRegistry(store);
   const reg = store.mutateUsers(by, 'user.updated', (r) => updateUser(r, name, change, by), { name, ...change });
   const u = reg.users.find((x) => x.name === name)!;
   return { lines: [`${u.name}：${u.roles.join(', ')}${u.admin ? '，管理员' : ''}`] };
-}
+});
 
-export function cmdUserToken(store: Store, name: string, as?: string): UserCmdResult {
+export const cmdUserToken = withStoreLock(function cmdUserToken(store: Store, name: string, as?: string): UserCmdResult {
   const by = store.identity(as);
   requireRegistry(store);
   const { token, hash } = newToken();
   store.mutateUsers(by, 'user.token_rotated', (r) => rotateToken(r, name, hash, by, new Date().toISOString()), { name });
   return { token, lines: [`已重置 ${name} 的登录令牌，旧令牌与已登录的会话立即失效`, `新令牌（只显示这一次）：${token}`] };
-}
+});
 
-export function cmdUserDisable(store: Store, name: string, reason: string, as?: string): UserCmdResult {
+export const cmdUserDisable = withStoreLock(function cmdUserDisable(store: Store, name: string, reason: string, as?: string): UserCmdResult {
   const by = store.identity(as);
   requireRegistry(store);
   store.mutateUsers(by, 'user.disabled', (r) => disableUser(r, name, reason, by, new Date().toISOString()), { name, reason });
   return { lines: [`已停用 ${name}；其已登录的会话立即失效，历史记录保留`] };
-}
+});
 
 function requireRegistry(store: Store): void {
   if (!store.users()) throw new ForgeError('no_registry', '还没有启用用户名册：先 sf user add <名字> --role dev --admin');

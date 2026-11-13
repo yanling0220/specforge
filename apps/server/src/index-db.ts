@@ -102,26 +102,28 @@ export class ForgeIndex {
    * 若已索引的最后一条事件与文件不一致（日志被改写或截断），丢弃索引全量重建。
    */
   sync(): SyncResult {
-    const all = this.store.events();
-    const last = this.lastSeq();
-    const known = last ? all.find((e) => e.seq === last) : undefined;
-    const rebuilt = last > 0 && known?.hash !== this.hashAt(last);
-    if (rebuilt) this.db.exec('DELETE FROM events; DELETE FROM changes; DELETE FROM questions;');
-    const fresh = rebuilt ? all : all.filter((e) => e.seq > last);
+    return this.store.exclusive(() => {
+      const all = this.store.events();
+      const last = this.lastSeq();
+      const known = last ? all.find((e) => e.seq === last) : undefined;
+      const rebuilt = last > 0 && known?.hash !== this.hashAt(last);
+      if (rebuilt) this.db.exec('DELETE FROM events; DELETE FROM changes; DELETE FROM questions;');
+      const fresh = rebuilt ? all : all.filter((e) => e.seq > last);
 
-    const insert = this.db.prepare('INSERT INTO events (seq, type, change_id, actor_name, actor_role, at, hash, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    this.db.exec('BEGIN');
-    try {
-      for (const e of fresh) insert.run(e.seq, e.type, e.changeId ?? null, e.actor.name, e.actor.role, e.at, e.hash, JSON.stringify(e));
-      // 首次同步或重建时索引全部 change（也包括没有事件的目录）；之后只索引有新事件的 change
-      const ids = last === 0 || rebuilt ? this.store.listChanges() : [...new Set(fresh.flatMap((e) => (e.changeId ? [e.changeId] : [])))];
-      for (const id of ids) this.indexChange(id);
-      this.db.exec('COMMIT');
-      return { events: fresh, changes: ids, rebuilt };
-    } catch (e) {
-      this.db.exec('ROLLBACK');
-      throw e;
-    }
+      const insert = this.db.prepare('INSERT INTO events (seq, type, change_id, actor_name, actor_role, at, hash, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      this.db.exec('BEGIN');
+      try {
+        for (const e of fresh) insert.run(e.seq, e.type, e.changeId ?? null, e.actor.name, e.actor.role, e.at, e.hash, JSON.stringify(e));
+        // 首次同步或重建时索引全部 change（也包括没有事件的目录）；之后只索引有新事件的 change
+        const ids = last === 0 || rebuilt ? this.store.listChanges() : [...new Set(fresh.flatMap((e) => (e.changeId ? [e.changeId] : [])))];
+        for (const id of ids) this.indexChange(id);
+        this.db.exec('COMMIT');
+        return { events: fresh, changes: ids, rebuilt };
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
+      }
+    });
   }
 
   private indexChange(id: string): void {

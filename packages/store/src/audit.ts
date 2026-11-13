@@ -1,8 +1,8 @@
 import { ForgeError, verifyChain, verifyLogAnchors, type ChainProblem } from '@specforge/core';
 import { LOG_ANCHOR_REF, readLogAnchors, writeLogAnchor, type GitLogAnchor } from '@specforge/runner';
-import type { Store } from './store.ts';
+import { withStoreLock, type Store } from './store.ts';
 
-export function verifyLog(store: Store, trustedCommit?: string) {
+export const verifyLog = withStoreLock(function verifyLog(store: Store, trustedCommit?: string) {
   const events = store.events();
   const chainProblems = verifyChain(events);
   const anchorProblems: ChainProblem[] = [];
@@ -35,9 +35,9 @@ export function verifyLog(store: Store, trustedCommit?: string) {
       problems: anchorProblems,
     },
   };
-}
+});
 
-export function anchorLog(store: Store): { anchor: GitLogAnchor; created: boolean } {
+export const anchorLog = withStoreLock(function anchorLog(store: Store): { anchor: GitLogAnchor; created: boolean } {
   const result = verifyLog(store);
   if (!result.ok) {
     const details = [...result.chainProblems, ...result.anchors.problems, ...result.outOfBand].map((item) => item.problem);
@@ -48,4 +48,4 @@ export function anchorLog(store: Store): { anchor: GitLogAnchor; created: boolea
   if (result.anchors.latest?.seq === result.head.seq) return { anchor: result.anchors.latest, created: false };
   const anchor = writeLogAnchor(store.root, { version: 1, ...result.head, at: new Date().toISOString() }, result.anchors.latest?.commit);
   return { anchor, created: true };
-}
+});

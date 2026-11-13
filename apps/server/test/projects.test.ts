@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, fork, spawn, type ChildProcess } from 'node:child_process';
 import { once, type EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
@@ -18,8 +18,14 @@ const Socket = createRequire(import.meta.url)('ws') as new (url: string, options
 const directories: string[] = [];
 const servers: RunningMultiProjectServer[] = [];
 const sockets: InstanceType<typeof Socket>[] = [];
+const children: ChildProcess[] = [];
 const admin: Actor = { name: 'same', role: 'dev' };
 afterEach(async () => {
+  for (const child of children.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
+    }
+  }
   for (const socket of sockets.splice(0)) socket.close();
   await Promise.all(servers.splice(0).map((server) => server.close()));
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
@@ -142,8 +148,8 @@ describe('多项目 REST 与会话（T4.3b）', () => {
     expect((await fetchProject('b', '/api/changes', firstCookie.replace('sf_session_a=', 'sf_session_b='))).status).toBe(401);
     const secondCookie = cookie(await login('b', 'token-B'));
     const combined = `${firstCookie}; ${secondCookie}`;
-    expect(await (await fetchProject('a', '/api/project', combined)).json()).toEqual({ id: 'a', readOnly: true });
-    expect(await (await fetchProject('b', '/api/project', combined)).json()).toEqual({ id: 'b', readOnly: true });
+    expect(await (await fetchProject('a', '/api/project', combined)).json()).toEqual({ id: 'a', readOnly: false });
+    expect(await (await fetchProject('b', '/api/project', combined)).json()).toEqual({ id: 'b', readOnly: false });
     for (const [id, label, store] of [['a', 'A', first], ['b', 'B', second]] as const) {
       expect((await (await fetchProject(id, '/api/changes', combined)).json()).changes[0].title).toBe(label);
       expect((await (await fetchProject(id, '/api/changes/same', combined)).json()).change.title).toBe(label);
@@ -164,21 +170,27 @@ describe('多项目 REST 与会话（T4.3b）', () => {
       expect(response.status).toBe(404);
       expect(await response.text()).not.toContain(first.root);
     }
-    expect(await (await fetch(`${server.url}/api/health`)).json()).toEqual({ ok: true, mode: 'multi-project', readOnly: true });
+    expect(await (await fetch(`${server.url}/api/health`)).json()).toEqual({ ok: true, mode: 'multi-project', readOnly: false });
   });
 
-  it('多项目写操作一律关闭，身份或 projectId 参数不能切换上下文，源状态和链不变', async () => {
+  it('写入仅落到 URL 所属项目，会话和角色仍校验，伪造 projectId 不能切换上下文', async () => {
     const { first, second, fetchProject, login, cookie } = await setup();
     const session = cookie(await login('a', 'token-A'));
-    const before = [first, second].map((store) => ({ state: store.load('same'), events: store.events() }));
-    for (const action of ['questions/Q-1/answer', 'questions/Q-1/confirm', 'questions/Q-1/reject', 'approve', 'signoff', 'advance', 'tasks/T-1/claim', 'comments']) {
-      const response = await fetchProject('a', `/api/changes/same/${action}`, session, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: 'b', role: 'dev', text: 'evil' }) });
-      expect(response.status).toBe(403);
-      expect((await response.json()).error.code).toBe('read_only');
-    }
-    expect((await fetchProject('a', '/api/changes/same', session, { method: 'DELETE' })).status).toBe(403);
+    const before = { state: second.load('same'), events: second.events() };
+    const post = (id: string, role: string, path = 'questions/Q-1/answer', extra = {}) => fetchProject(id, `/api/changes/same/${path}`, session, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: 'b', name: 'forged', role, text: 'new A', ...extra }) });
+    expect((await post('b', 'dev')).status).toBe(401);
+    expect((await post('a', 'agent')).status).toBe(403);
+    expect((await post('a', 'dev')).status).toBe(200);
+    const revision = first.load('same').questions[0]!.revisions.at(-1)!;
+    expect((await post('a', 'product', 'questions/Q-1/confirm', { rev: revision.rev, answerHash: revision.hash })).status).toBe(200);
+    expect((await post('a', 'dev', 'questions/Q-1/answer', { reason: '补充说明' })).status).toBe(200);
+    expect((await post('a', 'product', 'questions/Q-1/confirm', { rev: revision.rev, answerHash: revision.hash })).status).toBe(409);
+    const latest = first.load('same').questions[0]!.revisions.at(-1)!;
+    expect((await post('a', 'product', 'questions/Q-1/reject', { rev: latest.rev, answerHash: latest.hash, note: '重新核对' })).status).toBe(200);
+    expect(first.events().at(-1)!.actor).toEqual({ name: 'same', role: 'product' });
+    expect(first.load('same').questions[0]!.revisions.at(-1)!.text).toBe('new A');
     expect((await (await fetchProject('a', '/api/changes/same?projectId=b', session)).json()).change.title).toBe('A');
-    expect([first, second].map((store) => ({ state: store.load('same'), events: store.events() }))).toEqual(before);
+    expect({ state: second.load('same'), events: second.events() }).toEqual(before);
   });
 
   it('拒绝参数路径穿越，不从任何默认项目回退读取', async () => {
@@ -190,6 +202,58 @@ describe('多项目 REST 与会话（T4.3b）', () => {
     }
     expect((await fetchProject('a', '/api/changes/missing', session)).status).toBe(404);
     expect((await upgradeStatus(`${server.url}/p/a/ws?changeId=..%2Fb`, session))).toBe(400);
+  });
+
+  it('CLI 与 HTTP 共用锁；忙时不写入、不关闭健康订阅，进程死亡后要求显式恢复', async () => {
+    const { server, first, second, fetchProject, login, cookie } = await setup();
+    const session = cookie(await login('a', 'token-A'));
+    const secondSession = cookie(await login('b', 'token-B'));
+    const before = first.events().length;
+    const connection = connect(`${server.url.replace('http', 'ws')}/p/a/ws`, session);
+    await connection.waitFor(() => connection.messages.some((message) => message.type === 'hello'));
+    const worker = fileURLToPath(new URL('../../../packages/store/test/fixtures/writer.ts', import.meta.url));
+    const child = fork(worker, [first.root, 'hold'], { execArgv: [], stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    children.push(child);
+    const exited = once(child, 'exit');
+    await once(child, 'message');
+    const locked = once(child, 'message'); child.send('go'); await locked;
+    const post = () => fetchProject('a', '/api/changes/same/questions/Q-1/answer', session, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role: 'dev', text: 'after lock' }) });
+    const blocked = await post();
+    expect(blocked.status).toBe(409);
+    expect((await blocked.json()).error.code).toBe('write_busy');
+    const main = fileURLToPath(new URL('../../cli/src/main.ts', import.meta.url));
+    expect(() => execFileSync(process.execPath, [main, 'q', 'answer', 'same', 'Q-1', '--text', 'blocked', '--as', 'same:dev'], { cwd: first.root, stdio: ['ignore', 'pipe', 'pipe'] })).toThrow();
+    server.tick();
+    expect((await fetchProject('b', '/api/changes', secondSession)).status).toBe(200);
+    second.append({ type: 'healthy.b', actor: admin, payload: {} });
+    const closed = once(connection.socket, 'close');
+    child.kill('SIGKILL'); await exited;
+    expect((await post()).status).toBe(503);
+    server.tick(); await closed;
+    first.recover('确认临时测试进程未写入文件');
+    expect(first.events()).toHaveLength(before);
+    expect((await post()).status).toBe(200);
+    expect(first.events()).toHaveLength(before + 1);
+    expect((await fetchProject('b', '/api/changes', secondSession)).status).toBe(200);
+  });
+
+  it('正文尚未接收完整的请求不占用仓库锁，接收后按最新状态写入', async () => {
+    const { server, first, fetchProject, login, cookie } = await setup();
+    const session = cookie(await login('a', 'token-A'));
+    const body = JSON.stringify({ role: 'dev', text: 'slow upload' });
+    const outgoing = request(`${server.url}/p/a/api/changes/same/questions/Q-1/answer`, { method: 'POST', headers: { cookie: session, 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } });
+    const responded = once(outgoing, 'response');
+    outgoing.write(body.slice(0, 4));
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect((await fetchProject('a', '/api/changes', session)).status).toBe(200);
+      first.append({ type: 'during.upload', actor: admin, payload: {} });
+      outgoing.end(body.slice(4));
+      const [response] = await responded;
+      response.resume();
+      expect(response.statusCode).toBe(200);
+      expect(first.events().slice(-2).map((event) => event.type)).toEqual(['during.upload', 'question.answered']);
+    } finally { outgoing.destroy(); }
   });
 
   it('项目启动时损坏或没有用户名册，只让该项目不可用，错误不泄露路径或内容', async () => {

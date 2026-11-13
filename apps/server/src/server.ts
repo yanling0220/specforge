@@ -102,7 +102,7 @@ export async function startMultiProjectServer(opts: MultiProjectOptions): Promis
     }
     await next();
   });
-  app.get('/api/health', (context) => context.json({ ok: true, mode: 'multi-project', readOnly: true }));
+  app.get('/api/health', (context) => context.json({ ok: true, mode: 'multi-project', readOnly: false }));
   for (const project of projects) {
     const basePath = `/p/${project.id}`;
     try {

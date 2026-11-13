@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import {
   adapterFor,
   applyRaisedQuestions,
@@ -67,7 +67,7 @@ import {
   workspaceFingerprint,
 } from '@specforge/runner';
 import type { Actor, AgentProfile, AgentRole, GateEvaluation, ProjectConfig } from '@specforge/shared';
-import { bindingNow, commitTree, workTree, readDesignFacts, readSpecFacts, readTasksFacts, recordReview, type Store } from '@specforge/store';
+import { bindingNow, commitTree, workTree, readDesignFacts, readSpecFacts, readTasksFacts, recordReview, withStoreLock, type Store } from '@specforge/store';
 import { checkTdd } from './tdd.ts';
 
 const MAX_DIFF_CHARS = 150_000;
@@ -202,7 +202,7 @@ function agentActor(role: AgentRole, result: AgentRunResult, profile: AgentProfi
   return { name: `${role}@${result.backend}/${result.model ?? profile.model ?? 'default'}`, role: 'agent' };
 }
 
-export async function cmdAgentAnalyze(store: Store, changeId: string, actor: Actor, opts: AgentCmdOptions): Promise<void> {
+export const cmdAgentAnalyze = withStoreLock(async function cmdAgentAnalyze(store: Store, changeId: string, actor: Actor, opts: AgentCmdOptions): Promise<void> {
   const log = opts.log ?? console.log;
   const state = store.load(changeId);
   const config = store.config();
@@ -270,9 +270,9 @@ export async function cmdAgentAnalyze(store: Store, changeId: string, actor: Act
   log(`分析已写入：${summary}`);
   if (draft.summary) log(`agent 总结：${draft.summary}`);
   log(`下一步：sf q list ${changeId}，与产品核对后回答问题`);
-}
+});
 
-export async function cmdAgentReview(store: Store, changeId: string, actor: Actor, opts: AgentCmdOptions): Promise<void> {
+export const cmdAgentReview = withStoreLock(async function cmdAgentReview(store: Store, changeId: string, actor: Actor, opts: AgentCmdOptions): Promise<void> {
   const log = opts.log ?? console.log;
   const state = store.load(changeId);
   if (state.change.stage !== 'closing') {
@@ -335,9 +335,9 @@ export async function cmdAgentReview(store: Store, changeId: string, actor: Acto
   }
   if (record.note) log(`总结：${record.note}`);
   recordReview(store, changeId, agent, record, { sessionId: result.sessionId }, log);
-}
+});
 
-export async function cmdAgentImplement(store: Store, changeId: string, actor: Actor, opts: AgentCmdOptions & { taskId?: string }): Promise<void> {
+export const cmdAgentImplement = withStoreLock(async function cmdAgentImplement(store: Store, changeId: string, actor: Actor, opts: AgentCmdOptions & { taskId?: string }): Promise<void> {
   const log = opts.log ?? console.log;
   const state = store.load(changeId);
   const config = store.config();
@@ -483,8 +483,7 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
       }
     }
 
-    git(store.root, ['merge', '--ff-only', '-q', sha]);
-    store.append({
+    store.mergeImplementation(sha, {
       type: 'implement.committed',
       actor: agent,
       changeId,
@@ -512,7 +511,7 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
   } finally {
     removeWorktree(store.root, wt);
   }
-}
+});
 
 // ---------------- 生成类 agent（T2.8） ----------------
 
@@ -527,7 +526,7 @@ function failuresOf(ev: GateEvaluation): string[] {
  * 运行生成类 agent：agent 只读，提交的产物先按 G2 / G3 / G4 的规则校验，
  * 通过后由引擎写入 openspec/changes/<id>/（只写这个目录）。审批仍由人完成。
  */
-export async function cmdAgentGenerate(
+export const cmdAgentGenerate = withStoreLock(async function cmdAgentGenerate(
   store: Store,
   changeId: string,
   actor: Actor,
@@ -647,20 +646,20 @@ export async function cmdAgentGenerate(
   }
 
   // 引擎写入：只写 openspec/changes/<id>/ 下由引擎拼出的路径
-  if (kind === 'spec' && (opts.force || revising)) for (const p of existing) rmSync(join(store.root, p));
+  const artifactFiles: Record<string, string | null> = Object.fromEntries(kind === 'spec' && (opts.force || revising) ? existing.map((path) => [path, null]) : []);
   const written = draft.files.map((f) => {
     const abs = resolve(dir, f.path);
     if (relative(dir, abs).startsWith('..')) throw new ForgeError('bad_path', `产物路径越界：${f.path}`);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, f.content.endsWith('\n') ? f.content : f.content + '\n');
-    return { path: store.rel(abs), hash: sha256(readFileSync(abs, 'utf8')) };
+    const content = f.content.endsWith('\n') ? f.content : f.content + '\n';
+    artifactFiles[store.rel(abs)] = content;
+    return { path: store.rel(abs), hash: sha256(content) };
   });
-  store.append({
+  store.writeArtifacts({
     type: 'artifact.generated',
     actor: agent,
     changeId,
     payload: { kind, files: written, replaced: existing, summary: draft.summary, sessionId: result.sessionId, ...(revising ? { revisedFor: pending.map((c) => c.id) } : {}) },
-  });
+  }, artifactFiles);
   for (const f of written) log(`✓ 已写入 ${f.path}`);
   if (revising) {
     // agent 的回应只把评论标为"已回应"，是否解决由人确认
@@ -681,4 +680,4 @@ export async function cmdAgentGenerate(
     tasks: `请审阅后提交，再 sf advance ${changeId} 进入实现`,
   };
   log(`下一步：${next[kind]}`);
-}
+});
