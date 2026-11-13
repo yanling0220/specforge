@@ -8,9 +8,11 @@
   ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json",
     "sf": "node apps/cli/src/main.ts",
-    "server": "node apps/server/src/main.ts"
+    "server": "node apps/server/src/main.ts",
+    "web:build": "npm run build -w @specforge/web",
+    "web:dev": "npm run dev -w @specforge/web"
   },
   "engines": {
     "node": ">=22.18"

@@ -419,7 +419,7 @@ specforge/
 ├── apps/
 │   ├── cli/      # 命令行 sf
 │   ├── server/   # Hono：只读 REST + WebSocket 推送；SQLite 索引（T3.1）
-│   └── web/      # （第三期）
+│   └── web/      # React + Vite 只读控制台（T3.2）
 └── docs/
 ```
 
@@ -432,6 +432,14 @@ specforge/
 - **REST（只读）**：`/api/changes`、`/api/changes/:id`（含带外修改与 OpenSpec 读取来源）、`/gates`、`/questions`、`/questions/:qid`、`/events`、`/api/events`、`/api/log/verify`。写操作在 T3.4 加入，仍只能走 `Store.mutate`。
 - **WebSocket `/ws`**：推送 `hello` / `event` / `changes` / `rebuilt`；`?changeId=` 过滤，`?after=` 断线补发。推送进度独立于索引同步，REST 先同步也不会漏推。
 - **安全**：没有登录（T4.1），默认只监听 127.0.0.1；监听其他地址时启动会警告。
+- **证据接口**（T3.2）：`/api/changes/:id/evidence[/:eid]`，从事件日志列出验证证据与 G5 证据，`hashOk` 表示证据文件与事件中记录的哈希一致。`/gates` 同时返回 `pipeline`（阶段与出口门禁，来自 core 的 `pipelineFor`），前端不重复实现流程规则。
+
+### 9.3 Web 控制台（T3.2，只读）
+
+- `apps/web`：React + Vite，hash 路由。`npm run web:build` 后由 server 托管（`apps/web/dist`，不提交）；开发时 `npm run web:dev`，接口代理到 4317。
+- 页面：看板（按阶段分列，红点标出等人处理：阻塞问题、升级、修复轮次）；change 详情（阶段条，上游失效标黄；提示条：带外修改、升级、阻塞问题、修复轮次、未提交的 OpenSpec 改动；门禁面板逐项 ✓/✗，G5 / G6A 可点开证据）；证据页（RED / GREEN 或各验证步骤的命令、退出码、输出末尾，哈希不一致时警示）；事件时间线（按类别过滤，可展开载荷）。
+- 实时：订阅 `/ws`，收到变化后重新读取 REST；断线指数退避重连，带 `after` 补发。
+- 视图逻辑放在 `src/model.ts`（纯函数，有测试），组件只做展示。
 
 ---
 

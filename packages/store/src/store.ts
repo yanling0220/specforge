@@ -62,6 +62,18 @@ export function defaultConfig(): ProjectConfig {
   };
 }
 
+export interface EvidenceEntry {
+  id: string;
+  kind: 'verify' | 'tdd';
+  sha: string;
+  taskId?: string;
+  passed: boolean;
+  seq: number;
+  at: string;
+  actor: Actor;
+  hashOk: boolean;
+}
+
 /** 一个 change 在 .specforge 中的全部状态 */
 export interface ChangeState {
   change: Change;
@@ -269,6 +281,43 @@ export class Store {
         const ev = readJson<TddEvidence>(file);
         return hashOf(ev) === event.payload.evidenceHash ? [ev] : [];
       });
+  }
+
+  /**
+   * 全部证据（验证证据与 G5 证据）的目录，按记录顺序。
+   * hashOk 为 false 表示文件缺失或内容与事件日志中记录的哈希不一致，不应被采信。
+   */
+  evidenceIndex(changeId: string): EvidenceEntry[] {
+    return this.events()
+      .filter((e) => e.changeId === changeId && (e.type === 'evidence.recorded' || e.type === 'tdd.recorded'))
+      .map((e) => {
+        const id = String(e.payload.evidenceId);
+        const file = join(this.changeDir(changeId), 'evidence', `${id}.json`);
+        const hashOk = existsSync(file) && hashOf(readJson<unknown>(file)) === e.payload.evidenceHash;
+        return {
+          id,
+          kind: e.type === 'tdd.recorded' ? 'tdd' : 'verify',
+          sha: String(e.payload.sha),
+          taskId: e.type === 'tdd.recorded' ? String(e.payload.taskId) : undefined,
+          passed:
+            e.type === 'tdd.recorded'
+              ? e.payload.passed === true
+              : (e.payload.steps as { exitCode: number | null; timedOut: boolean }[]).every((s) => s.exitCode === 0 && !s.timedOut),
+          seq: e.seq,
+          at: e.at,
+          actor: e.actor,
+          hashOk,
+        };
+      });
+  }
+
+  /** 读取一份证据；不存在返回 undefined */
+  readEvidence(changeId: string, id: string): { entry: EvidenceEntry; content: VerificationEvidence | TddEvidence } | undefined {
+    const entry = this.evidenceIndex(changeId).find((x) => x.id === id);
+    if (!entry) return undefined;
+    const file = join(this.changeDir(changeId), 'evidence', `${id}.json`);
+    if (!existsSync(file)) return undefined;
+    return { entry, content: readJson<VerificationEvidence | TddEvidence>(file) };
   }
 
   // ---------- 事件日志 ----------

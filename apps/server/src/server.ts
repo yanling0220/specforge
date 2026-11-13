@@ -1,4 +1,5 @@
 import { statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import { serve, type ServerType } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
@@ -18,7 +19,11 @@ export interface ServerOptions {
   dbPath?: string;
   /** 检查事件日志变化的间隔 */
   pollMs?: number;
+  /** Web 控制台构建产物目录；默认 apps/web/dist（不存在则只提供接口） */
+  webDir?: string;
 }
+
+export const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../web/dist', import.meta.url));
 
 export interface RunningServer {
   url: string;
@@ -46,13 +51,17 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const { store } = opts;
   const index = new ForgeIndex(store, opts.dbPath);
   index.sync();
-  const app = createApp(store, index);
+  const app = createApp(store, index, { webDir: opts.webDir ?? DEFAULT_WEB_DIR });
   const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
   const clients = new Set<Client>();
 
   const send = (client: Client, msg: PushMessage) => {
     if (msg.type === 'event' && client.changeId && msg.event.changeId !== client.changeId) return;
-    if (msg.type === 'changes' && client.changeId && !msg.ids.includes(client.changeId)) return;
+    if (msg.type === 'changes' && client.changeId) {
+      // 只订阅一个 change 的客户端只看到它自己的编号
+      if (!msg.ids.includes(client.changeId)) return;
+      msg = { type: 'changes', ids: [client.changeId] };
+    }
     client.ws.send(JSON.stringify(msg));
   };
   const lastSeq = () => store.events().at(-1)?.seq ?? 0;

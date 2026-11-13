@@ -1,5 +1,7 @@
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { extname, join, normalize, sep } from 'node:path';
 import { Hono } from 'hono';
-import { ForgeError, upstreamGates, verifyChain } from '@specforge/core';
+import { ForgeError, pipelineFor, upstreamGates, verifyChain } from '@specforge/core';
 import { evaluateAll, factsTree, uncommittedSpecChanges, type Store } from '@specforge/store';
 import type { ForgeIndex } from './index-db.ts';
 
@@ -13,7 +15,23 @@ const intParam = (v: string | undefined): number | undefined => {
   return n;
 };
 
-export function createApp(store: Store, index: ForgeIndex): Hono {
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.json': 'application/json',
+  '.ico': 'image/x-icon',
+  '.png': 'image/png',
+  '.woff2': 'font/woff2',
+};
+
+export interface AppOptions {
+  /** Web 控制台构建产物目录（apps/web/dist）；存在时由 server 托管 */
+  webDir?: string;
+}
+
+export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}): Hono {
   const app = new Hono();
 
   // 每次请求前与文件同步，保证列表不落后于文件
@@ -31,7 +49,19 @@ export function createApp(store: Store, index: ForgeIndex): Hono {
     return c.json({ error: { code: 'internal', message: err.message } }, 500);
   });
 
-  app.notFound((c) => c.json({ error: { code: 'not_found', message: `没有这个接口：${c.req.method} ${c.req.path}` } }, 404));
+  app.notFound((c) => {
+    const web = opts.webDir;
+    const isApi = c.req.path.startsWith('/api/') || c.req.path === '/ws';
+    if (c.req.method === 'GET' && !isApi && web && existsSync(join(web, 'index.html'))) {
+      // 只允许读 webDir 内的文件；其余路径交给前端路由（index.html）
+      const rel = normalize(decodeURIComponent(c.req.path)).replace(/^[/\\]+/, '');
+      const file = join(web, rel);
+      const inside = file.startsWith(web.endsWith(sep) ? web : web + sep);
+      const target = inside && existsSync(file) && statSync(file).isFile() ? file : join(web, 'index.html');
+      return c.body(readFileSync(target), 200, { 'content-type': MIME[extname(target)] ?? 'application/octet-stream' });
+    }
+    return c.json({ error: { code: 'not_found', message: `没有这个接口：${c.req.method} ${c.req.path}` } }, 404);
+  });
 
   app.get('/api/health', (c) => c.json({ ok: true, root: store.root }));
 
@@ -56,6 +86,7 @@ export function createApp(store: Store, index: ForgeIndex): Hono {
     const upstream = upstreamGates(state.change.stage, state.change.tier);
     return c.json({
       stage: state.change.stage,
+      pipeline: pipelineFor(state.change.tier),
       gates,
       upstreamInvalid: upstream.filter((g) => gates[g]?.status !== 'passed'),
     });
@@ -83,6 +114,20 @@ export function createApp(store: Store, index: ForgeIndex): Hono {
   app.get('/api/events', (c) =>
     c.json({ events: index.events({ changeId: c.req.query('changeId'), type: c.req.query('type'), after: intParam(c.req.query('after')), limit: intParam(c.req.query('limit')) }) }),
   );
+
+  app.get('/api/changes/:id/evidence', (c) => {
+    const id = c.req.param('id');
+    store.load(id);
+    return c.json({ evidence: store.evidenceIndex(id) });
+  });
+
+  app.get('/api/changes/:id/evidence/:eid', (c) => {
+    const { id, eid } = c.req.param();
+    store.load(id);
+    const found = store.readEvidence(id, eid);
+    if (!found) throw new ForgeError('not_found', `证据 ${eid} 不存在`);
+    return c.json(found);
+  });
 
   app.get('/api/log/verify', (c) => {
     const problems = verifyChain(store.events());

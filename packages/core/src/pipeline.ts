@@ -22,6 +22,11 @@ export function stagesFor(tier: Tier): Stage[] {
     : ['analysis', 'spec', 'design', 'tasks', 'implement', 'closing', 'delivered'];
 }
 
+/** 流程中的阶段及各自的出口门禁（供界面展示） */
+export function pipelineFor(tier: Tier): { stage: Stage; exitGate?: GateId }[] {
+  return stagesFor(tier).map((stage) => ({ stage, exitGate: exitGate(stage, tier) }));
+}
+
 /** 离开某阶段前必须仍然有效的门禁：该阶段及其之前所有阶段的出口门禁 */
 export function gatesRequiredToLeave(stage: Stage, tier: Tier): GateId[] {
   const path = stagesFor(tier);

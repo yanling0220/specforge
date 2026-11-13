@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ForgeError } from '@specforge/core';
 import { Store } from '@specforge/store';
-import { startServer } from './server.ts';
+import { DEFAULT_WEB_DIR, startServer } from './server.ts';
 
-const HELP = `SpecForge server（只读）
+const HELP = `SpecForge server（只读）+ Web 控制台
 
 在 SpecForge 项目目录中运行：
   sf-server [--port 4317] [--host 127.0.0.1] [--db <索引文件>]
@@ -18,6 +20,7 @@ REST
   GET /api/changes/:id/questions/:qid            问题的完整修订与核对历史
   GET /api/changes/:id/events[?type=&after=&limit=]
   GET /api/events[?changeId=&type=&after=&limit=]
+  GET /api/changes/:id/evidence[/:eid]           验证证据与 G5 证据（hashOk 表示与事件日志一致）
   GET /api/log/verify                            哈希链与带外修改校验
 WebSocket
   /ws[?changeId=&after=]                         推送 hello / event / changes / rebuilt
@@ -46,6 +49,7 @@ async function main(): Promise<void> {
     console.log('⚠️  正在监听非本机地址；目前没有登录，任何能访问该地址的人都能读取全部数据');
   }
   console.log(`SpecForge server：${server.url}（项目 ${store.root}，${server.index.changes().length} 个 change）`);
+  console.log(existsSync(join(DEFAULT_WEB_DIR, 'index.html')) ? `Web 控制台：${server.url}/` : 'Web 控制台未构建：npm run build -w @specforge/web（或开发时 npm run dev -w @specforge/web）');
   const stop = () => void server.close().then(() => process.exit(0));
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);

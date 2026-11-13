@@ -200,6 +200,21 @@ describe('WebSocket 推送', () => {
     onlyC2.ws.close();
   });
 
+  it('同一批推送包含多个 change 时，按 change 订阅的客户端只收到自己的', async () => {
+    const store = project();
+    const server = await startServer({ store, port: 0, pollMs: 60_000 });
+    servers.push(server);
+    const onlyC2 = connect(`${server.url.replace('http', 'ws')}/ws?changeId=c2`);
+    await onlyC2.waitFor((m) => m[0]?.type === 'hello');
+    raise(store, 'c1', 'Q-1');
+    raise(store, 'c2', 'Q-1');
+    server.tick();
+    await onlyC2.waitFor((m) => m.some((x) => x.type === 'changes'));
+    expect(events(onlyC2.messages)).toEqual([4]);
+    expect(onlyC2.messages.filter((m) => m.type === 'changes')).toEqual([{ type: 'changes', ids: ['c2'] }]);
+    onlyC2.ws.close();
+  });
+
   it('重连时用 after 补发错过的事件', async () => {
     const store = project();
     raise(store, 'c1', 'Q-1');
@@ -216,5 +231,55 @@ describe('WebSocket 推送', () => {
     const server = await startServer({ store: project(), port: 0 });
     servers.push(server);
     expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+});
+
+describe('证据接口与 Web 托管（T3.2）', () => {
+  it('证据目录与详情；文件被改动后 hashOk 为 false', async () => {
+    const store = project();
+    const sha = headSha(store.root);
+    store.saveEvidence('c1', { id: 'ev-1', sha, startedAt: 'T', finishedAt: 'T', mainTreeDirty: false, steps: [{ name: 'test', command: 'x', exitCode: 1, timedOut: false, durationMs: 1, outputTail: 'boom', outputHash: 'h' }], host: { node: 'v', platform: 'p' } }, dev);
+    const index = new ForgeIndex(store);
+    const app = createApp(store, index);
+    const list = (await (await app.request('/api/changes/c1/evidence')).json()) as { evidence: { id: string; kind: string; passed: boolean; hashOk: boolean }[] };
+    expect(list.evidence).toEqual([expect.objectContaining({ id: 'ev-1', kind: 'verify', sha, passed: false, hashOk: true })]);
+    const detail = (await (await app.request('/api/changes/c1/evidence/ev-1')).json()) as { content: { steps: { outputTail: string }[] } };
+    expect(detail.content.steps[0]!.outputTail).toBe('boom');
+
+    const f = store.path('changes', 'c1', 'evidence', 'ev-1.json');
+    writeFileSync(f, readFileSync(f, 'utf8').replace('boom', 'fine'));
+    expect(((await (await app.request('/api/changes/c1/evidence')).json()) as typeof list).evidence[0]!.hashOk).toBe(false);
+    expect((await app.request('/api/changes/c1/evidence/ev-9')).status).toBe(404);
+    index.close();
+  });
+
+  it('门禁接口返回流水线定义', async () => {
+    const store = project();
+    const index = new ForgeIndex(store);
+    const body = (await (await createApp(store, index).request('/api/changes/c1/gates')).json()) as { pipeline: { stage: string; exitGate?: string }[] };
+    expect(body.pipeline.map((p) => `${p.stage}:${p.exitGate ?? ''}`)).toEqual(['analysis:G1', 'spec:G2', 'design:G3', 'tasks:G4', 'implement:G5', 'closing:G6', 'delivered:']);
+    index.close();
+  });
+
+  it('托管 Web 构建产物：静态文件、前端路由回退 index.html、不能越出目录、接口 404 仍是 JSON', async () => {
+    const store = project();
+    const web = mkdtempSync(join(tmpdir(), 'sf-web-'));
+    dirs.push(web);
+    mkdirSync(join(web, 'assets'));
+    writeFileSync(join(web, 'index.html'), '<div id="root"></div>');
+    writeFileSync(join(web, 'assets', 'a.js'), 'console.log(1)');
+    const index = new ForgeIndex(store);
+    const app = createApp(store, index, { webDir: web });
+
+    const js = await app.request('/assets/a.js');
+    expect([js.status, js.headers.get('content-type'), await js.text()]).toEqual([200, 'text/javascript; charset=utf-8', 'console.log(1)']);
+    expect(await (await app.request('/')).text()).toContain('root');
+    expect(await (await app.request('/some/route')).text()).toContain('root');
+    const escape = await app.request('/../../.specforge/config.json');
+    expect(await escape.text()).toContain('root');
+    expect(await (await app.request('/%2e%2e/%2e%2e/etc/passwd')).text()).toContain('root');
+    const api404 = await app.request('/api/nope');
+    expect([api404.status, ((await api404.json()) as { error: { code: string } }).error.code]).toEqual([404, 'not_found']);
+    index.close();
   });
 });

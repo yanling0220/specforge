@@ -10,7 +10,17 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["packages/*/src", "packages/*/test", "apps/*/src", "apps/*/test"]
+  "include": [
+    "packages/*/src",
+    "packages/*/test",
+    "apps/*/src",
+    "apps/*/test"
+  ],
+  "exclude": [
+    "apps/web"
+  ]
 }
