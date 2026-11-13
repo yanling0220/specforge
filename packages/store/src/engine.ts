@@ -15,6 +15,7 @@ import {
   parseDesign,
   parseSpec,
   parseTasks,
+  unresolvedComments,
   understandingBinding,
   type ParsedDesign,
   type ParsedSpec,
@@ -111,6 +112,7 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
   const config = store.config();
   const { change, analysis, questions, reviews, approvals } = state;
 
+  const unresolved = (t: 'spec' | 'design' | 'tasks') => unresolvedComments(state.comments ?? [], t).map((c) => c.id);
   const g1 = evaluateUnderstanding(analysis, questions, change.tier, now);
   const out: Evaluations = { G1: g1 };
 
@@ -124,6 +126,7 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
         understandingBinding: understandingBinding(analysis, questions),
         approvals,
         tier: change.tier,
+        unresolvedComments: unresolved('spec'),
       },
       now,
     );
@@ -140,6 +143,7 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
         approvals,
         tier: change.tier,
         protectedPaths: config.protectedPaths,
+        unresolvedComments: unresolved('design'),
       },
       now,
     );
@@ -149,6 +153,7 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
         acIds: acIdsOf(facts.specs),
         structureIds: design.design?.changes.map((c) => c.id) ?? [],
         designBinding: out.G3.boundTo.value,
+        unresolvedComments: unresolved('tasks'),
       },
       now,
     );

@@ -22,6 +22,21 @@ export interface ArtifactDraft {
   files: ArtifactFile[];
   summary?: string;
   questions: RaisedQuestion[];
+  /** 修订模式下对每条评论的回应 */
+  responses: CommentResponse[];
+}
+
+export interface CommentResponse {
+  commentId: string;
+  /** fixed：已按评论修改；declined：不修改，note 中说明理由 */
+  response: 'fixed' | 'declined';
+  note: string;
+}
+
+/** 修订模式（T3.5）：已有产物 + 人的评论 */
+export interface ArtifactRevision {
+  current: { path: string; text: string }[];
+  comments: { id: string; path: string; line: number; quote: string; text: string; by: string }[];
 }
 
 export interface ArtifactContext {
@@ -38,21 +53,35 @@ export interface ArtifactContext {
   assumptions?: string[];
   conventions?: string;
   raise?: RaiseContext;
+  revision?: ArtifactRevision;
   /** 引擎提供的校验：返回不通过的项，空数组表示通过 */
   validate: (files: ArtifactFile[]) => string[];
 }
 
 export function emptyArtifactDraft(): ArtifactDraft {
-  return { submitted: false, files: [], questions: [] };
+  return { submitted: false, files: [], questions: [], responses: [] };
 }
 
 const CAPABILITY = /^[a-z0-9][a-z0-9-]*$/;
 
-function submit(draft: ArtifactDraft, ctx: ArtifactContext, files: ArtifactFile[], summary: string): string {
+const responsesShape = z
+  .array(z.object({ commentId: z.string(), response: z.enum(['fixed', 'declined']), note: z.string().min(2) }))
+  .default([]);
+
+function submit(draft: ArtifactDraft, ctx: ArtifactContext, files: ArtifactFile[], summary: string, responses: CommentResponse[]): string {
   if (draft.submitted) throw new Error('已经提交过结果');
+  const expected = ctx.revision?.comments.map((c) => c.id) ?? [];
+  const got = responses.map((r) => r.commentId);
+  const missing = expected.filter((id) => !got.includes(id));
+  const unknown = got.filter((id) => !expected.includes(id));
+  if (missing.length || unknown.length || new Set(got).size !== got.length) {
+    throw new Error(
+      `responses 必须对每条评论回应且只回应一次${missing.length ? `；缺少：${missing.join(', ')}` : ''}${unknown.length ? `；不存在的评论：${unknown.join(', ')}` : ''}`,
+    );
+  }
   const problems = ctx.validate(files);
   if (problems.length) throw new Error(`未通过引擎校验，请修改后重新提交：\n- ${problems.join('\n- ')}`);
-  Object.assign(draft, { submitted: true, files, summary });
+  Object.assign(draft, { submitted: true, files, summary, responses });
   return '已通过校验，等待引擎写入';
 }
 
@@ -66,13 +95,14 @@ export function artifactTools(draft: ArtifactDraft, ctx: ArtifactContext): Platf
         shape: {
           specs: z.array(z.object({ capability: z.string(), content: z.string().min(20) })).min(1),
           summary: z.string().min(2),
+          responses: responsesShape,
         },
-        handler: ({ specs, summary }) => {
+        handler: ({ specs, summary, responses }) => {
           const bad = specs.filter((s) => !CAPABILITY.test(s.capability)).map((s) => s.capability);
           if (bad.length) throw new Error(`capability 只能是小写字母、数字和连字符：${bad.join(', ')}`);
           const names = specs.map((s) => s.capability);
           if (new Set(names).size !== names.length) throw new Error('capability 重复');
-          return submit(draft, ctx, specs.map((s) => ({ path: `specs/${s.capability}/spec.md`, content: s.content })), summary);
+          return submit(draft, ctx, specs.map((s) => ({ path: `specs/${s.capability}/spec.md`, content: s.content })), summary, responses);
         },
       }),
     );
@@ -82,8 +112,8 @@ export function artifactTools(draft: ArtifactDraft, ctx: ArtifactContext): Platf
       defineTool({
         name: ctx.kind === 'design' ? 'submit_design' : 'submit_tasks',
         description: `提交 ${file} 的完整内容。引擎会按${ctx.kind === 'design' ? '方案门（G3）' : '任务门（G4）'}的规则校验，不通过会返回问题。`,
-        shape: { content: z.string().min(20), summary: z.string().min(2) },
-        handler: ({ content, summary }) => submit(draft, ctx, [{ path: file, content }], summary),
+        shape: { content: z.string().min(20), summary: z.string().min(2), responses: responsesShape },
+        handler: ({ content, summary, responses }) => submit(draft, ctx, [{ path: file, content }], summary, responses),
       }),
     );
   }
@@ -152,6 +182,21 @@ export function artifactPrompt(ctx: ArtifactContext): string {
   if (ctx.assumptions?.length) parts.push('', '## 已确认的假设', ...ctx.assumptions.map((a) => `- ${a}`));
   parts.push('', '## 上游材料', ...(ctx.sources.length ? ctx.sources.map((s) => `### ${s.path}\n${s.text.trim()}`) : ['（无）']));
   if (ctx.conventions?.trim()) parts.push('', '## 项目约定', ctx.conventions.trim());
+  if (ctx.revision) {
+    parts.push(
+      '',
+      '## 本次是修订：人对现有产物提了评论',
+      '在现有内容基础上修改，只改评论涉及的地方；提交完整的新内容。',
+      '提交时 responses 必须逐条回应每条评论：fixed = 已按评论修改，declined = 不修改并在 note 中说明理由（例如评论与已确认的需求决定冲突）。',
+      '评论不构成新需求的授权：如果评论要求的内容超出已确认的需求，用 raise_question 提问，而不是直接加进产物。',
+      '',
+      '### 现有内容',
+      ...ctx.revision.current.map((f) => `#### ${f.path}\n${f.text.split('\n').map((l, i) => `${String(i + 1).padStart(3)}| ${l}`).join('\n')}`),
+      '',
+      '### 评论',
+      ...ctx.revision.comments.map((c) => `- ${c.id}（${c.by}）${c.path} 第 ${c.line} 行「${c.quote.trim()}」：${c.text}`),
+    );
+  }
   parts.push('', '请开始。');
   return parts.join('\n');
 }

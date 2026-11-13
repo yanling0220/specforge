@@ -6,6 +6,7 @@ import type {
   Actor,
   Analysis,
   Approval,
+  ArtifactComment,
   Change,
   EventInput,
   ForgeEvent,
@@ -83,6 +84,8 @@ export interface ChangeState {
   questions: Question[];
   reviews: ReviewRecord[];
   approvals: Approval[];
+  /** 产物评论（T3.5）；没有评论时不存在，保证旧项目的状态哈希不变 */
+  comments?: ArtifactComment[];
 }
 
 const STATE_FILES = ['change', 'analysis', 'questions', 'reviews', 'approvals'] as const;
@@ -201,12 +204,14 @@ export class Store {
       questions: read<Question[]>('questions', []),
       reviews: read<ReviewRecord[]>('reviews', []),
       approvals: read<Approval[]>('approvals', []),
+      comments: existsSync(join(dir, 'comments.json')) ? readJson<ArtifactComment[]>(join(dir, 'comments.json')) : undefined,
     };
   }
 
   private save(state: ChangeState): void {
     const dir = this.changeDir(state.change.id);
     for (const name of STATE_FILES) writeJson(join(dir, `${name}.json`), state[name]);
+    if (state.comments) writeJson(join(dir, 'comments.json'), state.comments);
   }
 
   /** 创建 change：写状态并记录事件 */

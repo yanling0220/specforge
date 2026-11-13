@@ -860,3 +860,128 @@ button.link {
 .task-state {
   white-space: nowrap;
 }
+
+/* 产物审阅（T3.5） */
+.artifacts {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .artifacts {
+    grid-template-columns: 1fr;
+  }
+}
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 60px;
+}
+.file-list button {
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  word-break: break-all;
+}
+.file-list button.active {
+  border-color: var(--accent);
+}
+.file-list .badge:first-child {
+  margin-left: 0;
+}
+.artifacts > .panel {
+  grid-column: 2;
+}
+.code {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.code td {
+  vertical-align: top;
+  padding: 0;
+}
+.code .ln {
+  width: 44px;
+  text-align: right;
+  color: var(--muted);
+  padding-right: 8px;
+  user-select: none;
+}
+.ln-btn {
+  font: inherit;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+}
+.ln-btn:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.code .src pre {
+  margin: 0;
+  padding: 1px 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
+.code tr.has-comment .src pre {
+  background: var(--warn-bg);
+}
+.comment-row > td:last-child {
+  padding: 4px 0 8px 6px;
+}
+.comment {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  background: var(--panel);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  font-size: 13px;
+}
+.comment.st-addressed {
+  border-left-color: var(--accent);
+}
+.comment.st-resolved {
+  border-left-color: var(--pass);
+  opacity: 0.75;
+}
+.comment p {
+  margin: 4px 0;
+}
+.comment .quote {
+  color: var(--muted);
+  font-size: 12px;
+}
+.chist {
+  font-size: 12px;
+  margin: 2px 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+.badge.cst-open {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.badge.cst-addressed {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.badge.cst-resolved {
+  color: var(--pass);
+  border-color: var(--pass);
+}

@@ -463,6 +463,12 @@ specforge/
 - **接管**：某个任务由人接手实现，实现 agent 不再处理（`sf task claim` / 控制台任务面板，需要 dev）。`sf agent implement` 自动跳过被接管的任务，指定它会被拒绝；依赖它的任务照常等待它完成。人完成后自己提交代码与测试、在 tasks.md 勾选，并用 `sf tdd` 补 G5 证据（G5 规则不变）。可交还给 agent（`sf task release`；接管人本人直接交还，他人必须写原因），接管与交还记录保留（`task.claimed` / `task.released`）。
 - 尚未实现：新建 change、编辑复述 / 假设 / 维度、提问等仍用 CLI。
 
+### 9.6 产物审阅器（T3.5）
+
+- **评论**：对本 change 的 proposal / spec / design / tasks 的某一行评论（控制台「产物审阅」点行号，或 `sf comment add --file --line --text`）。评论锚定行号 + 该行原文，文件修改后按原文重新定位（原位 / 移动到最近一处 / 原文已不在）。只有人能添加、确认解决、重新打开（必须写原因）。状态：待处理 → 已回应（agent）→ 已解决（人）。存于 `.specforge/changes/<id>/comments.json`，所有修改走 `Store.mutate`（`comment.*` 事件）；没有评论的旧项目状态哈希不变。
+- **门禁**：该产物上有未解决（待处理或已回应）的评论时，G2 / G3 / G4 增加的「产物上的评论都已解决」不通过。评论不参与绑定哈希：只改评论状态不会让审批失效。
+- **回传给 agent**：有待处理评论时，`sf agent spec|design|plan` 进入修订模式（不需要 `--force`）：prompt 带现有内容（含行号）与全部评论；提交必须对每条评论回应（fixed 已修改 / declined 不修改并说明理由），否则退回；仍要通过 G2/G3/G4 的自检。引擎写入后把评论标为「已回应」（`comment.addressed`），agent 的自述不直接算解决，由人核对后确认。评论不构成新需求的授权：超出已确认需求的要求，agent 应提问。
+
 ---
 
 ## 10. 开发者控制台（第二期）

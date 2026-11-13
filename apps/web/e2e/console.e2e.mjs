@@ -1,7 +1,8 @@
 // Web 控制台端到端测试（真实浏览器，T3.4）。不属于 npm test：需要本机安装 Chrome，并先 npm run web:build。
 //   node apps/web/e2e/console.e2e.mjs
 // 环境变量 CHROME 可指定浏览器路径。流程：
-//   开发者登录 → 回答阻塞问题 → 退出 → 产品登录 → 确认 → 退出 → 开发者推进到 spec → 审批 spec → 推进到 design
+//   开发者登录 → 回答阻塞问题 → 退出 → 产品登录 → 确认 → 退出 → 开发者推进到 spec → 产品评论 spec（挡住 G2）
+//   → 开发者确认评论解决 → 审批 spec → 推进到 design
 //   → 推进到 tasks 被门禁拦截 → 补齐方案与任务后在任务面板接管 T-1 → 校验事件与哈希链
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -178,8 +179,24 @@ async function main() {
   await waitFor(`!!document.querySelector('.action-bar')`, '操作栏');
   const disabled = await evaluate(`[...document.querySelectorAll('.action-bar button')].find((b) => b.textContent.includes('审批当前 spec'))?.disabled`);
   if (disabled !== true) throw new Error('产品角色的审批按钮应当禁用');
+  step('产品在产物审阅中评论 spec 第 7 行；未解决的评论挡住 G2');
+  await go('#/changes/demo/artifacts');
+  await waitFor(`!!document.querySelector('.file-view')`, '产物审阅');
+  await evaluate(`(() => { const f = [...document.querySelectorAll('.file-list button')].find((b) => b.textContent.includes('spec.md')); f.click(); return true; })()`);
+  await waitFor(`document.querySelector('.file-view h2')?.textContent.includes('spec.md')`, '打开 spec.md');
+  await evaluate(`(() => { [...document.querySelectorAll('.ln-btn')].find((b) => b.textContent === '7').click(); return true; })()`);
+  await act('.file-view', '评论第 7 行', { '评论': 'THEN 要写具体返回值' });
+  await waitFor(`document.querySelector('.comment .badge.cst-open') !== null`, '评论显示为待处理');
+  await go('#/changes/demo');
+  await waitFor(`[...document.querySelectorAll('.gate-card')].some((g) => g.textContent.includes('未解决：C-1'))`, 'G2 显示未解决的评论');
+
+  step('开发者确认评论解决，审批 spec');
   await logout();
   await login('devon', tokens.dev);
+  await go('#/changes/demo/artifacts');
+  await evaluate(`(() => { [...document.querySelectorAll('.file-list button')].find((b) => b.textContent.includes('spec.md')).click(); return true; })()`);
+  await act('.comment', '确认解决', { '说明': '口头确认，后续修订' });
+  await waitFor(`document.querySelector('.comment .badge.cst-resolved') !== null`, '评论已解决');
   await go('#/changes/demo');
   await act('.action-bar', '审批当前 spec');
   await waitFor(`[...document.querySelectorAll('.gate-card')].some((g) => g.textContent.includes('G2 规格门') && g.classList.contains('passed'))`, 'G2 通过');
@@ -205,7 +222,7 @@ async function main() {
   step('校验事件与哈希链');
   if (!/T-1\s+👤 devon 接手/.test(sf('task', 'list', 'demo'))) throw new Error('sf task list 中 T-1 应为 devon 接手');
   const log = sf('log', 'demo');
-  for (const want of ['question.answered', 'question.confirmed', 'spec.approved', 'stage.advanced', 'stage.advance_rejected', 'task.claimed']) {
+  for (const want of ['question.answered', 'question.confirmed', 'comment.added', 'comment.resolved', 'spec.approved', 'stage.advanced', 'stage.advance_rejected', 'task.claimed']) {
     if (!log.includes(want)) throw new Error(`事件日志中缺少 ${want}`);
   }
   if (!/devon\(dev\) question\.answered/.test(log) || !/pam\(product\) question\.confirmed/.test(log)) throw new Error('事件中的身份不对');

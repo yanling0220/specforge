@@ -7,9 +7,10 @@ import { useData } from '../live.ts';
 import { evidenceForGate, formatTime, GATE_LABEL, href, orderedGates, pipelineSteps, STAGE_LABEL } from '../model.ts';
 import { Loading, StatusIcon } from './common.tsx';
 import { AnalysisView } from './AnalysisView.tsx';
+import { ArtifactsView } from './ArtifactsView.tsx';
 import { Timeline } from './Timeline.tsx';
 
-export function ChangeView({ id, tab, qid, version }: { id: string; tab: 'gates' | 'timeline' | 'analysis'; qid?: string; version: number }) {
+export function ChangeView({ id, tab, qid, version }: { id: string; tab: 'gates' | 'timeline' | 'analysis' | 'artifacts'; qid?: string; version: number }) {
   // 写操作成功后立即刷新（WebSocket 推送也会触发刷新）
   const [local, setLocal] = useState(0);
   const refresh = () => setLocal((v) => v + 1);
@@ -22,6 +23,7 @@ export function ChangeView({ id, tab, qid, version }: { id: string; tab: 'gates'
   const steps = pipelineSteps(gates.data);
   const openBlocking = questions.filter((q) => q.severity === 'blocking' && !['confirmed', 'deferred', 'invalidated'].includes(q.status));
   const fix = change.fixRounds?.at(-1);
+  const openComments = (detail.data.comments ?? []).filter((c) => c.status !== 'resolved').length;
 
   return (
     <>
@@ -87,12 +89,17 @@ export function ChangeView({ id, tab, qid, version }: { id: string; tab: 'gates'
         <a className={tab === 'analysis' ? 'active' : ''} href={href({ page: 'change', id, tab: 'analysis' })}>
           需求分析{openBlocking.length > 0 && <span className="badge bad">{openBlocking.length}</span>}
         </a>
+        <a className={tab === 'artifacts' ? 'active' : ''} href={href({ page: 'change', id, tab: 'artifacts' })}>
+          产物审阅{openComments > 0 && <span className="badge bad">{openComments}</span>}
+        </a>
         <a className={tab === 'timeline' ? 'active' : ''} href={href({ page: 'change', id, tab: 'timeline' })}>
           事件时间线
         </a>
       </div>
 
-      {tab === 'analysis' ? (
+      {tab === 'artifacts' ? (
+        <ArtifactsView id={id} version={version + local} onChanged={refresh} />
+      ) : tab === 'analysis' ? (
         <AnalysisView detail={detail.data} qid={qid} onChanged={refresh} />
       ) : tab === 'gates' ? (
         <>

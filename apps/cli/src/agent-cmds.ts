@@ -33,6 +33,9 @@ import {
 } from '@specforge/agents';
 import {
   acIdsOf,
+  addressComments,
+  locateComment,
+  openComments,
   checkPathPolicy,
   evaluateDesign,
   evaluateSpec,
@@ -64,7 +67,7 @@ import {
   workspaceFingerprint,
 } from '@specforge/runner';
 import type { Actor, AgentProfile, AgentRole, GateEvaluation, ProjectConfig } from '@specforge/shared';
-import { bindingNow, commitTree, readDesignFacts, readSpecFacts, readTasksFacts, recordReview, type Store } from '@specforge/store';
+import { bindingNow, commitTree, workTree, readDesignFacts, readSpecFacts, readTasksFacts, recordReview, type Store } from '@specforge/store';
 import { checkTdd } from './tdd.ts';
 
 const MAX_DIFF_CHARS = 150_000;
@@ -543,9 +546,22 @@ export async function cmdAgentGenerate(
     kind === 'spec'
       ? readSpecFacts(store, changeId).sources.filter((s) => s.path.endsWith('spec.md')).map((s) => s.path)
       : [`${rel}/${kind}.md`].filter((p) => existsSync(join(store.root, p)));
-  if (existing.length && !opts.force) {
-    throw new ForgeError('exists', `已存在 ${existing.join(', ')}；如要由 agent 重新生成并覆盖，加 --force`);
+  // 有待处理的评论时进入修订模式：基于现有内容按评论修改（T3.5）
+  const pending = openComments(state.comments ?? [], kind);
+  const revising = pending.length > 0 && existing.length > 0;
+  if (existing.length && !opts.force && !revising) {
+    throw new ForgeError('exists', `已存在 ${existing.join(', ')}；如要由 agent 重新生成并覆盖，加 --force（或先在控制台 / sf comment add 提评论，agent 会按评论修订）`);
   }
+  const tree = workTree(store.root);
+  const revision = revising
+    ? {
+        current: existing.map((p) => ({ path: p, text: tree.read(p) ?? '' })),
+        comments: pending.map((c) => {
+          const at = locateComment(c, tree.read(c.path));
+          return { id: c.id, path: c.path, line: at.state === 'outdated' ? c.line : at.line, quote: c.quote, text: c.text, by: c.by.name };
+        }),
+      }
+    : undefined;
 
   const config = store.config();
   const facts = readSpecFacts(store, changeId);
@@ -600,6 +616,7 @@ export async function cmdAgentGenerate(
     assumptions: state.analysis.assumptions.filter((a) => a.status === 'accepted').map((a) => a.text),
     conventions: readConventions(store.root),
     raise: { categories: questionCategories(config), questionIds: state.questions.map((q) => q.id), taskIds: [] },
+    revision,
     validate,
   };
   const draft = emptyArtifactDraft();
@@ -627,7 +644,7 @@ export async function cmdAgentGenerate(
   }
 
   // 引擎写入：只写 openspec/changes/<id>/ 下由引擎拼出的路径
-  if (kind === 'spec' && opts.force) for (const p of existing) rmSync(join(store.root, p));
+  if (kind === 'spec' && (opts.force || revising)) for (const p of existing) rmSync(join(store.root, p));
   const written = draft.files.map((f) => {
     const abs = resolve(dir, f.path);
     if (relative(dir, abs).startsWith('..')) throw new ForgeError('bad_path', `产物路径越界：${f.path}`);
@@ -635,8 +652,25 @@ export async function cmdAgentGenerate(
     writeFileSync(abs, f.content.endsWith('\n') ? f.content : f.content + '\n');
     return { path: store.rel(abs), hash: sha256(readFileSync(abs, 'utf8')) };
   });
-  store.append({ type: 'artifact.generated', actor: agent, changeId, payload: { kind, files: written, replaced: existing, summary: draft.summary, sessionId: result.sessionId } });
+  store.append({
+    type: 'artifact.generated',
+    actor: agent,
+    changeId,
+    payload: { kind, files: written, replaced: existing, summary: draft.summary, sessionId: result.sessionId, ...(revising ? { revisedFor: pending.map((c) => c.id) } : {}) },
+  });
   for (const f of written) log(`✓ 已写入 ${f.path}`);
+  if (revising) {
+    // agent 的回应只把评论标为"已回应"，是否解决由人确认
+    store.mutate(
+      changeId,
+      agent,
+      'comment.addressed',
+      (s) => ({ ...s, comments: addressComments(s.comments ?? [], kind, draft.responses, agent, now()) }),
+      () => ({ responses: draft.responses }),
+    );
+    for (const r of draft.responses) log(`  ${r.response === 'fixed' ? '✎ 已修改' : '↩ 不修改'} ${r.commentId}：${r.note}`);
+    log(`评论已标为「已回应」，请在控制台核对后确认解决（sf comment resolve ${changeId} <C-n>）`);
+  }
   if (draft.summary) log(`总结：${draft.summary}`);
   const next: Record<ArtifactKind, string> = {
     spec: `请审阅后提交，再 sf spec approve ${changeId} 和 sf advance ${changeId}`,

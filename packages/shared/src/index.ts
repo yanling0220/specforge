@@ -351,6 +351,37 @@ export interface ReviewRecord {
   note?: string;
 }
 
+// ---------- 产物评论（T3.5） ----------
+
+export type ArtifactTarget = 'spec' | 'design' | 'tasks';
+
+/** open 待处理 → addressed agent 已回应（待人确认）→ resolved 已解决；可重新打开 */
+export type CommentStatus = 'open' | 'addressed' | 'resolved';
+
+export interface CommentEvent {
+  kind: 'addressed' | 'resolved' | 'reopened';
+  by: Actor;
+  at: string;
+  note?: string;
+  /** agent 的回应：已修改 / 不修改（说明理由） */
+  response?: 'fixed' | 'declined';
+}
+
+export interface ArtifactComment {
+  id: string;
+  target: ArtifactTarget;
+  /** 相对仓库根目录 */
+  path: string;
+  /** 评论时的行号（从 1 开始）与该行原文，用于文件变化后重新定位 */
+  line: number;
+  quote: string;
+  text: string;
+  by: Actor;
+  at: string;
+  status: CommentStatus;
+  history: CommentEvent[];
+}
+
 /** 人工审批，绑定被审批内容的哈希 */
 export interface Approval {
   target: 'spec' | 'design';

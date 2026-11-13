@@ -1,5 +1,7 @@
 import type {
   Actor,
+  ArtifactComment,
+  ArtifactTarget,
   Analysis,
   Approval,
   Change,
@@ -50,6 +52,7 @@ export interface ChangeDetail {
   tasks: { id: string; title: string; done: boolean; acRefs: string[]; dependsOn: string[] }[];
   /** 当前有效的接管：任务编号 → 接管记录 */
   claims: Record<string, TaskClaim>;
+  comments?: ArtifactComment[];
 }
 
 export interface GatesResponse {
@@ -57,6 +60,15 @@ export interface GatesResponse {
   pipeline: { stage: Stage; exitGate?: GateId }[];
   gates: Partial<Record<GateId, GateEvaluation>>;
   upstreamInvalid: GateId[];
+}
+
+export type CommentAnchor = { state: 'exact' | 'moved'; line: number } | { state: 'outdated' };
+
+export interface ArtifactView {
+  path: string;
+  target: ArtifactTarget;
+  text: string;
+  comments: (ArtifactComment & { anchor: CommentAnchor })[];
 }
 
 export interface EvidenceEntry {
@@ -160,5 +172,9 @@ export const api = {
     post<{ review: ReviewRecord; change: Change }>(`/api/changes/${enc(id)}/signoff`, body),
   claimTask: (id: string, tid: string, body: { role: Role; note?: string }) => post<{ ok: true }>(`/api/changes/${enc(id)}/tasks/${enc(tid)}/claim`, body),
   releaseTask: (id: string, tid: string, body: { role: Role; reason?: string }) => post<{ ok: true }>(`/api/changes/${enc(id)}/tasks/${enc(tid)}/release`, body),
+  artifacts: (id: string) => get<{ files: ArtifactView[]; orphanComments: ArtifactComment[] }>(`/api/changes/${enc(id)}/artifacts`),
+  addComment: (id: string, body: { role: Role; path: string; line: number; text: string }) => post<{ comment: ArtifactComment }>(`/api/changes/${enc(id)}/comments`, body),
+  commentAction: (id: string, cid: string, action: 'resolve' | 'reopen', body: { role: Role; note?: string }) =>
+    post<{ ok: true }>(`/api/changes/${enc(id)}/comments/${enc(cid)}/${action}`, body),
   advance: (id: string, body: { role: Role }) => post<{ from: Stage; to: Stage }>(`/api/changes/${enc(id)}/advance`, body),
 };

@@ -38,8 +38,10 @@ import { cmdUserAdd, cmdUserDisable, cmdUserList, cmdUserSet, cmdUserToken } fro
 import { cmdAgentAnalyze, cmdAgentGenerate, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
 import { checkTdd } from './tdd.ts';
 import {
+  addComment,
   advance,
   approve,
+  artifactViews,
   claimTask,
   confirmRestatement,
   decideAssumption,
@@ -52,6 +54,8 @@ import {
   readTasksFacts,
   recordReview,
   releaseTask,
+  reopenComment,
+  resolveComment,
   signOff,
   Store,
   uncommittedSpecChanges,
@@ -106,6 +110,11 @@ change
   sf design approve <id> [--note <说明>]          审批当前版本的方案（L 档或涉及受保护路径时需要）
     design.md 约定：正文引用每个 AC；「## 结构变更」逐条 - [S-n] …，无变更写 - 无：<原因>
     tasks.md 约定：- [ ] T-1 标题（AC-1, S-1）依赖 T-0；勾选进度不影响 G4
+  sf comment add <id> --file <路径> --line <行号> --text <评论>   对 proposal / spec / design / tasks 的某一行评论
+  sf comment list <id>                            评论及其状态（待处理 / 已回应 / 已解决）
+  sf comment resolve <id> <C-n> [--note]          确认解决（只有人可以）
+  sf comment reopen <id> <C-n> --note <原因>       重新打开
+    有待处理评论时，sf agent spec|design|plan 进入修订模式，agent 必须逐条回应；未解决的评论会挡住对应的 G2/G3/G4
   sf task list <id>                               任务状态：完成 / 人接手 / 暂停 / 交给 agent
   sf task claim <id> <T-n> [--note <说明>]         接管：任务由人接手实现，实现 agent 不再处理（dev）
   sf task release <id> <T-n> [--reason <原因>]     交还给 agent（非接管人需写原因）
@@ -175,6 +184,7 @@ const { values: opts, positionals: args } = parseArgs({
     verbose: { type: 'boolean', short: 'v' },
     task: { type: 'string' },
     tasks: { type: 'string' },
+    line: { type: 'string' },
     force: { type: 'boolean' },
     base: { type: 'string' },
     sha: { type: 'string' },
@@ -479,6 +489,35 @@ async function main(): Promise<void> {
                   : undefined;
       if (!out) throw new ForgeError('bad_cmd', `未知命令 sf user ${sub ?? ''}`);
       out.lines.forEach((l) => console.log(l));
+      return;
+    }
+    case 'comment': {
+      const id = need(a1, '<id>');
+      if (sub === 'list') {
+        const { files, orphanComments } = artifactViews(store, id);
+        const all = [...files.flatMap((f) => f.comments), ...orphanComments.map((c) => ({ ...c, anchor: { state: 'outdated' as const } }))];
+        if (!all.length) return console.log('（没有评论）');
+        const label = { open: '待处理', addressed: '已回应', resolved: '已解决' } as const;
+        for (const c of all.sort((x, y) => Number(x.id.slice(2)) - Number(y.id.slice(2)))) {
+          const where = c.anchor.state === 'outdated' ? `原第 ${c.line} 行（原文已不在）` : `第 ${c.anchor.line} 行${c.anchor.state === 'moved' ? `（原第 ${c.line} 行）` : ''}`;
+          console.log(`${c.id} [${label[c.status]}] ${c.path} ${where} · ${c.by.name}：${c.text}`);
+          const last = c.history.at(-1);
+          if (last) console.log(`     ${last.by.name}：${last.response === 'declined' ? '不修改 · ' : last.response === 'fixed' ? '已修改 · ' : ''}${last.note ?? last.kind}`);
+        }
+        return;
+      }
+      const actor = store.identity(opts.as);
+      if (sub === 'add') {
+        const c = addComment(store, id, actor, { path: need(opts.file, '--file'), line: Number(need(opts.line, '--line')), text: need(opts.text, '--text') });
+        console.log(`已添加 ${c.id}（${c.target}）：第 ${c.line} 行「${c.quote.trim()}」`);
+        console.log(`下一步：sf agent ${c.target === 'tasks' ? 'plan' : c.target} ${id} 让 agent 按评论修订（${c.target} 阶段），或手工修改后 sf comment resolve`);
+      } else if (sub === 'resolve') {
+        resolveComment(store, id, actor, need(a2, '<C-n>'), opts.note);
+        console.log(`${a2} 已解决`);
+      } else if (sub === 'reopen') {
+        reopenComment(store, id, actor, need(a2, '<C-n>'), need(opts.note, '--note'));
+        console.log(`${a2} 已重新打开`);
+      } else throw new ForgeError('bad_cmd', `未知命令 sf comment ${sub ?? ''}`);
       return;
     }
     case 'task': {

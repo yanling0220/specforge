@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ForgeEvent, GateEvaluation, Question, RequirementNode } from '@specforge/shared';
 import type { ChangeRow, EvidenceEntry, GatesResponse } from '../src/api.ts';
-import { attentionReasons, boardColumns, buildTree, eventCategory, eventSummary, evidenceForGate, href, orderedGates, parseRoute, pipelineSteps, questionHistory, sortQuestions } from '../src/model.ts';
+import { attentionReasons, boardColumns, buildTree, commentsByLine, eventCategory, eventSummary, evidenceForGate, href, orderedGates, parseRoute, pipelineSteps, questionHistory, sortQuestions } from '../src/model.ts';
 
 const row = (over: Partial<ChangeRow>): ChangeRow => ({
   id: 'c',
@@ -201,5 +201,22 @@ describe('需求分析视图（T3.3）', () => {
 
   it('需求分析路由（可深链接到问题）', () => {
     for (const r of [{ page: 'change', id: 'c1', tab: 'analysis' }, { page: 'change', id: 'c1', tab: 'analysis', qid: 'Q-2' }] as const) expect(parseRoute(href(r))).toEqual(r);
+  });
+});
+
+describe('产物审阅（T3.5）', () => {
+  it('按定位的行分组评论；原文已不在的单列', () => {
+    const cs = [
+      { id: 'C-1', anchor: { state: 'exact', line: 3 } },
+      { id: 'C-2', anchor: { state: 'moved', line: 3 } },
+      { id: 'C-3', anchor: { state: 'outdated' } },
+    ];
+    const { byLine, outdated } = commentsByLine(cs);
+    expect(byLine.get(3)!.map((c) => c.id)).toEqual(['C-1', 'C-2']);
+    expect(outdated.map((c) => c.id)).toEqual(['C-3']);
+  });
+
+  it('产物审阅路由', () => {
+    expect(parseRoute(href({ page: 'change', id: 'c1', tab: 'artifacts' }))).toEqual({ page: 'change', id: 'c1', tab: 'artifacts' });
   });
 });

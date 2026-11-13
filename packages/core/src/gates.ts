@@ -35,6 +35,11 @@ function check(id: string, label: string, failures: string[]): CheckResult {
   return { id, label, passed: failures.length === 0, detail: failures.length ? failures.join('；') : undefined };
 }
 
+/** 产物上的评论都已解决（评论不参与绑定哈希：只改评论状态不会让审批失效） */
+function commentsCheck(ids: string[] | undefined): CheckResult[] {
+  return ids ? [check('comments', '产物上的评论都已解决', ids.length ? [`未解决：${ids.join(', ')}`] : [])] : [];
+}
+
 /** 评估结果在当前绑定对象下是否仍然有效（P4 内容一改就失效） */
 export function isStillValid(ev: GateEvaluation | undefined, currentBinding: string): boolean {
   return !!ev && ev.status === 'passed' && ev.boundTo.value === currentBinding;
@@ -112,6 +117,8 @@ export interface SpecInputs {
   understandingBinding: string;
   approvals: Approval[];
   tier: Tier;
+  /** 未解决的评论编号（T3.5）；不提供时不检查 */
+  unresolvedComments?: string[];
 }
 
 export function specBinding(inputs: Pick<SpecInputs, 'sources' | 'understandingBinding'>): string {
@@ -151,6 +158,7 @@ export function evaluateSpec(inputs: SpecInputs, now: string): GateEvaluation {
     checks.push(check('approved', '当前版本的 spec 已获人工审批', approved ? [] : ['当前 spec 版本未审批（或审批后内容有变化）']));
   }
 
+  checks.push(...commentsCheck(inputs.unresolvedComments));
   return evaluation('G2', checks, { kind: 'content', value: binding }, now);
 }
 
@@ -165,6 +173,7 @@ export interface DesignInputs {
   approvals: Approval[];
   tier: Tier;
   protectedPaths: string[];
+  unresolvedComments?: string[];
 }
 
 export function designBinding(inputs: Pick<DesignInputs, 'text' | 'specBinding'>): string {
@@ -205,6 +214,7 @@ export function evaluateDesign(inputs: DesignInputs, now: string): GateEvaluatio
     const why = inputs.tier === 'L' ? 'L 档' : `涉及受保护路径：${protectedHits.join('、')}`;
     checks.push(check('approved', `当前版本的方案已获人工审批（${why}）`, approved ? [] : ['当前方案版本未审批（或审批后内容有变化）']));
   }
+  checks.push(...commentsCheck(inputs.unresolvedComments));
   return evaluation('G3', checks, { kind: 'content', value: binding }, now);
 }
 
@@ -216,6 +226,7 @@ export interface TasksInputs {
   /** design.md 中的结构变更编号 */
   structureIds: string[];
   designBinding: string;
+  unresolvedComments?: string[];
 }
 
 /** 绑定任务结构而非原文：勾选进度不会让 G4 失效 */
@@ -254,6 +265,7 @@ export function evaluateTasks(inputs: TasksInputs, now: string): GateEvaluation 
       ]),
     );
   }
+  checks.push(...commentsCheck(inputs.unresolvedComments));
   return evaluation('G4', checks, { kind: 'content', value: tasksBinding(inputs) }, now);
 }
 

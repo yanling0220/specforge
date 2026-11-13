@@ -3,8 +3,10 @@ import { extname, join, normalize, sep } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { activeClaims, ForgeError, isResolved, missingRoles, pausedTasks, pipelineFor, publicUsers, resolveIdentity, upstreamGates, verifyChain } from '@specforge/core';
 import {
+  addComment,
   advance,
   approve,
+  artifactViews,
   claimTask,
   confirmRestatement,
   decideAssumption,
@@ -13,6 +15,8 @@ import {
   questionAction,
   readTasksFacts,
   releaseTask,
+  reopenComment,
+  resolveComment,
   signOff,
   uncommittedSpecChanges,
   type QuestionOp,
@@ -194,6 +198,12 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
     c.json({ events: index.events({ changeId: c.req.query('changeId'), type: c.req.query('type'), after: intParam(c.req.query('after')), limit: intParam(c.req.query('limit')) }) }),
   );
 
+  app.get('/api/changes/:id/artifacts', (c) => {
+    const id = c.req.param('id');
+    store.load(id);
+    return c.json(artifactViews(store, id));
+  });
+
   app.get('/api/changes/:id/evidence', (c) => {
     const id = c.req.param('id');
     store.load(id);
@@ -292,6 +302,23 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
   app.post('/api/changes/:id/tasks/:tid/release', async (c) => {
     const b = await body(c);
     releaseTask(store, c.req.param('id'), writer(c, b), c.req.param('tid'), str(b, 'reason'));
+    return c.json({ ok: true });
+  });
+
+  app.post('/api/changes/:id/comments', async (c) => {
+    const b = await body(c);
+    const line = b.line;
+    if (typeof line !== 'number') throw new ForgeError('bad_arg', 'line 必须是数字');
+    return c.json({ comment: addComment(store, c.req.param('id'), writer(c, b), { path: str(b, 'path', true)!, line, text: str(b, 'text', true)! }) });
+  });
+
+  app.post('/api/changes/:id/comments/:cid/:action', async (c) => {
+    const { id, cid, action } = c.req.param();
+    const b = await body(c);
+    const actor = writer(c, b);
+    if (action === 'resolve') resolveComment(store, id, actor, cid, str(b, 'note'));
+    else if (action === 'reopen') reopenComment(store, id, actor, cid, str(b, 'note', true)!);
+    else throw new ForgeError('not_found', `没有这个操作：${action}`);
     return c.json({ ok: true });
   });
 

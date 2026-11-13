@@ -146,6 +146,14 @@ export function eventSummary(e: ForgeEvent): string {
       return `${str(p.taskId)} 由 ${e.actor.name} 接手实现${p.note ? `：${str(p.note)}` : ''}`;
     case 'task.released':
       return `${str(p.taskId)} 交还给 agent${p.reason ? `：${str(p.reason)}` : ''}`;
+    case 'comment.added':
+      return `${str(p.id)} 评论 ${str(p.path).split('/').slice(-2).join('/')} 第 ${str(p.line)} 行：${str(p.text)}`;
+    case 'comment.addressed':
+      return `agent 回应评论：${(p.responses as { commentId: string; response: string }[] | undefined)?.map((r) => `${r.commentId} ${r.response === 'fixed' ? '已修改' : '不修改'}`).join('，') ?? ''}`;
+    case 'comment.resolved':
+      return `${str(p.commentId)} 已解决${p.note ? `：${str(p.note)}` : ''}`;
+    case 'comment.reopened':
+      return `${str(p.commentId)} 重新打开：${str(p.note)}`;
     case 'agent.run':
       return `${str(p.role)} agent ${p.ok ? '完成' : '失败'}（${str(p.backend)} · ${str(p.turns)} 轮）${p.error ? `：${str(p.error)}` : ''}`;
     case 'artifact.generated':
@@ -166,7 +174,7 @@ export function eventCategory(type: string): 'stage' | 'question' | 'agent' | 'e
   if (type.startsWith('question.') || type.startsWith('restatement.') || type.startsWith('assumption.') || type.startsWith('dimension.') || type.startsWith('analysis.')) return 'question';
   if (type.startsWith('agent.') || type.startsWith('implement.') || type.startsWith('artifact.') || type.startsWith('task.')) return 'agent';
   if (type.startsWith('evidence.') || type.startsWith('tdd.')) return 'evidence';
-  if (type.startsWith('review.') || type.endsWith('.approved')) return 'review';
+  if (type.startsWith('review.') || type.endsWith('.approved') || type.startsWith('comment.')) return 'review';
   return 'other';
 }
 
@@ -262,7 +270,7 @@ export function questionHistory(q: Question): HistoryEntry[] {
 export type Route =
   | { page: 'board' }
   | { page: 'events' }
-  | { page: 'change'; id: string; tab: 'gates' | 'timeline' | 'analysis'; qid?: string }
+  | { page: 'change'; id: string; tab: 'gates' | 'timeline' | 'analysis' | 'artifacts'; qid?: string }
   | { page: 'evidence'; id: string; eid: string };
 
 export function parseRoute(hash: string): Route {
@@ -270,6 +278,7 @@ export function parseRoute(hash: string): Route {
   if (parts[0] === 'events') return { page: 'events' };
   if (parts[0] === 'changes' && parts[1]) {
     if (parts[2] === 'evidence' && parts[3]) return { page: 'evidence', id: parts[1], eid: parts[3] };
+    if (parts[2] === 'artifacts') return { page: 'change', id: parts[1], tab: 'artifacts' };
     if (parts[2] === 'analysis') return parts[3] ? { page: 'change', id: parts[1], tab: 'analysis', qid: parts[3] } : { page: 'change', id: parts[1], tab: 'analysis' };
     return { page: 'change', id: parts[1], tab: parts[2] === 'timeline' ? 'timeline' : 'gates' };
   }
@@ -288,4 +297,19 @@ export function href(r: Route): string {
     case 'evidence':
       return `#/changes/${e(r.id)}/evidence/${e(r.eid)}`;
   }
+}
+
+// ---------------- 产物审阅（T3.5） ----------------
+
+export const COMMENT_STATUS_LABEL = { open: '待处理', addressed: '已回应', resolved: '已解决' } as const;
+
+/** 按行分组评论：定位到的行 → 评论；原文已不在的评论单独返回 */
+export function commentsByLine<C extends { anchor: { state: string; line?: number } }>(comments: C[]): { byLine: Map<number, C[]>; outdated: C[] } {
+  const byLine = new Map<number, C[]>();
+  const outdated: C[] = [];
+  for (const c of comments) {
+    if (c.anchor.state === 'outdated' || c.anchor.line === undefined) outdated.push(c);
+    else byLine.set(c.anchor.line, [...(byLine.get(c.anchor.line) ?? []), c]);
+  }
+  return { byLine, outdated };
 }

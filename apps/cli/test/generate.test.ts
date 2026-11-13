@@ -8,7 +8,7 @@ import { callPlatformTool, type AgentAdapter } from '@specforge/agents';
 import { headSha } from '@specforge/runner';
 import type { Actor, Question, Stage } from '@specforge/shared';
 import { cmdAgentGenerate } from '../src/agent-cmds.ts';
-import { defaultConfig, evaluateAll, Store } from '@specforge/store';
+import { addComment, defaultConfig, evaluateAll, resolveComment, Store } from '@specforge/store';
 
 const dev: Actor = { name: 'yan', role: 'dev' };
 const dirs: string[] = [];
@@ -154,5 +154,46 @@ describe('生成类 agent（T2.8）', () => {
     expect(readFileSync(join(store.root, C, 'tasks.md'), 'utf8')).toBe(TASKS);
     expect(planner.prompt).toContain('[S-1] 新增模块');
     expect(evaluateAll(store, store.load('c1')).G4!.status).toBe('passed');
+  });
+});
+
+describe('按评论修订（T3.5）', () => {
+  it('有待处理评论时进入修订模式：不需要 --force，prompt 带行号与评论，必须逐条回应；评论挡住 G2 直到人确认', async () => {
+    const store = project('spec', { [`${C}/specs/user-import/spec.md`]: SPEC });
+    const path = `${C}/specs/user-import/spec.md`;
+    const line = SPEC.split('\n').indexOf('- **THEN** 返回 { success: 2 }') + 1;
+    const c = addComment(store, 'c1', dev, { path, line, text: '还要返回 failed: []' });
+    expect(c).toMatchObject({ id: 'C-1', target: 'spec', quote: '- **THEN** 返回 { success: 2 }' });
+    expect(evaluateAll(store, store.load('c1')).G2!.checks.find((x) => x.id === 'comments')).toMatchObject({ passed: false, detail: '未解决：C-1' });
+
+    const revised = SPEC.replace('返回 { success: 2 }', '返回 { success: 2, failed: [] }');
+    const adapter = script([
+      ['submit_spec', { specs: [{ capability: 'user-import', content: revised }], summary: '没回应' }],
+      ['submit_spec', { specs: [{ capability: 'user-import', content: revised }], summary: '已按评论修改', responses: [{ commentId: 'C-1', response: 'fixed', note: '补上 failed: []' }] }],
+    ]);
+    await cmdAgentGenerate(store, 'c1', dev, 'spec', { ...quiet, adapter });
+    expect(adapter.outputs[0]!.text).toMatch(/缺少：C-1/);
+    expect(adapter.outputs[1]!.isError).toBe(false);
+    expect(adapter.prompt).toContain('本次是修订');
+    expect(adapter.prompt).toContain(`C-1（yan）${path} 第 ${line} 行「- **THEN** 返回 { success: 2 }」：还要返回 failed: []`);
+    expect(adapter.prompt).toContain(`${String(line).padStart(3)}| - **THEN** 返回 { success: 2 }`);
+
+    expect(readFileSync(join(store.root, path), 'utf8')).toBe(revised);
+    const state = store.load('c1');
+    expect(state.comments![0]).toMatchObject({ status: 'addressed', history: [{ kind: 'addressed', response: 'fixed', note: '补上 failed: []', by: { role: 'agent' } }] });
+    expect(store.events().slice(-2).map((e) => e.type)).toEqual(['artifact.generated', 'comment.addressed']);
+    expect(store.events().at(-2)!.payload).toMatchObject({ revisedFor: ['C-1'] });
+    // agent 回应后仍未解决
+    expect(evaluateAll(store, state).G2!.checks.find((x) => x.id === 'comments')!.passed).toBe(false);
+    resolveComment(store, 'c1', dev, 'C-1');
+    expect(evaluateAll(store, store.load('c1')).G2!.checks.filter((x) => !x.passed).map((x) => x.id)).toEqual(['approved']);
+    expect(store.outOfBand('c1')).toBeUndefined();
+  });
+
+  it('评论只能由人添加；没有评论的旧项目状态哈希不变', () => {
+    const store = project('spec', { [`${C}/specs/user-import/spec.md`]: SPEC });
+    expect(() => addComment(store, 'c1', { name: 'bot', role: 'agent' }, { path: `${C}/specs/user-import/spec.md`, line: 1, text: 'x' })).toThrow(/只能由人/);
+    expect(existsSync(store.path('changes', 'c1', 'comments.json'))).toBe(false);
+    expect(store.outOfBand('c1')).toBeUndefined();
   });
 });

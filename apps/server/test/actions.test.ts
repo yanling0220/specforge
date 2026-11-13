@@ -188,3 +188,30 @@ describe('接管接口', () => {
     index.close();
   });
 });
+
+describe('产物评论接口（T3.5）', () => {
+  it('列出产物与评论；评论、确认解决、重新打开；文件修改后评论重新定位', async () => {
+    const store = project({ stage: 'spec' });
+    const spec = 'openspec/changes/c1/specs/a/spec.md';
+    mkdirSync(join(store.root, 'openspec/changes/c1/specs/a'), { recursive: true });
+    writeFileSync(join(store.root, spec), '### Requirement: R\n#### Scenario: [AC-1] 导入\n- THEN 成功\n');
+    const { app, post, login, sessions, index } = setup(store);
+    await login('alice');
+    expect((await post('/api/changes/c1/comments', 'alice', { role: 'dev', path: spec, line: '3', text: 'x' })).body.error.code).toBe('bad_arg');
+    expect((await post('/api/changes/c1/comments', 'alice', { role: 'dev', path: 'src/a.js', line: 1, text: 'x' })).body.error.code).toBe('bad_path');
+    const added = await post('/api/changes/c1/comments', 'alice', { role: 'dev', path: spec, line: 3, text: '写具体返回值' });
+    expect(added.body.comment).toMatchObject({ id: 'C-1', quote: '- THEN 成功', by: { name: 'alice' } });
+
+    writeFileSync(join(store.root, spec), '### Requirement: R\n\n#### Scenario: [AC-1] 导入\n- THEN 成功\n');
+    const view = (await (await app.request('/api/changes/c1/artifacts', { headers: { cookie: sessions.alice! } })).json()) as { files: { path: string; target: string; comments: { id: string; anchor: unknown }[] }[] };
+    expect(view.files.map((f) => [f.path, f.target])).toEqual([[spec, 'spec']]);
+    expect(view.files[0]!.comments[0]).toMatchObject({ id: 'C-1', anchor: { state: 'moved', line: 4 } });
+
+    expect((await post('/api/changes/c1/comments/C-1/resolve', 'alice', { role: 'dev', note: '手工改好了' })).status).toBe(200);
+    expect((await post('/api/changes/c1/comments/C-1/reopen', 'alice', { role: 'dev' })).body.error.code).toBe('missing_arg');
+    expect((await post('/api/changes/c1/comments/C-1/reopen', 'alice', { role: 'dev', note: '还是不对' })).status).toBe(200);
+    expect(store.events().filter((e) => e.type.startsWith('comment.')).map((e) => e.type)).toEqual(['comment.added', 'comment.resolved', 'comment.reopened']);
+    expect(store.outOfBand('c1')).toBeUndefined();
+    index.close();
+  });
+});

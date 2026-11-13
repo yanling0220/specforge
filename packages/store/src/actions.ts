@@ -1,5 +1,8 @@
 import {
+  addComment as addCommentCore,
   applyReviewOutcome,
+  artifactTargetOf,
+  locateComment,
   claimTask as claimTaskCore,
   checkProxySubject,
   confirmAnswer,
@@ -12,13 +15,15 @@ import {
   nextStage,
   proposeAnswer,
   rejectAnswer,
+  reopenComment as reopenCommentCore,
+  resolveComment as resolveCommentCore,
   releaseTask as releaseTaskCore,
   requireRole,
   resolveFixRound,
 } from '@specforge/core';
 import { headSha } from '@specforge/runner';
-import type { Actor, Question, ReviewFinding, ReviewRecord, Role, Stage } from '@specforge/shared';
-import { bindingNow, evaluateAll, factsTree, readTasksFacts } from './engine.ts';
+import type { Actor, ArtifactComment, ArtifactTarget, Question, ReviewFinding, ReviewRecord, Role, Stage } from '@specforge/shared';
+import { bindingNow, evaluateAll, factsTree, readDesignFacts, readSpecFacts, readTasksFacts, workTree } from './engine.ts';
 import type { ChangeState, Store } from './store.ts';
 
 // 人的写操作（CLI 与 server 共用）。每个操作都经过 Store.mutate 写入哈希链；
@@ -228,4 +233,65 @@ export function claimTask(store: Store, changeId: string, actor: Actor, taskId: 
 /** 交还给 agent */
 export function releaseTask(store: Store, changeId: string, actor: Actor, taskId: string, reason?: string): void {
   store.mutate(changeId, actor, 'task.released', (s) => ({ ...s, change: releaseTaskCore(s.change, taskId, actor, now(), reason) }), () => ({ taskId, reason }));
+}
+
+// ---------------- 产物评论（T3.5） ----------------
+
+/** 在 spec / design / tasks 的某一行上评论（按当前工作区内容锚定） */
+export function addComment(store: Store, changeId: string, actor: Actor, input: { path: string; line: number; text: string }): ArtifactComment {
+  if (actor.role === 'agent') throw new ForgeError('bad_role', '评论只能由人添加');
+  const text = workTree(store.root).read(input.path);
+  let added: ArtifactComment | undefined;
+  store.mutate(
+    changeId,
+    actor,
+    'comment.added',
+    (s) => {
+      const comments = addCommentCore(s.comments ?? [], { changeId, ...input }, text, actor, now());
+      added = comments.at(-1)!;
+      return { ...s, comments };
+    },
+    () => ({ ...added! }),
+  );
+  return added!;
+}
+
+export function resolveComment(store: Store, changeId: string, actor: Actor, id: string, note?: string): void {
+  store.mutate(changeId, actor, 'comment.resolved', (s) => ({ ...s, comments: resolveCommentCore(s.comments ?? [], id, actor, now(), note) }), () => ({ commentId: id, note }));
+}
+
+export function reopenComment(store: Store, changeId: string, actor: Actor, id: string, note: string): void {
+  store.mutate(changeId, actor, 'comment.reopened', (s) => ({ ...s, comments: reopenCommentCore(s.comments ?? [], id, actor, now(), note) }), () => ({ commentId: id, note }));
+}
+
+export interface ArtifactView {
+  path: string;
+  target: ArtifactTarget;
+  text: string;
+  /** 该文件上的评论，含在当前文本中的定位 */
+  comments: (ArtifactComment & { anchor: ReturnType<typeof locateComment> })[];
+}
+
+/** 可评论的产物（工作区中的 proposal / spec / design / tasks）及其评论；文件已不存在的评论单独返回 */
+export function artifactViews(store: Store, changeId: string): { files: ArtifactView[]; orphanComments: ArtifactComment[] } {
+  const state = store.load(changeId);
+  const tree = workTree(store.root);
+  const design = readDesignFacts(store, changeId, tree);
+  const tasks = readTasksFacts(store, changeId, tree);
+  const paths = [
+    ...readSpecFacts(store, changeId, tree).sources.map((x) => x.path),
+    ...(design.text ? [design.path] : []),
+    ...(tasks ? [tasks.file] : []),
+  ];
+  const comments = state.comments ?? [];
+  const files = paths.map((path) => {
+    const text = tree.read(path) ?? '';
+    return {
+      path,
+      target: artifactTargetOf(changeId, path)!,
+      text,
+      comments: comments.filter((c) => c.path === path).map((c) => ({ ...c, anchor: locateComment(c, text) })),
+    };
+  });
+  return { files, orphanComments: comments.filter((c) => !paths.includes(c.path)) };
 }
