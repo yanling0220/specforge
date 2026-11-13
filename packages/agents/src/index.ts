@@ -10,3 +10,4 @@ export * from './types.ts';
 export * from './workspace-tools.ts';
 export * from './implementer.ts';
 export * from './raise-question.ts';
+export * from './generators.ts';

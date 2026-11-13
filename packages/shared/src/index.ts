@@ -65,7 +65,7 @@ export interface TddConfig {
  */
 export type AgentBackend = 'claude' | 'deepseek' | 'codex' | 'openai-compatible';
 
-export type AgentRole = 'analyst' | 'reviewer' | 'implementer';
+export type AgentRole = 'analyst' | 'reviewer' | 'implementer' | 'spec-writer' | 'architect' | 'planner';
 
 export interface AgentProfile {
   backend: AgentBackend;

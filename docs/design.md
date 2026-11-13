@@ -187,6 +187,12 @@ confirmed ──(需要改答案)──▶ 新建修订版本（必须填写变�
 - 答案被新版本取代时，G1 的绑定哈希变化，下游 G2…G6 随之失效。
 - 审查 agent 专门检查"未经提问的假设"：代码里写死的业务规则在 spec 和问题答案中找不到依据，就判为阻塞问题。
 
+### 3.6 生成类 agent（T2.8）
+
+- `sf agent spec|design|plan <id>`，分别在 spec / design / tasks 阶段运行；agent 对工作区只读（运行前后指纹校验）。
+- 产物通过 `submit_spec` / `submit_design` / `submit_tasks` 提交草稿，引擎用 G2/G3/G4 的同一套检查（人工审批项除外）校验，不通过把问题返回给 agent 修改；通过后由引擎写入 `openspec/changes/<id>/`（路径由引擎拼出），记录 `artifact.generated`（含文件哈希）。已有产物默认不覆盖（`--force`）。
+- 审批、提交、推进仍由人完成；agent 遇到歧义用 `raise_question`，提出阻塞问题后可不提交。
+
 ---
 
 ## 4. 门禁体系

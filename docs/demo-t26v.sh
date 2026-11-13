@@ -1,9 +1,10 @@
 set -e
+SRC="$(cd "$(dirname "$0")" && pwd)/demo-src"
 sf() { node /Users/yan/Downloads/project/sdd_plantform/apps/cli/src/main.ts "$@"; }
 D=/tmp/sf-t26v; rm -rf $D; mkdir -p $D/src $D/test; cd $D
 git init -q; git config user.email t@t; git config user.name t
 echo '{ "name": "user-admin", "type": "module", "scripts": { "test": "node --test" } }' > package.json
-cp "$(dirname "$0")"/demo-src/*.js src/
+cp "$SRC"/*.js src/
 cat > test/users.test.js <<'JS'
 import { test } from 'node:test';
 import assert from 'node:assert';

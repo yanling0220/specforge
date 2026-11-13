@@ -1,8 +1,15 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import {
   adapterFor,
   applyRaisedQuestions,
+  ARTIFACT_ROLE,
+  artifactPrompt,
+  artifactSystemPrompt,
+  artifactTools,
+  emptyArtifactDraft,
+  type ArtifactFile,
+  type ArtifactKind,
   analystPrompt,
   analystTools,
   ANALYST_SYSTEM_PROMPT,
@@ -24,7 +31,26 @@ import {
   type AgentRunSpec,
   type RaisedQuestion,
 } from '@specforge/agents';
-import { acIdsOf, checkPathPolicy, ForgeError, implementPolicy, isResolved, markTaskDone, nextTask, openFixRound, pausedTasks, type PathPolicy } from '@specforge/core';
+import {
+  acIdsOf,
+  checkPathPolicy,
+  evaluateDesign,
+  evaluateSpec,
+  evaluateTasks,
+  ForgeError,
+  implementPolicy,
+  isResolved,
+  markTaskDone,
+  nextTask,
+  openFixRound,
+  parseDesign,
+  parseSpec,
+  parseTasks,
+  pausedTasks,
+  sha256,
+  understandingBinding,
+  type PathPolicy,
+} from '@specforge/core';
 import {
   createWorktree,
   diffStat,
@@ -36,8 +62,8 @@ import {
   stageAllChanges,
   workspaceFingerprint,
 } from '@specforge/runner';
-import type { Actor, AgentProfile, AgentRole, ProjectConfig } from '@specforge/shared';
-import { commitTree, readDesignFacts, readSpecFacts, readTasksFacts } from './engine.ts';
+import type { Actor, AgentProfile, AgentRole, GateEvaluation, ProjectConfig } from '@specforge/shared';
+import { bindingNow, commitTree, readDesignFacts, readSpecFacts, readTasksFacts } from './engine.ts';
 import type { Store } from './store.ts';
 import { recordReview } from './review.ts';
 import { checkTdd } from './tdd.ts';
@@ -475,4 +501,139 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
   } finally {
     removeWorktree(store.root, wt);
   }
+}
+
+// ---------------- 生成类 agent（T2.8） ----------------
+
+const STAGE_OF: Record<ArtifactKind, string> = { spec: 'spec', design: 'design', tasks: 'tasks' };
+
+/** 门禁中除人工审批外的检查项都必须通过，返回不通过的说明 */
+function failuresOf(ev: GateEvaluation): string[] {
+  return ev.checks.filter((c) => !c.passed && c.id !== 'approved').map((c) => `${c.label}：${c.detail ?? ''}`);
+}
+
+/**
+ * 运行生成类 agent：agent 只读，提交的产物先按 G2 / G3 / G4 的规则校验，
+ * 通过后由引擎写入 openspec/changes/<id>/（只写这个目录）。审批仍由人完成。
+ */
+export async function cmdAgentGenerate(
+  store: Store,
+  changeId: string,
+  actor: Actor,
+  kind: ArtifactKind,
+  opts: AgentCmdOptions & { force?: boolean },
+): Promise<void> {
+  const log = opts.log ?? console.log;
+  const state = store.load(changeId);
+  if (state.change.tier === 'S') throw new ForgeError('bad_tier', 'S 档没有 spec / design / tasks 阶段');
+  if (state.change.stage !== STAGE_OF[kind]) {
+    throw new ForgeError('bad_stage', `生成 ${kind} 在 ${STAGE_OF[kind]} 阶段进行，当前是 ${state.change.stage}`);
+  }
+  const dir = store.openspecChangeDir(changeId);
+  const rel = `openspec/changes/${changeId}`;
+  const existing =
+    kind === 'spec'
+      ? readSpecFacts(store, changeId).sources.filter((s) => s.path.endsWith('spec.md')).map((s) => s.path)
+      : [`${rel}/${kind}.md`].filter((p) => existsSync(join(store.root, p)));
+  if (existing.length && !opts.force) {
+    throw new ForgeError('exists', `已存在 ${existing.join(', ')}；如要由 agent 重新生成并覆盖，加 --force`);
+  }
+
+  const config = store.config();
+  const facts = readSpecFacts(store, changeId);
+  const acIds = acIdsOf(facts.specs);
+  const design = readDesignFacts(store, changeId);
+  const now = () => new Date().toISOString();
+  const proposal = facts.sources.filter((s) => s.path.endsWith('proposal.md'));
+
+  const validate = (files: ArtifactFile[]): string[] => {
+    const withPath = files.map((f) => ({ path: `${rel}/${f.path}`, text: f.content }));
+    if (kind === 'spec') {
+      const sources = [...proposal, ...withPath].sort((a, b) => a.path.localeCompare(b.path));
+      const ev = evaluateSpec(
+        {
+          specs: withPath.map((f) => parseSpec(f.path, f.text)),
+          sources,
+          questions: state.questions,
+          understandingBinding: understandingBinding(state.analysis, state.questions),
+          approvals: [],
+          tier: state.change.tier,
+        },
+        now(),
+      );
+      return failuresOf(ev);
+    }
+    if (kind === 'design') {
+      const f = withPath[0]!;
+      const ev = evaluateDesign(
+        { design: parseDesign(f.path, f.text), text: f.text, acIds, specBinding: bindingNow(store, state, 'G2') ?? '', approvals: [], tier: state.change.tier, protectedPaths: config.protectedPaths },
+        now(),
+      );
+      return failuresOf(ev);
+    }
+    const f = withPath[0]!;
+    const ev = evaluateTasks(
+      { tasks: parseTasks(f.path, f.text), acIds, structureIds: design.design?.changes.map((c) => c.id) ?? [], designBinding: bindingNow(store, state, 'G3') ?? '' },
+      now(),
+    );
+    return failuresOf(ev);
+  };
+
+  const r = state.analysis.restatement;
+  const ctx = {
+    kind,
+    changeId,
+    title: state.change.title,
+    sources: [...facts.sources.filter((s) => kind !== 'spec' || s.path.endsWith('proposal.md')), ...(kind === 'tasks' && design.text ? [{ path: design.path, text: design.text }] : [])],
+    restatement: r?.confirmation && r.confirmation.hash === r.hash ? r.text : undefined,
+    decisions: state.questions
+      .filter((q) => q.status === 'confirmed')
+      .map((q) => ({ id: q.id, question: q.question, answer: q.revisions.at(-1)!.text })),
+    assumptions: state.analysis.assumptions.filter((a) => a.status === 'accepted').map((a) => a.text),
+    conventions: readConventions(store.root),
+    raise: { categories: questionCategories(config), questionIds: state.questions.map((q) => q.id), taskIds: [] },
+    validate,
+  };
+  const draft = emptyArtifactDraft();
+  const role = ARTIFACT_ROLE[kind];
+  const { result, profile } = await runReadOnly(
+    store,
+    changeId,
+    actor,
+    role,
+    () => ({
+      role,
+      systemPrompt: artifactSystemPrompt(kind),
+      prompt: artifactPrompt(ctx),
+      tools: artifactTools(draft, ctx),
+      isComplete: () => draft.submitted || draft.questions.some((q) => q.severity === 'blocking'),
+      reset: () => Object.assign(draft, emptyArtifactDraft()),
+    }),
+    opts,
+  );
+  const agent = agentActor(role, result, profile);
+  recordRaisedQuestions(store, changeId, agent, draft.questions, log);
+  if (!draft.submitted) {
+    log(`agent 提出了阻塞问题，没有提交 ${kind}：请先回答问题（sf q list ${changeId}），再重新生成`);
+    return;
+  }
+
+  // 引擎写入：只写 openspec/changes/<id>/ 下由引擎拼出的路径
+  if (kind === 'spec' && opts.force) for (const p of existing) rmSync(join(store.root, p));
+  const written = draft.files.map((f) => {
+    const abs = resolve(dir, f.path);
+    if (relative(dir, abs).startsWith('..')) throw new ForgeError('bad_path', `产物路径越界：${f.path}`);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, f.content.endsWith('\n') ? f.content : f.content + '\n');
+    return { path: store.rel(abs), hash: sha256(readFileSync(abs, 'utf8')) };
+  });
+  store.append({ type: 'artifact.generated', actor: agent, changeId, payload: { kind, files: written, replaced: existing, summary: draft.summary, sessionId: result.sessionId } });
+  for (const f of written) log(`✓ 已写入 ${f.path}`);
+  if (draft.summary) log(`总结：${draft.summary}`);
+  const next: Record<ArtifactKind, string> = {
+    spec: `请审阅后提交，再 sf spec approve ${changeId} 和 sf advance ${changeId}`,
+    design: `请审阅后提交，再 sf advance ${changeId}（L 档或涉及受保护路径需要先 sf design approve）`,
+    tasks: `请审阅后提交，再 sf advance ${changeId} 进入实现`,
+  };
+  log(`下一步：${next[kind]}`);
 }

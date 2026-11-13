@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6 完成
+最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6、T2.8 完成
 
 ---
 
 ## 当前快照
 
-- 测试：127 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
+- 测试：131 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T2.8`**（生成类 agent，需要真实模型实测，先征得用户同意费用）或进入第三期 `T3.1`（server）。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
+- **下一个建议任务：`T3.1`**（server，纯代码）。第二期只剩 `T2.3c`（需要 Codex 登录）。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
 
 ---
 
@@ -43,7 +43,7 @@
 | T2.6 | 可写的实现 agent `sf agent implement [--task T-n]`：独立 worktree；写文件执行时拦截（Claude canUseTool / openai-compatible 写工具）+ 引擎事后路径校验（`implementPolicy`：禁 openspec/、.specforge/、.git/、受保护路径）；主工作区指纹兜底；agent 自己的提交会被收拢；引擎勾选任务、提交（带 SpecForge-* trailer）、fast-forward 合入；`implement.committed / rejected / blocked` 事件 | done | T2.5 | `apps/cli/test/implement.test.ts`（8 个场景）、`packages/agents/test/implementer.test.ts` |
 | T2.6v | 用真实模型跑 `sf agent implement`（DeepSeek，示例项目 `/tmp/sf-t26v`） | done | T2.6 | 全流程跑通：T-1 提交 `5d4f4d0`（测试 3/3），T-2 提交 `c57cbc3`（测试 4/4），均无越界；发现并修复符号链接路径误拦截。`sf advance` → `sf verify`（G6A 通过，AC-1~3 均有测试）→ `sf agent review`（pass）→ 开发者签字 → `delivered`；`sf log verify` 哈希链完整（30 条）。重建示例：`bash docs/demo-t26v.sh` |
 | T2.7 | G5 TDD 门：引擎先确认新测试失败（RED），实现后通过（GREEN），绑定任务尝试与 commit | done | T2.6 | 配置 `tdd.command`（`{files}` 占位）+ 可选 `tdd.setup`；runner `runTdd`（base + 新测试 → RED，任务 commit → GREEN）；`sf agent implement` 合入前执行，不通过整体丢弃；手工任务用 `sf tdd`；G5 为 M/L 档 implement 出口门，要求证据 commit 仍在 HEAD 历史中。测试：`packages/core/test/tdd.test.ts`、`packages/runner/test/tdd.test.ts`、`apps/cli/test/implement.test.ts`（先红后绿、一开始就通过、没改测试、GREEN 失败、未配置、改写历史）；CLI 端到端（`/tmp/sf-t27`，手工实现 + `sf tdd` → G5 通过 → `implement → closing`）。局限见 design.md 4.3 |
-| T2.8 | 生成类 agent：spec-writer（proposal→spec）、architect（→design）、planner（→tasks），只能写 `openspec/changes/<id>/**` | todo | T2.4, T2.5 | 生成结果仍需过 G2/G3/G4 |
+| T2.8 | 生成类 agent：spec-writer（proposal→spec）、architect（→design）、planner（→tasks），只能写 `openspec/changes/<id>/**` | done | T2.4, T2.5 | `sf agent spec / design / plan`：agent 只读，产物经 `submit_*` 提交，引擎按 G2/G3/G4 规则（除人工审批外）自检，不通过退回 agent 修改；通过后引擎只写 `openspec/changes/<id>/`（`artifact.generated`），已有产物需 `--force`；可 `raise_question`。测试：`apps/cli/test/generate.test.ts`。DeepSeek 实测（`/tmp/sf-t28`，`bash docs/demo-t28.sh` 重建）：proposal → spec → design → tasks，G1–G4 全部通过，见实测记录 |
 | T2.9 | 问题回流：所有阶段的 agent 都能 `raise_question`；新阻塞问题使 G1 失效并暂停相关任务 | done | T2.6 | 共享 `raise_question` 工具（实现、审查 agent）；问题新增 `taskIds`；`pausedTasks`（关联任务 + 传递依赖，无关联则全部）；实现 agent 提阻塞问题后改动丢弃、问题入库；`sf q add --tasks`；`sf status` 显示暂停任务。测试：`tasks.test.ts`（暂停规则）、`implement.test.ts`（提问后 G1 失效、advance 被拦截、任务暂停、无关任务继续、非阻塞照常提交、参数校验）、`engine.test.ts`（审查 agent 提问）；CLI 实测（`/tmp/sf-t29`） |
 | T2.10 | spec 从 commit 读取，而不是工作区（目前 AC 列表读工作区、AC 覆盖读 commit，两者不一致） | done | — | `SourceTree`（工作区 / commit）；`readSpecFacts` / `readDesignFacts` / `readTasksFacts` 可按 SHA 读取；implement 及之后的阶段全部门禁按 HEAD 评估，`sf status` 提示未提交的 OpenSpec 改动；审查 agent 读被审 commit、实现 agent 读 base commit 中的材料。`apps/cli/test/engine.test.ts`；CLI 实测（`/tmp/sf-t27`） |
 | T2.11 | 打回与修复轮次上限：审查 fail 自动回到实现，超过上限升级给人 | done | T2.6 | `workflow.maxFixRounds`（默认 3）；`packages/core/src/workflow.ts`（`applyReviewOutcome` / `resolveFixRound`）；`sf review` 与 `sf agent review` 共用 `recordReview`；修复模式的 `sf agent implement`；`sf status` 显示修复轮次与升级状态。测试：`workflow.test.ts`、`implement.test.ts`（打回 → 修复 → 升级全流程、修复暂停）；CLI 实测（`/tmp/sf-t27`：打回、未修复 advance 被拒、手工修复后回到收尾、再次不通过升级） |
@@ -80,6 +80,7 @@
 | 实现 agent 的 Bash / run_command 能执行任意命令（如联网、写 worktree 外） | 写主工作区会被指纹检测拦截，但写其他目录无法发现 | 后续可接入沙箱（容器或 Claude SDK sandbox） |
 | 升级给人后没有"解除升级"命令 | 人只能在 closing 阶段手工修复、重新验证和审查后交付；不能再让 agent 修复 | 需要时加 `sf escalation resolve` |
 | 验证（6A）失败不自动打回 | 需要人判断后手工修复 | 视使用情况再定 |
+| 生成类 agent 实测中，Q-2/Q-3 由 Claude 按推荐项代答、spec 由 Claude 以演示 dev 身份审批 | 仅限演示项目 `/tmp/sf-t28`，不代表真实产品决定 | — |
 | G5 以测试文件为粒度 | 修改已有测试文件时，文件中任一测试先失败即算 RED，不能确认每个新测试都先失败 | 需要逐个测试的结果（如 JUnit XML / TAP 逐条解析）；T3.6 只解析了总数 |
 | 本机没有 `rtk` 命令 | `AGENTS.md`（用户目录）要求的 rtk 前缀无法使用 | 用原生命令 |
 
@@ -102,6 +103,10 @@ T2.3v 分类结果：Q-1 范围、Q-3 用户与角色（能否导入 admin）、
 
 | T2.6v 实现 T-1 | `deepseek` | 成功：新增 `src/import.js` 与 `test/import.test.js`，引擎提交 `5d4f4d0`，测试 3/3 | 13 | 7K+4K | 64s |
 | T2.6v 实现 T-2（2026-11-13） | `deepseek` | 成功：入口加 `requireAdmin`，补 AC-3 测试，引擎提交 `c57cbc3`，测试 4/4 | 13 | 8K+2K | 20s |
+| T2.8 spec-writer 第 1 次 | `deepseek` | 未提交 spec，提出 2 个阻塞问题（Q-2 行号编号、Q-3 表头非法/空文件），问题回流生效 | 18 | 15K+6K | 71s |
+| T2.8 spec-writer 第 2 次 | `deepseek` | 成功：7 个 AC，引用 Q-1~Q-3，校验规则取自现有 `users.js` | 12 | 8K+8K | 88s |
+| T2.8 architect | `deepseek` | 成功：复用 `requireAdmin` / `createUser`，结构变更 S-1 `src/csv.js`、S-2 `src/import.js`，覆盖 7 个 AC | 15 | 19K+13K | 156s |
+| T2.8 planner | `deepseek` | 成功：2 个任务覆盖全部 AC 与 S，G4 一次通过 | 8 | 7K+10K | 122s |
 | T2.6v 审查 | `deepseek` | pass，覆盖 AC-1~3；2 条次要意见（缺"CSV 含 role 列"用例、未 trim） | 12 | 13K+5K | 41s |
 
 T2.6v 发现：模型用 `/private/var/...` 写 worktree 文件被误判为"工作目录之外"（macOS `/var` 是符号链接）→ `writeDenial` 改为先解析符号链接，已加回归测试。
@@ -131,4 +136,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T2.10 · 实现阶段起 OpenSpec 文件按 HEAD 读取 · `76dd751`
 - 2026-11-13 · Claude Code (Opus 5.5) · T2.9 · 问题回流：后续阶段 agent 提问、任务级暂停 · `adc28f8`
 - 2026-11-13 · Claude Code (Opus 5.5) · T2.11 · 打回与修复轮次上限、升级给人 · `6597904`
-- 2026-11-13 · Claude Code (Opus 5.5) · T3.6 · 测试数量不得下降（G6A） · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.6 · 测试数量不得下降（G6A） · `cb90838`
+- 2026-11-13 · Claude Code (Opus 5.5) · T2.8 · 生成类 agent（spec-writer / architect / planner），DeepSeek 实测 · （本次提交）

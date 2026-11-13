@@ -42,7 +42,7 @@ import type {
   Severity,
   Tier,
 } from '@specforge/shared';
-import { cmdAgentAnalyze, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
+import { cmdAgentAnalyze, cmdAgentGenerate, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
 import { recordReview } from './review.ts';
 import { checkTdd } from './tdd.ts';
 import { bindingNow, evaluateAll, factsTree, readTasksFacts, uncommittedSpecChanges } from './engine.ts';
@@ -96,6 +96,10 @@ change
 
 AI agent
   sf agent analyze <id>                           需求分析 agent：复述、分解树、假设、维度、问题节点
+  sf agent spec <id> [--force]                    规格编写 agent：根据已确认的分析生成 specs/*/spec.md（spec 阶段）
+  sf agent design <id> [--force]                  方案 agent：生成 design.md（design 阶段）
+  sf agent plan <id> [--force]                    任务拆分 agent：生成 tasks.md（tasks 阶段）
+                                                  产物先按 G2/G3/G4 规则自检，由引擎写入；审批与提交仍由人完成
   sf agent implement <id> [--task T-n]            实现 agent：在独立 worktree 中实现下一个（或指定）任务，
                                                   越界改动或 G5（先红后绿）不通过则整体丢弃，通过后由引擎提交并 fast-forward 合入
   sf agent review <id>                            独立审查 agent（G6 6B），针对当前 HEAD
@@ -148,6 +152,7 @@ const { values: opts, positionals: args } = parseArgs({
     verbose: { type: 'boolean', short: 'v' },
     task: { type: 'string' },
     tasks: { type: 'string' },
+    force: { type: 'boolean' },
     base: { type: 'string' },
     sha: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
@@ -651,6 +656,8 @@ async function main(): Promise<void> {
       if (sub === 'analyze') return cmdAgentAnalyze(store, id, actor, agentOpts);
       if (sub === 'review') return cmdAgentReview(store, id, actor, agentOpts);
       if (sub === 'implement') return cmdAgentImplement(store, id, actor, { ...agentOpts, taskId: opts.task });
+      const kinds = { spec: 'spec', design: 'design', plan: 'tasks' } as const;
+      if (sub && sub in kinds) return cmdAgentGenerate(store, id, actor, kinds[sub as keyof typeof kinds], { ...agentOpts, force: !!opts.force });
       throw new ForgeError('bad_cmd', `未知命令 sf agent ${sub ?? ''}`);
     }
     default:
