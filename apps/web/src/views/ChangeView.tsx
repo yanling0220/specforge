@@ -97,6 +97,7 @@ export function ChangeView({ id, tab, qid, version }: { id: string; tab: 'gates'
       ) : tab === 'gates' ? (
         <>
           <GateActions id={id} detail={detail.data} gates={gates.data} onDone={refresh} />
+          {detail.data.tasks.length > 0 && <TasksPanel id={id} detail={detail.data} onDone={refresh} />}
           <p className="muted">
             门禁按{detail.data.factsSource.kind === 'commit' ? ` HEAD（${detail.data.factsSource.sha.slice(0, 7)}）` : '工作区'}中的 OpenSpec 文件实时评估
           </p>
@@ -215,5 +216,65 @@ function GateActions({ id, detail, gates, onDone }: { id: string; detail: Change
         />
       )}
     </div>
+  );
+}
+
+/** 任务列表：完成 / 人接手 / 暂停 / 交给 agent；dev 可以接管或交还 */
+function TasksPanel({ id, detail, onDone }: { id: string; detail: ChangeDetail; onDone: () => void }) {
+  const { canWrite, role, user } = useMe();
+  const { stage } = detail.change;
+  const editable = canWrite && role === 'dev' && (stage === 'tasks' || stage === 'implement');
+  return (
+    <section className="panel tasks-panel">
+      <h2>
+        任务 <small className="muted">接管的任务由人实现，实现 agent 不处理；完成后提交并用 sf tdd 补 G5 证据</small>
+      </h2>
+      <table className="dims">
+        <tbody>
+          {detail.tasks.map((t) => {
+            const claim = detail.claims[t.id];
+            const paused = detail.pausedTasks[t.id];
+            return (
+              <tr key={t.id}>
+                <td>
+                  <b>{t.id}</b>
+                </td>
+                <td>
+                  {t.title}
+                  {t.dependsOn.length > 0 && <span className="muted">（依赖 {t.dependsOn.join(', ')}）</span>}
+                </td>
+                <td className="task-state">
+                  {t.done ? (
+                    <span className="pass">✓ 完成</span>
+                  ) : claim ? (
+                    <span className="warn-text" title={claim.note}>
+                      👤 {claim.by.name} 接手 · {formatTime(claim.at)}
+                    </span>
+                  ) : paused ? (
+                    <span className="fail">⏸ 等待 {paused.join(', ')}</span>
+                  ) : (
+                    <span className="muted">交给 agent</span>
+                  )}
+                </td>
+                <td>
+                  {editable && !t.done && !claim && (
+                    <Action label="接管" fields={[{ key: 'note', label: '说明（可选）' }]} run={(v) => api.claimTask(id, t.id, { role: 'dev', note: v.note || undefined })} onDone={onDone} />
+                  )}
+                  {editable && claim && !t.done && (
+                    <Action
+                      label="交还给 agent"
+                      fields={claim.by.name === user?.name ? [] : [{ key: 'reason', label: `由 ${claim.by.name} 接手，交还原因`, required: true }]}
+                      confirm={claim.by.name === user?.name ? `把 ${t.id} 交还给实现 agent？` : undefined}
+                      run={(v) => api.releaseTask(id, t.id, { role: 'dev', reason: v.reason || undefined })}
+                      onDone={onDone}
+                    />
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
   );
 }

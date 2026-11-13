@@ -2,7 +2,7 @@
 //   node apps/web/e2e/console.e2e.mjs
 // 环境变量 CHROME 可指定浏览器路径。流程：
 //   开发者登录 → 回答阻塞问题 → 退出 → 产品登录 → 确认 → 退出 → 开发者推进到 spec → 审批 spec → 推进到 design
-//   → 推进到 tasks 被门禁拦截 → 校验事件与哈希链
+//   → 推进到 tasks 被门禁拦截 → 补齐方案与任务后在任务面板接管 T-1 → 校验事件与哈希链
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -190,10 +190,22 @@ async function main() {
   await act('.action-bar', '推进到「任务」');
   await waitFor(`document.querySelector('.action-bar .error')?.textContent.includes('门禁未通过')`, '显示拦截原因');
 
+  step('接管：推进到任务阶段后，在任务面板接手 T-1');
+  writeFileSync(join(proj, 'openspec/changes/demo/design.md'), '# 方案\n实现 AC-1。\n\n## 结构变更\n- 无：只改现有模块\n');
+  writeFileSync(join(proj, 'openspec/changes/demo/tasks.md'), '- [ ] T-1 实现导入（AC-1）\n');
+  git('add', '-A');
+  git('commit', '-qm', 'design + tasks');
+  sf('advance', 'demo');
+  await go('#/changes/demo');
+  await waitFor(`!!document.querySelector('.tasks-panel')`, '任务面板');
+  await act('.tasks-panel', '接管', { 说明: '涉及权限，人来写' });
+  await waitFor(`document.querySelector('.tasks-panel')?.textContent.includes('devon 接手')`, 'T-1 显示为 devon 接手');
+
   close();
   step('校验事件与哈希链');
+  if (!/T-1\s+👤 devon 接手/.test(sf('task', 'list', 'demo'))) throw new Error('sf task list 中 T-1 应为 devon 接手');
   const log = sf('log', 'demo');
-  for (const want of ['question.answered', 'question.confirmed', 'spec.approved', 'stage.advanced', 'stage.advance_rejected']) {
+  for (const want of ['question.answered', 'question.confirmed', 'spec.approved', 'stage.advanced', 'stage.advance_rejected', 'task.claimed']) {
     if (!log.includes(want)) throw new Error(`事件日志中缺少 ${want}`);
   }
   if (!/devon\(dev\) question\.answered/.test(log) || !/pam\(product\) question\.confirmed/.test(log)) throw new Error('事件中的身份不对');

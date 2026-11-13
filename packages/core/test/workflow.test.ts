@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Change, ProjectConfig, ReviewRecord } from '@specforge/shared';
-import { applyReviewOutcome, maxFixRounds, openFixRound, resolveFixRound } from '../src/index.ts';
+import { activeClaims, applyReviewOutcome, claimTask, maxFixRounds, openFixRound, releaseTask, resolveFixRound } from '../src/index.ts';
 
 const T = '2026-11-13T00:00:00Z';
 const change = (over: Partial<Change> = {}): Change => ({
@@ -73,5 +73,35 @@ describe('打回与修复轮次', () => {
     expect(maxFixRounds(cfg({ maxFixRounds: 0 }))).toBe(0);
     expect(() => maxFixRounds(cfg({ maxFixRounds: -1 }))).toThrow(/非负整数/);
     expect(() => maxFixRounds(cfg({ maxFixRounds: 1.5 }))).toThrow(/非负整数/);
+  });
+});
+
+describe('接管：任务由人接手实现', () => {
+  const dev = { name: 'alice', role: 'dev' as const };
+  const bob = { name: 'bob', role: 'dev' as const };
+  const impl = change({ stage: 'implement' });
+  const task = { id: 'T-2', done: false };
+
+  it('dev 可以接管未完成的任务；不能重复接管；阶段、角色、完成状态受限', () => {
+    const c = claimTask(impl, task, dev, T, '涉及支付，人来写');
+    expect([...activeClaims(c)]).toEqual([['T-2', { taskId: 'T-2', by: dev, at: T, note: '涉及支付，人来写' }]]);
+    expect(() => claimTask(c, task, bob, T)).toThrow(/已由 alice 接手/);
+    expect(() => claimTask(impl, task, { name: 'pm', role: 'product' }, T)).toThrow(/dev 角色/);
+    expect(() => claimTask(impl, { id: 'T-1', done: true }, dev, T)).toThrow(/已完成/);
+    expect(() => claimTask(impl, undefined, dev, T)).toThrow(/不存在/);
+    expect(() => claimTask(change({ stage: 'closing' }), task, dev, T)).toThrow(/任务或实现阶段/);
+    expect(claimTask(change({ stage: 'tasks' }), task, dev, T).taskClaims).toHaveLength(1);
+  });
+
+  it('交还：本人直接交还，他人必须写原因；交还后可再次接管，历史保留', () => {
+    const c = claimTask(impl, task, dev, T);
+    expect(() => releaseTask(c, 'T-2', bob, T)).toThrow(/必须写原因/);
+    expect(() => releaseTask(c, 'T-9', dev, T)).toThrow(/没有被接管/);
+    const r = releaseTask(c, 'T-2', bob, T, 'alice 请假');
+    expect(activeClaims(r).size).toBe(0);
+    const again = claimTask(r, task, bob, T);
+    expect(again.taskClaims).toHaveLength(2);
+    expect(again.taskClaims![0]!.released).toEqual({ by: bob, at: T, reason: 'alice 请假' });
+    expect(activeClaims(again).get('T-2')!.by).toEqual(bob);
   });
 });

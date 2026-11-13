@@ -142,6 +142,10 @@ export function eventSummary(e: ForgeEvent): string {
     case 'implement.rejected':
     case 'implement.blocked':
       return `${str(p.taskId)} 未被接受：${str(p.reason)}`;
+    case 'task.claimed':
+      return `${str(p.taskId)} 由 ${e.actor.name} 接手实现${p.note ? `：${str(p.note)}` : ''}`;
+    case 'task.released':
+      return `${str(p.taskId)} 交还给 agent${p.reason ? `：${str(p.reason)}` : ''}`;
     case 'agent.run':
       return `${str(p.role)} agent ${p.ok ? '完成' : '失败'}（${str(p.backend)} · ${str(p.turns)} 轮）${p.error ? `：${str(p.error)}` : ''}`;
     case 'artifact.generated':
@@ -160,7 +164,7 @@ export function eventSummary(e: ForgeEvent): string {
 export function eventCategory(type: string): 'stage' | 'question' | 'agent' | 'evidence' | 'review' | 'other' {
   if (type.startsWith('stage.') || type.startsWith('change.')) return 'stage';
   if (type.startsWith('question.') || type.startsWith('restatement.') || type.startsWith('assumption.') || type.startsWith('dimension.') || type.startsWith('analysis.')) return 'question';
-  if (type.startsWith('agent.') || type.startsWith('implement.') || type.startsWith('artifact.')) return 'agent';
+  if (type.startsWith('agent.') || type.startsWith('implement.') || type.startsWith('artifact.') || type.startsWith('task.')) return 'agent';
   if (type.startsWith('evidence.') || type.startsWith('tdd.')) return 'evidence';
   if (type.startsWith('review.') || type.endsWith('.approved')) return 'review';
   return 'other';

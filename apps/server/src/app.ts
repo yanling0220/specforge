@@ -1,16 +1,18 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { Hono, type Context } from 'hono';
-import { ForgeError, isResolved, missingRoles, pausedTasks, pipelineFor, publicUsers, resolveIdentity, upstreamGates, verifyChain } from '@specforge/core';
+import { activeClaims, ForgeError, isResolved, missingRoles, pausedTasks, pipelineFor, publicUsers, resolveIdentity, upstreamGates, verifyChain } from '@specforge/core';
 import {
   advance,
   approve,
+  claimTask,
   confirmRestatement,
   decideAssumption,
   evaluateAll,
   factsTree,
   questionAction,
   readTasksFacts,
+  releaseTask,
   signOff,
   uncommittedSpecChanges,
   type QuestionOp,
@@ -72,6 +74,7 @@ const STATUS_OF: Record<string, 400 | 403 | 404 | 409> = {
   disabled: 403,
   no_registry: 403,
   gate_blocked: 409,
+  claimed: 409,
   out_of_band: 409,
 };
 
@@ -150,6 +153,8 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
         const tasks = readTasksFacts(store, id, tree);
         return tasks ? Object.fromEntries(pausedTasks(tasks.tasks.filter((t) => !t.done), state.questions)) : {};
       })(),
+      tasks: (readTasksFacts(store, id, tree)?.tasks ?? []).map(({ id: tid, title, done, acRefs, dependsOn }) => ({ id: tid, title, done, acRefs, dependsOn })),
+      claims: Object.fromEntries(activeClaims(state.change)),
     });
   });
 
@@ -276,6 +281,18 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
     const findings = b.findings === undefined ? undefined : parseFindings(b.findings);
     const record = signOff(store, c.req.param('id'), writer(c, b), { verdict, note: str(b, 'note'), findings });
     return c.json({ review: record, change: store.load(c.req.param('id')).change });
+  });
+
+  app.post('/api/changes/:id/tasks/:tid/claim', async (c) => {
+    const b = await body(c);
+    claimTask(store, c.req.param('id'), writer(c, b), c.req.param('tid'), str(b, 'note'));
+    return c.json({ ok: true });
+  });
+
+  app.post('/api/changes/:id/tasks/:tid/release', async (c) => {
+    const b = await body(c);
+    releaseTask(store, c.req.param('id'), writer(c, b), c.req.param('tid'), str(b, 'reason'));
+    return c.json({ ok: true });
   });
 
   app.post('/api/changes/:id/advance', async (c) => {

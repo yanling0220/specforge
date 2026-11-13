@@ -460,7 +460,8 @@ specforge/
 - **防 CSRF**：所有 POST 只接受 `application/json`（跨站表单发不出），会话 Cookie 为 SameSite=Strict。
 - **错误码**：角色或权限问题 403，门禁拦截与状态冲突（带外修改）409，参数问题 400。
 - **端到端测试**：`npm run web:e2e`（需要本机 Chrome 与 `npm run web:build`）：真实浏览器中走完回答 → 产品确认 → 推进 → 审批 → 推进 → 被门禁拦截，最后校验事件身份与哈希链。不属于 `npm test`。
-- 尚未实现：「接管」（设计文档第 10 节审批收件箱中的一项，含义待定）；新建 change、编辑复述 / 假设 / 维度、提问等仍用 CLI。
+- **接管**：某个任务由人接手实现，实现 agent 不再处理（`sf task claim` / 控制台任务面板，需要 dev）。`sf agent implement` 自动跳过被接管的任务，指定它会被拒绝；依赖它的任务照常等待它完成。人完成后自己提交代码与测试、在 tasks.md 勾选，并用 `sf tdd` 补 G5 证据（G5 规则不变）。可交还给 agent（`sf task release`；接管人本人直接交还，他人必须写原因），接管与交还记录保留（`task.claimed` / `task.released`）。
+- 尚未实现：新建 change、编辑复述 / 假设 / 维度、提问等仍用 CLI。
 
 ---
 

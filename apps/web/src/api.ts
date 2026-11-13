@@ -11,6 +11,7 @@ import type {
   ReviewRecord,
   Role,
   Stage,
+  TaskClaim,
   TddEvidence,
   VerificationEvidence,
 } from '@specforge/shared';
@@ -46,6 +47,9 @@ export interface ChangeDetail {
   questionProgress: Record<string, { resolved: boolean; missingRoles: Role[] }>;
   /** 任务编号 → 导致暂停的问题编号 */
   pausedTasks: Record<string, string[]>;
+  tasks: { id: string; title: string; done: boolean; acRefs: string[]; dependsOn: string[] }[];
+  /** 当前有效的接管：任务编号 → 接管记录 */
+  claims: Record<string, TaskClaim>;
 }
 
 export interface GatesResponse {
@@ -154,5 +158,7 @@ export const api = {
   approve: (id: string, body: { role: Role; target: 'spec' | 'design'; note?: string }) => post<{ hash: string }>(`/api/changes/${enc(id)}/approve`, body),
   signoff: (id: string, body: { role: Role; verdict: 'pass' | 'fail'; note?: string; findings?: ReviewFinding[] }) =>
     post<{ review: ReviewRecord; change: Change }>(`/api/changes/${enc(id)}/signoff`, body),
+  claimTask: (id: string, tid: string, body: { role: Role; note?: string }) => post<{ ok: true }>(`/api/changes/${enc(id)}/tasks/${enc(tid)}/claim`, body),
+  releaseTask: (id: string, tid: string, body: { role: Role; reason?: string }) => post<{ ok: true }>(`/api/changes/${enc(id)}/tasks/${enc(tid)}/release`, body),
   advance: (id: string, body: { role: Role }) => post<{ from: Stage; to: Stage }>(`/api/changes/${enc(id)}/advance`, body),
 };

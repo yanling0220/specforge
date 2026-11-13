@@ -129,6 +129,16 @@ export interface Change {
   fixRounds?: FixRound[];
   /** 修复轮次用尽后升级给人；之后不再自动打回，实现 agent 不再运行 */
   escalation?: { at: string; reason: string; rounds: number };
+  /** 人接手实现的任务（接管）；实现 agent 不处理被接管的任务 */
+  taskClaims?: TaskClaim[];
+}
+
+export interface TaskClaim {
+  taskId: string;
+  by: Actor;
+  at: string;
+  note?: string;
+  released?: { by: Actor; at: string; reason?: string };
 }
 
 export interface FixRound {

@@ -1,5 +1,6 @@
 import {
   applyReviewOutcome,
+  claimTask as claimTaskCore,
   checkProxySubject,
   confirmAnswer,
   confirmRestatement as confirmRestatementCore,
@@ -11,12 +12,13 @@ import {
   nextStage,
   proposeAnswer,
   rejectAnswer,
+  releaseTask as releaseTaskCore,
   requireRole,
   resolveFixRound,
 } from '@specforge/core';
 import { headSha } from '@specforge/runner';
 import type { Actor, Question, ReviewFinding, ReviewRecord, Role, Stage } from '@specforge/shared';
-import { bindingNow, evaluateAll } from './engine.ts';
+import { bindingNow, evaluateAll, factsTree, readTasksFacts } from './engine.ts';
 import type { ChangeState, Store } from './store.ts';
 
 // 人的写操作（CLI 与 server 共用）。每个操作都经过 Store.mutate 写入哈希链；
@@ -213,4 +215,17 @@ export function signOff(
   };
   recordReview(store, changeId, actor, record, {}, log);
   return record;
+}
+
+/** 接管：任务由人接手实现，实现 agent 不再处理（直到交还） */
+export function claimTask(store: Store, changeId: string, actor: Actor, taskId: string, note?: string): void {
+  const state = store.load(changeId);
+  const task = readTasksFacts(store, changeId, factsTree(store, state))?.tasks.find((t) => t.id === taskId);
+  if (!task) throw new ForgeError('not_found', `任务 ${taskId} 不在 tasks.md 中`);
+  store.mutate(changeId, actor, 'task.claimed', (s) => ({ ...s, change: claimTaskCore(s.change, task, actor, now(), note) }), () => ({ taskId, note }));
+}
+
+/** 交还给 agent */
+export function releaseTask(store: Store, changeId: string, actor: Actor, taskId: string, reason?: string): void {
+  store.mutate(changeId, actor, 'task.released', (s) => ({ ...s, change: releaseTaskCore(s.change, taskId, actor, now(), reason) }), () => ({ taskId, reason }));
 }

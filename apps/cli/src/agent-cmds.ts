@@ -47,6 +47,7 @@ import {
   parseSpec,
   parseTasks,
   pausedTasks,
+  activeClaims,
   sha256,
   understandingBinding,
   type PathPolicy,
@@ -354,6 +355,9 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
   if (!tasks?.tasks.length) throw new ForgeError('no_tasks', `openspec/changes/${changeId}/tasks.md 中没有任务`);
   // 问题回流：未解决的阻塞问题暂停关联任务，互不相关的任务可以继续
   const paused = pausedTasks(tasks.tasks.filter((t) => !t.done), state.questions);
+  // 接管：由人实现的任务 agent 不处理
+  const claims = activeClaims(state.change);
+  const skip = new Map([...paused, ...[...claims].map(([t, c]) => [t, [`${c.by.name} 接手`]] as [string, string[]])]);
   // 修复轮次：审查打回后只修复本轮的阻塞问题，不做新任务
   const fix = openFixRound(state.change);
   let task: { id: string; title: string; acRefs: string[]; structureRefs: string[] };
@@ -369,11 +373,15 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
     const pending = found.dependsOn.filter((d) => !tasks.tasks.find((t) => t.id === d)?.done);
     if (pending.length) throw new ForgeError('deps', `任务 ${found.id} 的依赖尚未完成：${pending.join(', ')}`);
     if (paused.has(found.id)) throw new ForgeError('paused', `任务 ${found.id} 已暂停，等待阻塞问题的回答：${paused.get(found.id)!.join(', ')}`);
+    if (claims.has(found.id)) throw new ForgeError('claimed', `任务 ${found.id} 已由 ${claims.get(found.id)!.by.name} 接手实现，agent 不处理（sf task release 交还）`);
     task = found;
   } else {
-    const found = nextTask(tasks, paused);
+    const found = nextTask(tasks, skip);
     if (!found) {
-      throw new ForgeError('no_task', `没有可做的任务（全部完成，或剩余任务的依赖未完成${paused.size ? `；暂停中：${pauseText(paused)}` : ''}）`);
+      throw new ForgeError(
+        'no_task',
+        `没有可做的任务（全部完成，或剩余任务的依赖未完成${paused.size ? `；暂停中：${pauseText(paused)}` : ''}${claims.size ? `；由人接手：${[...claims].map(([t, c]) => `${t}（${c.by.name}）`).join('、')}` : ''}）`,
+      );
     }
     task = found;
   }
@@ -487,10 +495,12 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
       return;
     }
     const after = readTasksFacts(store, changeId)!;
-    const stillPaused = pausedTasks(after.tasks.filter((t) => !t.done), store.load(changeId).questions);
-    const next = nextTask(after, stillPaused);
+    const latest = store.load(changeId);
+    const stillPaused = pausedTasks(after.tasks.filter((t) => !t.done), latest.questions);
+    const next = nextTask(after, new Map([...stillPaused, ...[...activeClaims(latest.change).keys()].map((t) => [t, ['接手']] as [string, string[]])]));
     if (next) log(`下一个任务：${next.id} ${next.title}`);
     else if (stillPaused.size) log(`暂停中：${pauseText(stillPaused)}`);
+    else if (after.tasks.some((t) => !t.done)) log(`剩余任务由人接手或依赖未完成：${after.tasks.filter((t) => !t.done).map((t) => t.id).join(', ')}`);
     else log('全部任务已完成，可以 sf advance 进入收尾');
   } catch (e) {
     // agent 运行失败时（例如提问后没有正常结束）也要保留它提出的问题

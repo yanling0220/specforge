@@ -165,3 +165,26 @@ describe('用户列表', () => {
     index.close();
   });
 });
+
+describe('接管接口', () => {
+  it('dev 接管 / 交还；产品不能接管；详情返回任务与接管', async () => {
+    const store = project({ stage: 'implement' });
+    mkdirSync(join(store.root, 'openspec/changes/c1'), { recursive: true });
+    writeFileSync(join(store.root, 'openspec/changes/c1/tasks.md'), '- [ ] T-1 a（AC-1）\n');
+    g(store.root, 'add', '-A');
+    g(store.root, 'commit', '-qm', 'tasks');
+    const { app, post, login, sessions, index } = setup(store);
+    await login('alice');
+    await login('lily');
+    expect((await post('/api/changes/c1/tasks/T-1/claim', 'lily', { role: 'product' })).status).toBe(403);
+    expect((await post('/api/changes/c1/tasks/T-1/claim', 'alice', { role: 'dev', note: '人来写' })).status).toBe(200);
+    expect((await post('/api/changes/c1/tasks/T-1/claim', 'alice', { role: 'dev' })).status).toBe(409);
+    expect((await post('/api/changes/c1/tasks/T-9/claim', 'alice', { role: 'dev' })).status).toBe(404);
+    const detail = (await (await app.request('/api/changes/c1', { headers: { cookie: sessions.alice! } })).json()) as Record<string, any>;
+    expect(detail.tasks).toEqual([{ id: 'T-1', title: 'a（AC-1）', done: false, acRefs: ['AC-1'], dependsOn: [] }]);
+    expect(detail.claims['T-1']).toMatchObject({ by: { name: 'alice', role: 'dev' }, note: '人来写' });
+    expect((await post('/api/changes/c1/tasks/T-1/release', 'alice', { role: 'dev' })).status).toBe(200);
+    expect(store.events().slice(-2).map((e) => e.type)).toEqual(['task.claimed', 'task.released']);
+    index.close();
+  });
+});

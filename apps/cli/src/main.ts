@@ -9,6 +9,7 @@ import {
   ForgeError,
   missingRoles,
   nextQuestionId,
+  activeClaims,
   maxFixRounds,
   openFixRound,
   pausedTasks,
@@ -39,6 +40,7 @@ import { checkTdd } from './tdd.ts';
 import {
   advance,
   approve,
+  claimTask,
   confirmRestatement,
   decideAssumption,
   defaultConfig,
@@ -49,6 +51,7 @@ import {
   questionAction,
   readTasksFacts,
   recordReview,
+  releaseTask,
   signOff,
   Store,
   uncommittedSpecChanges,
@@ -103,6 +106,9 @@ change
   sf design approve <id> [--note <说明>]          审批当前版本的方案（L 档或涉及受保护路径时需要）
     design.md 约定：正文引用每个 AC；「## 结构变更」逐条 - [S-n] …，无变更写 - 无：<原因>
     tasks.md 约定：- [ ] T-1 标题（AC-1, S-1）依赖 T-0；勾选进度不影响 G4
+  sf task list <id>                               任务状态：完成 / 人接手 / 暂停 / 交给 agent
+  sf task claim <id> <T-n> [--note <说明>]         接管：任务由人接手实现，实现 agent 不再处理（dev）
+  sf task release <id> <T-n> [--reason <原因>]     交还给 agent（非接管人需写原因）
   sf tdd <id> <T-n> --base <sha> [--sha <sha>]     G5：手工实现的任务，确认 base..sha 新增的测试先红后绿（sha 默认 HEAD）
     config.tdd：{ "command": "node --test {files}", "setup": "npm ci" }（{files} 为新增/修改的测试文件）
   sf verify <id>                                  在干净 worktree 中执行验证并记录证据
@@ -473,6 +479,32 @@ async function main(): Promise<void> {
                   : undefined;
       if (!out) throw new ForgeError('bad_cmd', `未知命令 sf user ${sub ?? ''}`);
       out.lines.forEach((l) => console.log(l));
+      return;
+    }
+    case 'task': {
+      const id = need(a1, '<id>');
+      if (sub === 'list') {
+        const state = store.load(id);
+        const tasks = readTasksFacts(store, id, factsTree(store, state));
+        if (!tasks?.tasks.length) return console.log('（没有任务）');
+        const claims = activeClaims(state.change);
+        const paused = pausedTasks(tasks.tasks.filter((t) => !t.done), state.questions);
+        for (const t of tasks.tasks) {
+          const c = claims.get(t.id);
+          const tag = t.done ? '✓ 完成' : c ? `👤 ${c.by.name} 接手` : paused.has(t.id) ? `⏸ 等待 ${paused.get(t.id)!.join(', ')}` : '· agent';
+          console.log(`${t.id.padEnd(5)} ${tag.padEnd(14)} ${t.title}${t.dependsOn.length ? `（依赖 ${t.dependsOn.join(', ')}）` : ''}`);
+        }
+        return;
+      }
+      const taskId = need(a2, '<T-n>');
+      const actor = store.identity(opts.as);
+      if (sub === 'claim') {
+        claimTask(store, id, actor, taskId, opts.note);
+        console.log(`${taskId} 由 ${actor.name} 接手实现，实现 agent 不再处理。完成后：提交代码与测试、在 tasks.md 勾选，并运行 sf tdd ${id} ${taskId} --base <开始前的 commit> 补 G5 证据`);
+      } else if (sub === 'release') {
+        releaseTask(store, id, actor, taskId, opts.reason);
+        console.log(`${taskId} 已交还，实现 agent 可以处理`);
+      } else throw new ForgeError('bad_cmd', `未知命令 sf task ${sub ?? ''}`);
       return;
     }
     case 'whoami': {

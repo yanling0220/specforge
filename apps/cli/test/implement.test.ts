@@ -9,7 +9,7 @@ import { headSha } from '@specforge/runner';
 import type { Actor } from '@specforge/shared';
 import { cmdAgentImplement, cmdAgentReview } from '../src/agent-cmds.ts';
 import { checkTdd } from '../src/tdd.ts';
-import { defaultConfig, evaluateAll, Store } from '@specforge/store';
+import { claimTask, defaultConfig, evaluateAll, releaseTask, Store } from '@specforge/store';
 
 const dev: Actor = { name: 'yan', role: 'dev' };
 const dirs: string[] = [];
@@ -367,5 +367,20 @@ describe('打回与修复轮次（T2.11）', () => {
     }), () => ({}));
     await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer({}) })).rejects.toThrow(/修复暂停.*Q-1/);
     await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, taskId: 'T-1', adapter: writer({}) })).rejects.toThrow(/修复进行中，不能指定任务/);
+  });
+});
+
+describe('接管（T3.4）', () => {
+  it('被接管的任务 agent 不处理：跳过它；指定它会被拒绝；交还后 agent 可以继续', async () => {
+    const store = project();
+    claimTask(store, 'c1', dev, 'T-1', '人来写');
+    expect(store.events().at(-1)).toMatchObject({ type: 'task.claimed', actor: dev, payload: { taskId: 'T-1' } });
+    // T-2 依赖 T-1，因此没有 agent 可做的任务
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer({}) })).rejects.toThrow(/由人接手：T-1（yan）/);
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, taskId: 'T-1', adapter: writer({}) })).rejects.toThrow(/已由 yan 接手实现/);
+    releaseTask(store, 'c1', dev, 'T-1');
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('x', 'AC-1')) });
+    expect(types(store)).toContain('implement.committed');
+    expect(store.outOfBand('c1')).toBeUndefined();
   });
 });
