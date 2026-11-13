@@ -50,7 +50,7 @@ export function App() {
       <main>
         {route.page === 'board' && <Board version={live.version} />}
         {route.page === 'events' && <Timeline version={live.version} />}
-        {route.page === 'change' && <ChangeView id={route.id} tab={route.tab} version={live.version} />}
+        {route.page === 'change' && <ChangeView id={route.id} tab={route.tab} qid={route.qid} version={live.version} />}
         {route.page === 'evidence' && <EvidenceView id={route.id} eid={route.eid} />}
       </main>
       <footer>只读控制台 · 所有修改仍通过 sf 命令完成</footer>

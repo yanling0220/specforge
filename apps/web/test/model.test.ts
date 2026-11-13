@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { ForgeEvent, GateEvaluation } from '@specforge/shared';
+import type { ForgeEvent, GateEvaluation, Question, RequirementNode } from '@specforge/shared';
 import type { ChangeRow, EvidenceEntry, GatesResponse } from '../src/api.ts';
-import { attentionReasons, boardColumns, eventCategory, eventSummary, evidenceForGate, href, orderedGates, parseRoute, pipelineSteps } from '../src/model.ts';
+import { attentionReasons, boardColumns, buildTree, eventCategory, eventSummary, evidenceForGate, href, orderedGates, parseRoute, pipelineSteps, questionHistory, sortQuestions } from '../src/model.ts';
 
 const row = (over: Partial<ChangeRow>): ChangeRow => ({
   id: 'c',
@@ -128,5 +128,78 @@ describe('路由', () => {
     }
     expect(parseRoute('#/whatever')).toEqual({ page: 'board' });
     expect(parseRoute('')).toEqual({ page: 'board' });
+  });
+});
+
+describe('需求分析视图（T3.3）', () => {
+  const actor = { name: 'yan', role: 'dev' as const };
+  const q = (id: string, over: Partial<Question> = {}): Question => ({
+    id,
+    category: '业务规则',
+    severity: 'important',
+    question: `${id}？`,
+    options: [],
+    requiredRoles: ['dev'],
+    status: 'open',
+    dependsOn: [],
+    raisedAtStage: 'analysis',
+    raisedBy: actor,
+    raisedAt: '2026-11-13T01:00:00Z',
+    revisions: [],
+    ...over,
+  });
+  const nodes: RequirementNode[] = [
+    { id: 'N-1', kind: 'goal', title: '批量导入' },
+    { id: 'N-2', parentId: 'N-1', kind: 'feature', title: '解析 CSV' },
+    { id: 'N-3', parentId: 'N-2', kind: 'scenario', title: '表头缺列' },
+    { id: 'N-4', parentId: 'N-9', kind: 'feature', title: '父节点不存在' },
+    { id: 'N-5', parentId: 'N-6', kind: 'scenario', title: '环 A' },
+    { id: 'N-6', parentId: 'N-5', kind: 'scenario', title: '环 B' },
+  ];
+
+  it('组装分解树：问题挂到节点，阻塞数向上累加；父节点不存在的当作根；没有节点的问题单列', () => {
+    const qs = [q('Q-1', { nodeId: 'N-3', severity: 'blocking' }), q('Q-2', { nodeId: 'N-2', severity: 'blocking', status: 'confirmed' }), q('Q-3'), q('Q-4', { nodeId: 'N-404' })];
+    const { roots, orphans } = buildTree(nodes, qs);
+    expect(roots.map((r) => r.node.id)).toEqual(['N-1', 'N-4']);
+    expect(roots[0]!.openBlocking).toBe(1);
+    expect(roots[0]!.children[0]!.questions.map((x) => x.id)).toEqual(['Q-2']);
+    expect(roots[0]!.children[0]!.children[0]!.questions.map((x) => x.id)).toEqual(['Q-1']);
+    expect(orphans.map((x) => x.id)).toEqual(['Q-3', 'Q-4']);
+  });
+
+  it('问题排序：未解决在前，再按严重程度和编号', () => {
+    const qs = [q('Q-10', { severity: 'minor' }), q('Q-2', { severity: 'blocking', status: 'confirmed' }), q('Q-3', { severity: 'blocking' }), q('Q-1')];
+    expect(sortQuestions(qs).map((x) => x.id)).toEqual(['Q-3', 'Q-1', 'Q-10', 'Q-2']);
+  });
+
+  it('核对历史：提出、各版本答案、确认（含代录渠道）、驳回、关闭，按时间排序', () => {
+    const product = { name: 'lily', role: 'product' as const };
+    const h = questionHistory(
+      q('Q-1', {
+        status: 'deferred',
+        revisions: [
+          { rev: 1, text: '一律 member', optionId: 'A', proposedBy: actor, proposedAt: '2026-11-13T02:00:00Z', state: 'rejected', confirmations: [], rejection: { actor: product, at: '2026-11-13T03:00:00Z', note: '要问运营' }, hash: 'a' },
+          {
+            rev: 2,
+            text: '一律 member，admin 走审批',
+            reason: '运营要求',
+            proposedBy: actor,
+            proposedAt: '2026-11-13T04:00:00Z',
+            state: 'confirmed',
+            confirmations: [{ role: 'product', actor: product, at: '2026-11-13T05:00:00Z', via: '会议纪要', recordedBy: actor }],
+            hash: 'b',
+          },
+        ],
+        closure: { kind: 'deferred', actor, at: '2026-11-13T06:00:00Z', reason: '下期' },
+      }),
+    );
+    expect(h.map((x) => `${x.kind}:${x.rev ?? ''}`)).toEqual(['raised:', 'proposed:1', 'rejected:1', 'proposed:2', 'confirmed:2', 'deferred:']);
+    expect(h[1]!.text).toBe('选 A：一律 member');
+    expect(h[3]!.text).toContain('修改原因：运营要求');
+    expect(h[4]).toMatchObject({ actor: product, recordedBy: actor, via: '会议纪要' });
+  });
+
+  it('需求分析路由（可深链接到问题）', () => {
+    for (const r of [{ page: 'change', id: 'c1', tab: 'analysis' }, { page: 'change', id: 'c1', tab: 'analysis', qid: 'Q-2' }] as const) expect(parseRoute(href(r))).toEqual(r);
   });
 });

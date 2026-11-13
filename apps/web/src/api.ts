@@ -8,6 +8,7 @@ import type {
   GateId,
   Question,
   ReviewRecord,
+  Role,
   Stage,
   TddEvidence,
   VerificationEvidence,
@@ -39,6 +40,11 @@ export interface ChangeDetail {
   outOfBand: string | null;
   factsSource: { kind: 'worktree' } | { kind: 'commit'; sha: string };
   uncommittedSpecChanges: string[];
+  restatementConfirmed: boolean;
+  /** 问题编号 → 是否已解决、当前版本还缺哪些角色确认 */
+  questionProgress: Record<string, { resolved: boolean; missingRoles: Role[] }>;
+  /** 任务编号 → 导致暂停的问题编号 */
+  pausedTasks: Record<string, string[]>;
 }
 
 export interface GatesResponse {

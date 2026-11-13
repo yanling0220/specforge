@@ -131,6 +131,18 @@ describe('REST 接口（只读）', () => {
     index.close();
   });
 
+  it('详情包含问题确认进度与暂停的任务（由 core 规则计算）', async () => {
+    const { store, app, index } = setup();
+    raise(store, 'c1', 'Q-1');
+    mkdirSync(join(store.root, 'openspec/changes/c1'), { recursive: true });
+    writeFileSync(join(store.root, 'openspec/changes/c1/tasks.md'), '- [ ] T-1 a（AC-1）\n- [ ] T-2 b（AC-1）依赖 T-1\n');
+    const body = (await get(app, '/api/changes/c1')).body;
+    expect(body.restatementConfirmed).toBe(false);
+    expect(body.questionProgress).toEqual({ 'Q-1': { resolved: false, missingRoles: ['dev', 'product'] } });
+    expect(body.pausedTasks).toEqual({ 'T-1': ['Q-1'], 'T-2': ['Q-1'] });
+    index.close();
+  });
+
   it('门禁是实时评估：文件变化后立即反映，不读缓存', async () => {
     const { store, app, index } = setup();
     const before = (await get(app, '/api/changes/c1/gates')).body.gates.G1.boundTo.value;

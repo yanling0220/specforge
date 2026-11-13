@@ -1,4 +1,4 @@
-import type { ForgeEvent, GateEvaluation, GateId, GateStatus, Stage } from '@specforge/shared';
+import type { Actor, DimensionStatus, ForgeEvent, GateEvaluation, GateId, GateStatus, Question, QuestionStatus, RequirementNode, Severity, Stage } from '@specforge/shared';
 import type { ChangeRow, EvidenceEntry, GatesResponse } from './api.ts';
 
 // 界面的视图模型：纯函数，不依赖 React，便于测试。
@@ -174,11 +174,91 @@ export function formatTime(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-/** hash 路由：#/、#/changes/:id、#/changes/:id/evidence/:eid、#/events */
+// ---------------- 需求分析视图（T3.3） ----------------
+
+export const SEVERITY_LABEL: Record<Severity, string> = { blocking: '阻塞', important: '重要', minor: '次要' };
+export const Q_STATUS_LABEL: Record<QuestionStatus, string> = { open: '待回答', drafted: '待确认', confirmed: '已确认', deferred: '已推迟', invalidated: '已作废' };
+export const DIM_STATUS_LABEL: Record<DimensionStatus, string> = { pending: '未下结论', covered: '已覆盖', question: '有问题', na: '不适用' };
+export const NODE_KIND_LABEL: Record<RequirementNode['kind'], string> = { goal: '目标', feature: '功能', scenario: '场景' };
+
+export interface TreeNode {
+  node: RequirementNode;
+  children: TreeNode[];
+  /** 直接挂在该节点上的问题 */
+  questions: Question[];
+  /** 该节点及其子孙上未解决的阻塞问题数 */
+  openBlocking: number;
+}
+
+const unresolved = (q: Question) => q.status !== 'confirmed' && q.status !== 'deferred' && q.status !== 'invalidated';
+const SEVERITY_RANK: Record<Severity, number> = { blocking: 0, important: 1, minor: 2 };
+const qnum = (id: string) => Number(id.replace(/\D/g, '')) || 0;
+
+/** 问题排序：未解决在前，其次按严重程度，再按编号 */
+export function sortQuestions(qs: Question[]): Question[] {
+  return [...qs].sort((a, b) => Number(unresolved(b)) - Number(unresolved(a)) || SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || qnum(a.id) - qnum(b.id));
+}
+
+/**
+ * 需求分解树：按 parentId 组装；父节点不存在的节点当作根。
+ * 问题挂到 nodeId 对应的节点；没有 nodeId 或节点不存在的问题放进 orphans。
+ */
+export function buildTree(nodes: RequirementNode[], questions: Question[]): { roots: TreeNode[]; orphans: Question[] } {
+  const ids = new Set(nodes.map((n) => n.id));
+  const byNode = new Map<string, Question[]>();
+  const orphans: Question[] = [];
+  for (const q of questions) {
+    if (q.nodeId && ids.has(q.nodeId)) byNode.set(q.nodeId, [...(byNode.get(q.nodeId) ?? []), q]);
+    else orphans.push(q);
+  }
+  const build = (n: RequirementNode, seen: Set<string>): TreeNode => {
+    const next = new Set(seen).add(n.id);
+    // 防御环：已在路径上的节点不再展开
+    const children = nodes.filter((c) => c.parentId === n.id && !next.has(c.id)).map((c) => build(c, next));
+    const qs = sortQuestions(byNode.get(n.id) ?? []);
+    const own = qs.filter((q) => q.severity === 'blocking' && unresolved(q)).length;
+    return { node: n, children, questions: qs, openBlocking: own + children.reduce((sum, c) => sum + c.openBlocking, 0) };
+  };
+  const roots = nodes.filter((n) => !n.parentId || !ids.has(n.parentId) || n.parentId === n.id).map((n) => build(n, new Set()));
+  return { roots, orphans: sortQuestions(orphans) };
+}
+
+export interface HistoryEntry {
+  at: string;
+  kind: 'raised' | 'proposed' | 'confirmed' | 'rejected' | 'superseded' | 'deferred' | 'invalidated';
+  actor: Actor;
+  rev?: number;
+  text: string;
+  /** 代录人与核对渠道 */
+  recordedBy?: Actor;
+  via?: string;
+}
+
+/** 问题的完整修订与核对历史，按时间排序 */
+export function questionHistory(q: Question): HistoryEntry[] {
+  const out: HistoryEntry[] = [{ at: q.raisedAt, kind: 'raised', actor: q.raisedBy, text: `提出（${q.raisedAtStage} 阶段）` }];
+  for (const r of q.revisions) {
+    out.push({
+      at: r.proposedAt,
+      kind: 'proposed',
+      actor: r.proposedBy,
+      rev: r.rev,
+      text: `${r.optionId ? `选 ${r.optionId}：` : ''}${r.text}${r.reason ? `（修改原因：${r.reason}）` : ''}`,
+    });
+    for (const c of r.confirmations) {
+      out.push({ at: c.at, kind: 'confirmed', actor: c.actor, rev: r.rev, text: `以 ${c.role} 身份确认${c.note ? `：${c.note}` : ''}`, recordedBy: c.recordedBy, via: c.via });
+    }
+    if (r.rejection) out.push({ at: r.rejection.at, kind: 'rejected', actor: r.rejection.actor, rev: r.rev, text: `驳回：${r.rejection.note}` });
+  }
+  if (q.closure) out.push({ at: q.closure.at, kind: q.closure.kind, actor: q.closure.actor, text: `${q.closure.kind === 'deferred' ? '推迟' : '作废'}：${q.closure.reason}` });
+  return out.sort((a, b) => a.at.localeCompare(b.at));
+}
+
+/** hash 路由：#/、#/changes/:id[/timeline|/analysis[/:qid]]、#/changes/:id/evidence/:eid、#/events */
 export type Route =
   | { page: 'board' }
   | { page: 'events' }
-  | { page: 'change'; id: string; tab: 'gates' | 'timeline' }
+  | { page: 'change'; id: string; tab: 'gates' | 'timeline' | 'analysis'; qid?: string }
   | { page: 'evidence'; id: string; eid: string };
 
 export function parseRoute(hash: string): Route {
@@ -186,6 +266,7 @@ export function parseRoute(hash: string): Route {
   if (parts[0] === 'events') return { page: 'events' };
   if (parts[0] === 'changes' && parts[1]) {
     if (parts[2] === 'evidence' && parts[3]) return { page: 'evidence', id: parts[1], eid: parts[3] };
+    if (parts[2] === 'analysis') return parts[3] ? { page: 'change', id: parts[1], tab: 'analysis', qid: parts[3] } : { page: 'change', id: parts[1], tab: 'analysis' };
     return { page: 'change', id: parts[1], tab: parts[2] === 'timeline' ? 'timeline' : 'gates' };
   }
   return { page: 'board' };
@@ -199,7 +280,7 @@ export function href(r: Route): string {
     case 'events':
       return '#/events';
     case 'change':
-      return `#/changes/${e(r.id)}${r.tab === 'timeline' ? '/timeline' : ''}`;
+      return `#/changes/${e(r.id)}${r.tab === 'gates' ? '' : `/${r.tab}`}${r.tab === 'analysis' && r.qid ? `/${e(r.qid)}` : ''}`;
     case 'evidence':
       return `#/changes/${e(r.id)}/evidence/${e(r.eid)}`;
   }

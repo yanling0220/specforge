@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6、T2.8、T3.1、T3.2 完成
+最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6、T2.8、T3.1、T3.2、T3.3 完成
 
 ---
 
 ## 当前快照
 
-- 测试：152 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
+- 测试：157 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T3.3`**（需求分析视图：分解树 + 问题卡片 + 核对历史，只读）。Web 控制台需先 `npm run web:build`，再在项目目录运行 server。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
+- **下一个建议任务：`T3.4`**（交互：在控制台回答 / 确认 / 驳回问题、审批、签字、打回；所有写操作仍走 `Store.mutate`；目前身份仍是自己声明的，见 T4.1）。Web 控制台需先 `npm run web:build`，再在项目目录运行 server。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
 
 ---
 
@@ -54,7 +54,7 @@
 |---|---|---|---|---|
 | T3.1 | server（Hono）：REST 读接口 + WebSocket 推送；SQLite 作为 `.specforge/` 的索引（文件为准） | done | T2.* 主体 | `apps/server`：只读 REST（change 列表 / 详情、实时门禁评估、问题、事件、链校验）+ WebSocket 推送（按 change 过滤、断线补发）；`node:sqlite` 内存索引，按事件序号增量同步，日志被改写时全量重建；默认只监听本机。`Store` 与门禁评估移到 `packages/store`，CLI 与 server 共用。测试：`apps/server/test/server.test.ts`（9 个）；实测 `/tmp/sf-t28` |
 | T3.2 | Web 只读控制台（React + Vite）：看板、门禁面板（可点开证据）、事件时间线 | done | T3.1 | `apps/web`：看板（等人红点）、change 详情（阶段条、上游失效、提示条、门禁面板）、证据页（G5 RED/GREEN、验证步骤输出、哈希校验）、事件时间线（过滤），WebSocket 实时刷新；server 新增证据接口、托管构建产物（防目录穿越）、`/gates` 返回流水线。测试：`apps/web/test/model.test.ts`、`server.test.ts` 新增 4 个（含按 change 订阅时同批推送只收到自己的编号）。实测：`/tmp/sf-t27` 用 Chrome headless 截图核对看板、门禁、时间线、证据页 |
-| T3.3 | 需求分析视图：分解树 + 问题卡片 + 完整核对历史 | todo | T3.2 | |
+| T3.3 | 需求分析视图：分解树 + 问题卡片 + 完整核对历史 | done | T3.2 | 「需求分析」标签页：复述及确认状态、分解树（问题徽标、阻塞数累加）、问题卡片（选项、还缺的确认角色、关联与暂停的任务）、完整核对历史（含代录渠道、驳回、修改原因）、假设、维度；可深链接到问题。server 详情新增 `questionProgress` / `pausedTasks` / `restatementConfirmed`（core 规则计算）。测试：`model.test.ts` 新增 4 个、`server.test.ts` 新增 1 个。实测：`/tmp/sf-t33`（复制自 sf-t28，经 `Store.mutate` 补了分解树与假设）Chrome headless 截图核对 |
 | T3.4 | 交互：回答/确认/驳回问题、审批 spec、签字、打回、接管 | todo | T3.3 | 所有写操作仍走 `Store.mutate`，写入哈希链 |
 | T3.5 | 产物审阅器：spec/design 行内评论，评论回传给 agent | todo | T3.4, T2.8 | |
 | T3.6 | 测试数量不得下降（解析各语言测试报告） | done | — | `packages/core/src/testcount.ts`（node / vitest / jest / pytest / mocha / cargo + 自定义 `testReport.pattern`）；G6A 新增「测试数量没有下降」；`sf verify` 首次同时验证基线。测试：`testcount.test.ts`（各格式样例、判定规则）、`engine.test.ts`（真实 node --test：删测试不通过、补回通过）；CLI 实测（`/tmp/sf-t27`：基线 1 → 当前 4） |
@@ -143,4 +143,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.6 · 测试数量不得下降（G6A） · `cb90838`
 - 2026-11-13 · Claude Code (Opus 5.5) · T2.8 · 生成类 agent（spec-writer / architect / planner），DeepSeek 实测 · `3039a81`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.1 · server：只读 REST + WebSocket、SQLite 索引；Store 移到 packages/store · `f8768dc`
-- 2026-11-13 · Claude Code (Opus 5.5) · T3.2 · Web 只读控制台（看板、门禁面板与证据、事件时间线） · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.2 · Web 只读控制台（看板、门禁面板与证据、事件时间线） · `95f86bf`
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.3 · 需求分析视图（分解树、问题卡片、核对历史） · （本次提交）

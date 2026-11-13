@@ -1,0 +1,217 @@
+import { useEffect } from 'react';
+import type { Question } from '@specforge/shared';
+import type { ChangeDetail } from '../api.ts';
+import { buildTree, DIM_STATUS_LABEL, formatTime, href, NODE_KIND_LABEL, Q_STATUS_LABEL, questionHistory, SEVERITY_LABEL, sortQuestions, type TreeNode } from '../model.ts';
+
+// 需求分析视图（只读）：复述、分解树（带问题徽标）、问题卡片与完整核对历史、假设、维度覆盖。
+// 回答 / 确认 / 驳回在 T3.4 加入，目前用 sf q … 命令。
+
+export function AnalysisView({ detail, qid }: { detail: ChangeDetail; qid?: string }) {
+  const { analysis, questions, change } = detail;
+  const { roots, orphans } = buildTree(analysis.nodes, questions);
+  const r = analysis.restatement;
+
+  // 深链接到某个问题时滚动过去
+  useEffect(() => {
+    if (qid) document.getElementById(`q-${qid}`)?.scrollIntoView({ block: 'start' });
+  }, [qid]);
+
+  return (
+    <div className="analysis">
+      <section className="panel">
+        <h2>需求复述</h2>
+        {r ? (
+          <>
+            <p className="restatement">{r.text}</p>
+            <p className={detail.restatementConfirmed ? 'pass' : 'fail'}>
+              {detail.restatementConfirmed
+                ? `✓ 已由 ${r.confirmation!.actor.name}（${r.confirmation!.role}）确认 · ${formatTime(r.confirmation!.at)}${r.confirmation!.via ? ` · 渠道 ${r.confirmation!.via}` : ''}`
+                : r.confirmation
+                  ? '✗ 确认后复述被修改，需要重新确认'
+                  : '✗ 尚未确认'}
+            </p>
+          </>
+        ) : (
+          <p className="muted">还没有需求复述（sf restate 或 sf agent analyze）</p>
+        )}
+      </section>
+
+      <div className="analysis-grid">
+        <section className="panel">
+          <h2>
+            需求分解树 <small className="muted">{analysis.nodes.length} 个节点</small>
+          </h2>
+          {roots.length ? (
+            <ul className="tree">
+              {roots.map((n) => (
+                <Node key={n.node.id} t={n} changeId={change.id} selected={qid} />
+              ))}
+            </ul>
+          ) : (
+            <p className="muted">还没有分解树</p>
+          )}
+          {orphans.length > 0 && (
+            <>
+              <h3 className="muted">未挂到节点的问题</h3>
+              <div className="qchips">
+                {orphans.map((q) => (
+                  <QChip key={q.id} q={q} changeId={change.id} selected={qid} />
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className="panel">
+          <h2>
+            问题 <small className="muted">{questions.length} 个 · 未解决 {questions.filter((q) => !detail.questionProgress[q.id]?.resolved).length}</small>
+          </h2>
+          {questions.length ? (
+            sortQuestions(questions).map((q) => <QuestionCard key={q.id} q={q} detail={detail} selected={q.id === qid} />)
+          ) : (
+            <p className="muted">还没有问题</p>
+          )}
+        </section>
+      </div>
+
+      <div className="analysis-grid">
+        <section className="panel">
+          <h2>假设</h2>
+          {analysis.assumptions.length ? (
+            <ul className="plain">
+              {analysis.assumptions.map((a) => (
+                <li key={a.id}>
+                  <b>{a.id}</b> {a.text}{' '}
+                  <span className={a.status === 'accepted' ? 'pass' : a.status === 'rejected' ? 'fail' : 'warn-text'}>
+                    {a.status === 'accepted' ? '✓ 已确认' : a.status === 'rejected' ? '✗ 已否决' : '待决定'}
+                  </span>
+                  {a.decidedBy && (
+                    <span className="muted">
+                      {' '}
+                      · {a.decidedBy.name} {formatTime(a.decidedAt)}
+                      {a.note ? ` · ${a.note}` : ''}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted">没有假设</p>
+          )}
+        </section>
+
+        <section className="panel">
+          <h2>分析维度</h2>
+          <table className="dims">
+            <tbody>
+              {analysis.dimensions.map((d) => (
+                <tr key={d.dimension} className={`dim-${d.status}`}>
+                  <td>{d.dimension}</td>
+                  <td>{DIM_STATUS_LABEL[d.status]}</td>
+                  <td className="muted">
+                    {d.reason}
+                    {d.questionIds?.map((id) => (
+                      <a key={id} href={href({ page: 'change', id: change.id, tab: 'analysis', qid: id })}>
+                        {' '}
+                        {id}
+                      </a>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function Node({ t, changeId, selected }: { t: TreeNode; changeId: string; selected?: string }) {
+  return (
+    <li>
+      <div className="tree-node">
+        <span className={`kind kind-${t.node.kind}`}>{NODE_KIND_LABEL[t.node.kind]}</span> {t.node.title} <code className="muted">{t.node.id}</code>
+        {t.openBlocking > 0 && <span className="badge bad">{t.openBlocking} 阻塞</span>}
+      </div>
+      {t.questions.length > 0 && (
+        <div className="qchips">
+          {t.questions.map((q) => (
+            <QChip key={q.id} q={q} changeId={changeId} selected={selected} />
+          ))}
+        </div>
+      )}
+      {t.children.length > 0 && (
+        <ul>
+          {t.children.map((c) => (
+            <Node key={c.node.id} t={c} changeId={changeId} selected={selected} />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+function QChip({ q, changeId, selected }: { q: Question; changeId: string; selected?: string }) {
+  return (
+    <a className={`qchip sev-${q.severity} st-${q.status} ${selected === q.id ? 'selected' : ''}`} href={href({ page: 'change', id: changeId, tab: 'analysis', qid: q.id })} title={q.question}>
+      {q.id} · {Q_STATUS_LABEL[q.status]}
+    </a>
+  );
+}
+
+function QuestionCard({ q, detail, selected }: { q: Question; detail: ChangeDetail; selected: boolean }) {
+  const progress = detail.questionProgress[q.id];
+  const current = q.revisions.at(-1);
+  const paused = Object.entries(detail.pausedTasks)
+    .filter(([, qs]) => qs.includes(q.id))
+    .map(([t]) => t);
+
+  return (
+    <article id={`q-${q.id}`} className={`qcard sev-${q.severity} ${selected ? 'selected' : ''}`}>
+      <header>
+        <b>{q.id}</b>
+        <span className={`badge sev-${q.severity}`}>{SEVERITY_LABEL[q.severity]}</span>
+        <span className="badge">{q.category}</span>
+        <span className={`badge st-${q.status}`}>{Q_STATUS_LABEL[q.status]}</span>
+        {q.nodeId && <code className="muted">{q.nodeId}</code>}
+      </header>
+      <p className="qtext">{q.question}</p>
+      {q.why && <p className="muted">为什么问：{q.why}</p>}
+      {q.evidence && <p className="muted">依据：{q.evidence}</p>}
+      {q.options.length > 0 && (
+        <ul className="options">
+          {q.options.map((o) => (
+            <li key={o.id} className={current?.optionId === o.id && q.status !== 'open' ? 'chosen' : ''}>
+              <b>{o.id}.</b> {o.text}
+              {o.impact && <span className="muted">（{o.impact}）</span>}
+              {o.recommended && <span className="badge">推荐</span>}
+              {q.defaultOptionId === o.id && <span className="badge">默认</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="small">
+        需要确认：{q.requiredRoles.join(' + ')}
+        {progress && !progress.resolved && progress.missingRoles.length > 0 && <span className="warn-text"> · 当前版本还缺 {progress.missingRoles.join('、')}</span>}
+        {q.dependsOn.length > 0 && <span className="muted"> · 依赖 {q.dependsOn.join(', ')}</span>}
+        {(q.taskIds?.length ?? 0) > 0 && <span className="muted"> · 关联任务 {q.taskIds!.join(', ')}</span>}
+        {paused.length > 0 && <span className="fail"> · 暂停中：{paused.join(', ')}</span>}
+      </p>
+      <details open={selected}>
+        <summary>核对历史（{q.revisions.length} 个版本）</summary>
+        <ol className="history">
+          {questionHistory(q).map((h, i) => (
+            <li key={i} className={`h-${h.kind}`}>
+              <span className="muted">{formatTime(h.at)}</span> {h.rev && <code>v{h.rev}</code>} <b>{h.actor.name}</b>
+              <span className="muted">（{h.actor.role}）</span> {h.text}
+              {h.recordedBy && <span className="warn-text">（由 {h.recordedBy.name} 代录{h.via ? `，渠道：${h.via}` : ''}）</span>}
+              {!h.recordedBy && h.via && <span className="muted">（渠道：{h.via}）</span>}
+            </li>
+          ))}
+          {q.revisions.some((r) => r.state === 'superseded') && <li className="muted small">被新版本取代的答案仍保留在历史中，不可删改</li>}
+        </ol>
+      </details>
+    </article>
+  );
+}

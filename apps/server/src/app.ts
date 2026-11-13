@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { Hono } from 'hono';
-import { ForgeError, pipelineFor, upstreamGates, verifyChain } from '@specforge/core';
-import { evaluateAll, factsTree, uncommittedSpecChanges, type Store } from '@specforge/store';
+import { ForgeError, isResolved, missingRoles, pausedTasks, pipelineFor, upstreamGates, verifyChain } from '@specforge/core';
+import { evaluateAll, factsTree, readTasksFacts, uncommittedSpecChanges, type Store } from '@specforge/store';
 import type { ForgeIndex } from './index-db.ts';
 
 // 只读 REST 接口（T3.1）。写操作在 T3.4 加入，届时仍然只能走 Store.mutate。
@@ -76,6 +76,13 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
       outOfBand: store.outOfBand(id, state) ?? null,
       factsSource: tree.kind === 'commit' ? { kind: 'commit', sha: tree.sha } : { kind: 'worktree' },
       uncommittedSpecChanges: tree.kind === 'commit' ? uncommittedSpecChanges(store, id) : [],
+      // 由 core 的规则计算，前端只展示
+      restatementConfirmed: !!state.analysis.restatement?.confirmation && state.analysis.restatement.confirmation.hash === state.analysis.restatement.hash,
+      questionProgress: Object.fromEntries(state.questions.map((q) => [q.id, { resolved: isResolved(q), missingRoles: isResolved(q) ? [] : missingRoles(q) }])),
+      pausedTasks: (() => {
+        const tasks = readTasksFacts(store, id, tree);
+        return tasks ? Object.fromEntries(pausedTasks(tasks.tasks.filter((t) => !t.done), state.questions)) : {};
+      })(),
     });
   });
 

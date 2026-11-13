@@ -509,3 +509,206 @@ pre.output {
   font-size: 13px;
   margin: 4px 0 8px;
 }
+
+/* 需求分析（T3.3） */
+.warn-text {
+  color: var(--warn);
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.panel h2 {
+  margin: 4px 0 10px;
+}
+.panel h2 small {
+  font-weight: normal;
+  font-size: 12px;
+  margin-left: 6px;
+}
+.restatement {
+  font-size: 15px;
+  margin: 4px 0;
+}
+.analysis-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 2fr) minmax(400px, 3fr);
+  gap: 12px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .analysis-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  margin-left: 6px;
+  font-weight: normal;
+  line-height: 18px;
+}
+.badge.bad,
+.badge.sev-blocking {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+.badge.sev-important {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.badge.st-confirmed {
+  color: var(--pass);
+  border-color: var(--pass);
+}
+.badge.st-open,
+.badge.st-drafted {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.tree,
+.tree ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 16px;
+}
+.tree {
+  padding-left: 0;
+}
+.tree li {
+  margin: 4px 0;
+}
+.tree ul {
+  border-left: 1px dashed var(--border);
+  margin-left: 6px;
+}
+.tree-node {
+  padding: 2px 0;
+}
+.kind {
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  color: var(--muted);
+}
+.kind-goal {
+  color: var(--accent);
+}
+.qchips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0 4px 4px;
+}
+.qchip {
+  font-size: 11px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  line-height: 18px;
+}
+.qchip.sev-blocking.st-open,
+.qchip.sev-blocking.st-drafted {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+.qchip.st-confirmed {
+  color: var(--pass);
+}
+.qchip.selected,
+.qcard.selected {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.qcard {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  scroll-margin-top: 70px;
+}
+.qcard.sev-blocking {
+  border-left-color: var(--fail);
+}
+.qcard.sev-important {
+  border-left-color: var(--warn);
+}
+.qcard header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+.qcard header .badge:first-of-type {
+  margin-left: 8px;
+}
+.qtext {
+  font-weight: 600;
+  margin: 6px 0;
+}
+.qcard p {
+  margin: 4px 0;
+}
+.options {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.options li {
+  margin: 2px 0;
+}
+.options li.chosen {
+  color: var(--pass);
+}
+.history {
+  margin: 6px 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.history li {
+  margin: 3px 0;
+}
+.history .h-confirmed b {
+  color: var(--pass);
+}
+.history .h-rejected b {
+  color: var(--fail);
+}
+.plain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.plain li {
+  margin: 4px 0;
+}
+.dims {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.dims td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.dims .dim-pending td:nth-child(2) {
+  color: var(--fail);
+}
+.dims .dim-question td:nth-child(2) {
+  color: var(--warn);
+}
+.dims .dim-covered td:nth-child(2) {
+  color: var(--pass);
+}
+.banner a.q {
+  display: block;
+  color: inherit;
+}

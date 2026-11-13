@@ -3,9 +3,10 @@ import { api, type EvidenceEntry } from '../api.ts';
 import { useData } from '../live.ts';
 import { evidenceForGate, formatTime, GATE_LABEL, href, orderedGates, pipelineSteps, STAGE_LABEL } from '../model.ts';
 import { Loading, StatusIcon } from './common.tsx';
+import { AnalysisView } from './AnalysisView.tsx';
 import { Timeline } from './Timeline.tsx';
 
-export function ChangeView({ id, tab, version }: { id: string; tab: 'gates' | 'timeline'; version: number }) {
+export function ChangeView({ id, tab, qid, version }: { id: string; tab: 'gates' | 'timeline' | 'analysis'; qid?: string; version: number }) {
   const detail = useData(() => api.change(id), [id, version]);
   const gates = useData(() => api.gates(id), [id, version]);
   const evidence = useData(() => api.evidence(id), [id, version]);
@@ -49,9 +50,9 @@ export function ChangeView({ id, tab, version }: { id: string; tab: 'gates' | 't
         <div className="banner warn">
           ⏸ {openBlocking.length} 个阻塞问题待处理：
           {openBlocking.map((q) => (
-            <span key={q.id} className="q">
+            <a key={q.id} className="q" href={href({ page: 'change', id, tab: 'analysis', qid: q.id })}>
               <b>{q.id}</b> {q.question}
-            </span>
+            </a>
           ))}
         </div>
       )}
@@ -77,12 +78,17 @@ export function ChangeView({ id, tab, version }: { id: string; tab: 'gates' | 't
         <a className={tab === 'gates' ? 'active' : ''} href={href({ page: 'change', id, tab: 'gates' })}>
           门禁
         </a>
+        <a className={tab === 'analysis' ? 'active' : ''} href={href({ page: 'change', id, tab: 'analysis' })}>
+          需求分析{openBlocking.length > 0 && <span className="badge bad">{openBlocking.length}</span>}
+        </a>
         <a className={tab === 'timeline' ? 'active' : ''} href={href({ page: 'change', id, tab: 'timeline' })}>
           事件时间线
         </a>
       </div>
 
-      {tab === 'gates' ? (
+      {tab === 'analysis' ? (
+        <AnalysisView detail={detail.data} qid={qid} />
+      ) : tab === 'gates' ? (
         <>
           <p className="muted">
             门禁按{detail.data.factsSource.kind === 'commit' ? ` HEAD（${detail.data.factsSource.sha.slice(0, 7)}）` : '工作区'}中的 OpenSpec 文件实时评估
