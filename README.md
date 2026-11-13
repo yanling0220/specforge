@@ -58,6 +58,21 @@ sf advance add-bulk-import               # closing → delivered（需要 G6）
 sf log verify                            # 校验哈希链与带外修改
 ```
 
+## 产品方本人确认
+
+管理员在已初始化的项目中启用用户名册，并为产品方创建账号（命令会显示该用户的登录令牌）：
+
+```bash
+sf user add devon --role dev --admin
+sf user add pam --role product --as devon:dev
+```
+
+启动 Web 控制台后，将用户名、登录令牌和问题链接交给产品方。
+问题链接格式为 `#/changes/<id>/analysis/<Q-n>`；未登录时先显示登录页，登录后仍停留在该问题。
+产品方核对当前答案后点「以 product 身份确认」，记录中的确认人就是本人，无需开发者代录。
+链接中不携带登录令牌，打开链接本身不会确认答案。
+其他人修订答案时，旧操作表单会关闭；需要核对新版本后重新确认。
+
 ## 日志锚定
 
 `sf log anchor`（dev）将当前事件序号和链头哈希保存到独立的 `specforge-audit` Git 分支。

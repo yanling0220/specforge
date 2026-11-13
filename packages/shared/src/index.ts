@@ -239,6 +239,8 @@ export interface AnswerRevision {
   hash: string;
 }
 
+export type AnswerReference = Pick<AnswerRevision, 'rev' | 'hash'>;
+
 export interface Question {
   id: string;
   nodeId?: string;

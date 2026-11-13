@@ -23,7 +23,7 @@ import {
   type QuestionOp,
   type Store,
 } from '@specforge/store';
-import type { Actor, ReviewFinding, Role } from '@specforge/shared';
+import type { Actor, AnswerReference, ReviewFinding, Role } from '@specforge/shared';
 import { Auth, mountAuthRoutes, type AuthEnv } from './auth.ts';
 import type { ForgeIndex } from './index-db.ts';
 
@@ -81,6 +81,7 @@ const STATUS_OF: Record<string, 400 | 403 | 404 | 409> = {
   gate_blocked: 409,
   claimed: 409,
   out_of_band: 409,
+  stale_answer: 409,
 };
 
 /** 不需要登录的接口 */
@@ -248,6 +249,13 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
     if (!name) return undefined;
     return { name, role: str(b, 'onBehalfRole', true) as Role };
   };
+  const expectedAnswer = (b: Record<string, unknown>): AnswerReference => {
+    if (b.rev === undefined) throw new ForgeError('missing_arg', '缺少参数：rev');
+    if (typeof b.rev !== 'number' || !Number.isSafeInteger(b.rev) || b.rev < 1) throw new ForgeError('bad_arg', 'rev 必须是正整数');
+    const hash = str(b, 'answerHash', true)!;
+    if (!/^[a-f0-9]{64}$/.test(hash)) throw new ForgeError('bad_arg', 'answerHash 必须是答案的 SHA-256');
+    return { rev: b.rev, hash };
+  };
 
   app.post('/api/changes/:id/questions/:qid/:action', async (c) => {
     const { id, qid, action } = c.req.param();
@@ -255,8 +263,8 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
     const actor = writer(c, b);
     const ops: Record<string, () => QuestionOp> = {
       answer: () => ({ kind: 'answer', text: str(b, 'text', true)!, optionId: str(b, 'optionId'), reason: str(b, 'reason'), via: str(b, 'via') }),
-      confirm: () => ({ kind: 'confirm', onBehalfOf: proxy(b), via: str(b, 'via'), note: str(b, 'note') }),
-      reject: () => ({ kind: 'reject', note: str(b, 'note', true)!, onBehalfOf: proxy(b) }),
+      confirm: () => ({ kind: 'confirm', onBehalfOf: proxy(b), via: str(b, 'via'), note: str(b, 'note'), expected: expectedAnswer(b) }),
+      reject: () => ({ kind: 'reject', note: str(b, 'note', true)!, onBehalfOf: proxy(b), expected: expectedAnswer(b) }),
       defer: () => ({ kind: 'defer', reason: str(b, 'reason', true)! }),
       invalidate: () => ({ kind: 'invalidate', reason: str(b, 'reason', true)! }),
     };

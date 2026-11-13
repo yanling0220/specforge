@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Codex（GPT-6） · T4.4 完成
+最后更新：2026-11-13 · Codex（GPT-6） · T4.2 复核完成
 
 ---
 
 ## 当前快照
 
-- 测试：212 个全部通过（`npm test`，26 个文件）；浏览器端到端 `npm run web:e2e` 通过；类型检查无错误（`npm run typecheck`，含 `apps/web`）；`npm run web:build` 通过
-- 远程：https://github.com/yanling0220/specforge （`main`）；本次 T4.4 尚未推送
-- **下一个建议任务：`T4.2`**（先复核 T4.1 + T3.4 已覆盖的产品方直接登录，再明确链接确认是否仍需实现）。可选：用 DeepSeek 在 `/tmp/sf-t35` 重跑修订模式，验证 spec-writer 会使用 `outOfScope`（约 2 万 token，需用户同意）；`T2.3c` 需要 Codex 登录。
+- 测试：218 个全部通过（`npm test`，26 个文件）；浏览器端到端 `npm run web:e2e` 通过（含问题深链接登录、外部 CLI 修订后的实时刷新与旧确认表单关闭）；类型检查无错误（`npm run typecheck`，含 `apps/web`）；`npm run web:build` 通过
+- 远程：https://github.com/yanling0220/specforge （`main`）；T4.4 已推送（`edbb883`）；本次 T4.2 复核与修复仅本地提交，待用户同意后推送
+- **下一个建议任务：`T4.3`**（先明确多项目隔离、文件与 Postgres 的职责及迁移方式）。可选：用 DeepSeek 在 `/tmp/sf-t35` 重跑修订模式，验证 spec-writer 会使用 `outOfScope`（约 2 万 token，需用户同意）；`T2.3c` 需要 Codex 登录。
 - **使用提示**：Web 控制台需先 `npm run web:build`，再在项目目录运行 server；在控制台修改需要启用用户名册（`sf user add … --admin`）。已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit。浏览器端到端：`npm run web:e2e`（需本机 Chrome）。
 - **与用户的协作约定**：每完成一个任务就停下汇报并等待确认，推送前先问；给出多种改法时逐个写明优缺点。
 
@@ -66,7 +66,7 @@
 | ID | 任务 | 状态 | 验收标准 |
 |---|---|---|---|
 | T4.1 | 身份与登录、角色权限（目前身份是自己声明的） | done | 用户名册 `.specforge/users.json`（`sf user add / list / set / token / disable`），修改写入哈希链，篡改即拒绝使用；CLI 身份（`whoami`、`--as`、`--on-behalf`）按名册校验角色；server 令牌登录（HttpOnly + SameSite=Strict 会话、12 小时过期、停用或重置令牌立即失效、失败 5 次锁定 10 分钟），启用名册后接口与 WebSocket 都需要登录，无名册时只能监听本机；Web 登录页与 401 自动回到登录。测试：`core/test/users.test.ts`、`cli/test/users.test.ts`、`server/test/auth.test.ts`。实测：`/tmp/sf-t33` 启用名册、角色与代录校验、curl 登录、登录页截图。依据见 design.md 9.3 |
-| T4.2 | 产品方直接登录或通过链接确认问题（替代代录） | todo | |
+| T4.2 | 产品方直接登录或通过链接确认问题（替代代录） | done | T4.1 + T3.4 已覆盖本人登录确认；浏览器验证登录后保留问题深链接，确认身份来自会话且无代录人。复核发现旧页面可能确认 / 驳回新答案，已补必填 `rev` + `answerHash` 的 HTTP 契约与引擎原子校验（冲突 409、状态和事件不变），实时修订关闭旧表单。新增 6 个回归测试；全量 218/218、typecheck、Web 构建及浏览器端到端通过。普通链接仍需登录；免登录一次性确认链接未实现，属于另行定义的需求，见 design.md 9.7 |
 | T4.3 | Postgres、多项目 | todo | |
 | T4.4 | 哈希链头定期锚定（git 提交或服务端），防止整条链被重写 | done | `sf log anchor` 保存到独立 `specforge-audit` 分支；`audit.anchorIntervalMs` 启用 server 定期锚定；CLI / REST 对比全部历史锚定；`sf log verify --anchor <可信 commit>` 检测本地分支整体重建；控制台展示锚定状态与异常原因。新增 14 个测试（`core/test/events-policy.test.ts`、`store/test/audit.test.ts`、`server/test/server.test.ts`），覆盖整链重算、截断/清空、并发冲突、受损审计历史、暂存区不变和独立 Git 仓库保存。全量 212/212、typecheck、Web 构建及浏览器端到端通过；信任边界见 design.md 7.1 |
 | T4.5 | IM 通知（待确认问题、待签字） | todo | |
@@ -87,16 +87,25 @@
 | 生成类 agent 实测中，Q-2/Q-3 由 Claude 按推荐项代答、spec 由 Claude 以演示 dev 身份审批 | 仅限演示项目 `/tmp/sf-t28`，不代表真实产品决定 | — |
 | server 启动时打印 `node:sqlite` 的 ExperimentalWarning | 仅提示，不影响功能 | Node 稳定后自然消失 |
 | server 索引只在 `events.jsonl` 变化时同步 | 绕过引擎直接改状态文件不会触发推送；详情接口读文件，并会报告带外修改 | — |
-| Web 控制台的实时刷新只在单元测试中验证了 WebSocket 推送 | 浏览器中「别人写入后自动刷新」没有端到端测试（自己写入后的刷新已覆盖） | 可扩展 `web:e2e` |
 | spec-writer 的 `outOfScope` 未用真实模型验证 | 已用 ScriptedAdapter 测试；DeepSeek 是否会改用 outOfScope 而不再写「不做某事」的 AC 未验证 | 用户同意费用后在 `/tmp/sf-t35` 重跑（约 2 万 token） |
 | 修复前创建的评论没有上下文 | 原文不唯一时仍可能被定位到同文的另一行 | 只影响旧评论；可重新打开后由人重新评论 |
 | G5 以测试文件为粒度 | 修改已有测试文件时，文件中任一测试先失败即算 RED，不能确认每个新测试都先失败 | 需要逐个测试的结果（如 JUnit XML / TAP 逐条解析）；T3.6 只解析了总数 |
 | 本机没有 `rtk` 命令 | `AGENTS.md`（用户目录）要求的 rtk 前缀无法使用 | 用原生命令 |
-| Codex 沙箱禁止监听本机端口 | HTTP / WebSocket 基线测试报 `listen EPERM` 并超时；非代码回归 | 在沙箱外运行 `npm test` 已确认 198/198 通过 |
+| Codex 沙箱禁止监听本机端口 | HTTP / WebSocket 基线测试报 `listen EPERM` 并超时；非代码回归 | 在沙箱外运行 `npm test` 已确认 218/218 通过 |
 
 ---
 
 ## 实测记录
+
+### 2026-11-13 · Codex（GPT-6）· T4.2 复核（假客户端与临时示例项目）
+
+- 开工验证：`npm install`、typecheck 和原有 212 个测试通过；T4.4 提交 `edbb883` 已推送 `origin/main`。
+- 范围：原任务为「直接登录或通过链接确认」，现有 T4.1 + T3.4 已满足本人登录路径；普通问题深链接要求登录，登录后保留原问题地址。没有实现免登录一次性链接。
+- 发现并先复现：产品停留在第 1 版时，开发者提交第 2 版，旧确认 / 驳回请求都错误地返回 200 并作用于新答案；两个新增回归测试修复前均失败。
+- 修复与回归：HTTP 确认 / 驳回必须带所见 `rev`、`answerHash`，引擎在 `Store.mutate` 中同时校验，不匹配返回 `409 stale_answer`，状态和事件完全不变；同文新版本、同版本错误哈希也被拒绝，缺失或无效引用返回 400。定向 core + server 测试 24/24 通过。
+- 身份与权限：本人确认取自会话，伪造请求体中的用户名不能冒充他人；确认记录和事件包含答案版本 / 哈希、本人身份且没有 `recordedBy`。既有测试覆盖未登录、角色越权、账号停用 / 重置令牌，以及产品不能审批 spec 或最终签字。
+- 真实浏览器：产品从问题深链接登录；打开第 1 版确认表单后，由外部 CLI 修订答案，WebSocket 自动刷新并关闭旧表单；旧引用返回 409，重新打开表单后仅确认第 2 版。后续审批、评论、门禁拦截、接管流程仍通过；最终 29 条事件的哈希链及状态一致。
+- 完成验证：新增 6 个测试，全量 218/218（26 个文件）、`npm run typecheck`、`npm run web:build`、`npm run web:e2e`、`git diff --check` 全部通过；未调用真实模型。复核与修复本地提交，未推送；按协作约定在此停下。
 
 ### 2026-11-12 · DeepSeek（`deepseek-v4-pro`）· 示例项目 `/tmp/sf-ds-demo`（临时目录，可能已不存在）
 
@@ -160,4 +169,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · DeepSeek 实测修订模式；修复同文行导致的评论误定位（评论记录上下文） · `73fcc03`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 用户选定方案：spec-writer 可向 proposal「范围外」追加引用已确认问题的条目（只追加） · `9ece245`
 - 2026-11-13 · Claude Code (Opus 5.5) · — · 当日收工：更新快照，打节点 `checkpoint-2026-11-13` · `24163e9`
-- 2026-11-13 · Codex（GPT-6） · T4.4 · Git 链头锚定、server 定时器、可信 commit 校验、控制台锚定状态；新增 14 个测试，全量 212/212、typecheck、Web 构建及浏览器端到端通过 · （本次提交）
+- 2026-11-13 · Codex（GPT-6） · T4.4 · Git 链头锚定、server 定时器、可信 commit 校验、控制台锚定状态；新增 14 个测试，全量 212/212、typecheck、Web 构建及浏览器端到端通过 · `edbb883`
+- 2026-11-13 · Codex（GPT-6） · T4.2 · 复核产品本人登录确认；修复旧页面确认 / 驳回新答案，绑定版本与哈希、实时修订关闭旧表单；新增 6 个回归测试，全量 218/218、typecheck、Web 构建及浏览器端到端通过 · （本次提交）

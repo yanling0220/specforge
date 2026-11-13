@@ -82,6 +82,25 @@ describe('问题节点：双方核对', () => {
     expect(q.revisions[0]!.text).toBe('直接拒绝');
   });
 
+  it('同文的新版本也必须重新核对；不能仅用相同的内容哈希确认或驳回', () => {
+    const first = proposeAnswer(businessQ(), { text: '直接拒绝' }, dev, T);
+    const seen = { rev: first.revisions[0]!.rev, hash: first.revisions[0]!.hash };
+    const updated = proposeAnswer(first, { text: '直接拒绝' }, dev, T);
+    expect(updated.revisions[1]!.hash).toBe(seen.hash);
+    expect(() => confirmAnswer(updated, { expected: seen }, pm, T)).toThrow(/答案已更新/);
+    expect(() => rejectAnswer(updated, '不同意', pm, T, undefined, seen)).toThrow(/答案已更新/);
+    expect(confirmAnswer(updated, { expected: { rev: 2, hash: seen.hash } }, pm, T).status).toBe('confirmed');
+    expect(updated.status).toBe('drafted');
+  });
+
+  it('版本号相同但答案哈希不符时，也拒绝确认和驳回', () => {
+    const question = proposeAnswer(businessQ(), { text: '直接拒绝' }, dev, T);
+    const expected = { rev: 1, hash: '0'.repeat(64) };
+    expect(() => confirmAnswer(question, { expected }, pm, T)).toThrow(/答案已更新/);
+    expect(() => rejectAnswer(question, '不同意', pm, T, undefined, expected)).toThrow(/答案已更新/);
+    expect(question.revisions[0]!.confirmations).toHaveLength(1);
+  });
+
   it('驳回必须写意见，问题回到 open，驳回记录保留', () => {
     const q = proposeAnswer(businessQ(), { text: '直接拒绝' }, dev, T);
     expect(() => rejectAnswer(q, ' ', pm, T)).toThrow(/意见/);

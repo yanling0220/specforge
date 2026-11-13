@@ -1,5 +1,6 @@
 import type {
   Actor,
+  AnswerReference,
   AnswerRevision,
   Confirmation,
   ProjectConfig,
@@ -64,6 +65,14 @@ export function createQuestion(input: NewQuestionInput, config: ProjectConfig, a
 
 export function currentRevision(q: Question): AnswerRevision | undefined {
   return q.revisions.at(-1);
+}
+
+function revisionForAction(q: Question, expected?: AnswerReference): AnswerRevision | undefined {
+  const revision = currentRevision(q);
+  if (expected && (revision?.rev !== expected.rev || revision?.hash !== expected.hash)) {
+    throw new ForgeError('stale_answer', `${q.id} 的答案已更新，请刷新后重新核对再操作`);
+  }
+  return revision;
 }
 
 /** 当前生效的（已确认的）答案 */
@@ -131,12 +140,13 @@ export interface ConfirmInput {
   onBehalfOf?: Actor;
   via?: string;
   note?: string;
+  expected?: AnswerReference;
 }
 
 /** 确认当前修订版本。代录必须写明核对渠道。 */
 export function confirmAnswer(q: Question, input: ConfirmInput, actor: Actor, now: string): Question {
   assertOpenForAnswers(q);
-  const rev = currentRevision(q);
+  const rev = revisionForAction(q, input.expected);
   if (!rev || rev.state !== 'pending') {
     throw new ForgeError('nothing_to_confirm', `${q.id} 没有待确认的答案`);
   }
@@ -163,8 +173,8 @@ export function confirmAnswer(q: Question, input: ConfirmInput, actor: Actor, no
 }
 
 /** 驳回当前待确认的答案，问题回到 open */
-export function rejectAnswer(q: Question, note: string, actor: Actor, now: string, onBehalfOf?: Actor): Question {
-  const rev = currentRevision(q);
+export function rejectAnswer(q: Question, note: string, actor: Actor, now: string, onBehalfOf?: Actor, expected?: AnswerReference): Question {
+  const rev = revisionForAction(q, expected);
   if (!rev || rev.state !== 'pending') throw new ForgeError('nothing_to_reject', `${q.id} 没有待确认的答案`);
   if (!note.trim()) throw new ForgeError('note_required', '驳回必须填写意见');
   const by = onBehalfOf ?? actor;

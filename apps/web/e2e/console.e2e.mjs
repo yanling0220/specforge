@@ -5,7 +5,7 @@
 //   → 开发者确认评论解决 → 审批 spec → 推进到 design
 //   → 推进到 tasks 被门禁拦截 → 补齐方案与任务后在任务面板接管 T-1 → 校验事件与哈希链
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -118,8 +118,8 @@ async function main() {
     const text = await evaluate('document.body.innerText.slice(0, 600)');
     throw new Error(`等待超时：${what}\n页面内容：${text}`);
   };
-  const login = async (name, token) => {
-    await go('#/');
+  const login = async (name, token, hash = '#/') => {
+    await go(hash);
     await waitFor(`!!document.querySelector('form.login')`, '登录页');
     await evaluate(`(() => { const [u, t] = document.querySelectorAll('form.login input'); __set(u, ${JSON.stringify(name)}); __set(t, ${JSON.stringify(token)}); __btn('登录').click(); return true; })()`);
     await waitFor(`document.querySelector('.me')?.textContent.includes(${JSON.stringify(name)})`, `${name} 登录成功`);
@@ -160,10 +160,24 @@ async function main() {
 
   step('产品登录，确认 Q-1');
   await logout();
-  await login('pam', tokens.pm);
-  await go('#/changes/demo/analysis/Q-1');
+  await login('pam', tokens.pm, '#/changes/demo/analysis/Q-1');
+  await waitFor(`location.hash === '#/changes/demo/analysis/Q-1' && !!document.querySelector('#q-Q-1.selected')`, '登录后保留问题深链接');
+  const questionsFile = join(proj, '.specforge/changes/demo/questions.json');
+  const seen = JSON.parse(readFileSync(questionsFile, 'utf8'))[0].revisions.at(-1);
+  await evaluate(`__btn('以 product 身份确认', document.querySelector('#q-Q-1')).click(), true`);
+  await waitFor(`!!document.querySelector('#q-Q-1 form.action-form')`, '产品打开第 1 版确认表单');
+  step('开发者修订答案：实时刷新并关闭旧确认表单，旧请求返回 409');
+  sf('q', 'answer', 'demo', 'Q-1', '--text', '不能，忽略 CSV 的 role 列，导入用户一律为 member');
+  await waitFor(`document.querySelector('#q-Q-1 .history')?.textContent.includes('忽略 CSV 的 role 列') && !document.querySelector('#q-Q-1 form.action-form')`, '新答案到达后旧确认表单关闭');
+  const stale = await evaluate(`fetch('/api/changes/demo/questions/Q-1/confirm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(${JSON.stringify({ role: 'product', rev: seen.rev, answerHash: seen.hash, note: '旧页面确认' })}) }).then(async (response) => ({ status: response.status, body: await response.json() }))`);
+  if (stale.status !== 409 || stale.body.error?.code !== 'stale_answer') throw new Error('旧页面确认必须返回 409 stale_answer');
   await act('#q-Q-1', '以 product 身份确认', { 说明: '同意' });
   await waitFor(`document.querySelector('#q-Q-1 .badge.st-confirmed') !== null`, 'Q-1 已确认');
+  const confirmed = JSON.parse(readFileSync(questionsFile, 'utf8'))[0];
+  const product = confirmed.revisions.at(-1).confirmations.find((confirmation) => confirmation.role === 'product');
+  if (confirmed.revisions.at(-1).rev !== 2 || product?.actor.name !== 'pam' || product.recordedBy || confirmed.revisions[0].confirmations.some((confirmation) => confirmation.role === 'product')) {
+    throw new Error('产品本人确认应只绑定所见的第 2 版，且不含代录人');
+  }
 
   step('开发者推进到规格阶段');
   await logout();

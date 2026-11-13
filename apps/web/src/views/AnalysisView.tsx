@@ -217,7 +217,7 @@ function QuestionCard({ q, detail, selected, users, onChanged }: { q: Question; 
         {(q.taskIds?.length ?? 0) > 0 && <span className="muted"> · 关联任务 {q.taskIds!.join(', ')}</span>}
         {paused.length > 0 && <span className="fail"> · 暂停中：{paused.join(', ')}</span>}
       </p>
-      <QuestionActions q={q} changeId={detail.change.id} missing={progress?.missingRoles ?? []} users={users} onChanged={onChanged} />
+      <QuestionActions key={current ? `${current.rev}:${current.hash}` : 'unanswered'} q={q} changeId={detail.change.id} missing={progress?.missingRoles ?? []} users={users} onChanged={onChanged} />
       <details open={selected}>
         <summary>核对历史（{q.revisions.length} 个版本）</summary>
         <ol className="history">
@@ -240,8 +240,10 @@ function QuestionCard({ q, detail, selected, users, onChanged }: { q: Question; 
 function QuestionActions({ q, changeId, missing, users, onChanged }: { q: Question; changeId: string; missing: Role[]; users: UserRow[]; onChanged: () => void }) {
   const { canWrite, role } = useMe();
   if (!canWrite || !role || q.status === 'invalidated' || q.status === 'deferred') return null;
+  const current = q.revisions.at(-1);
+  const reference = { rev: current?.rev, answerHash: current?.hash };
   const run = (action: Parameters<typeof api.questionAction>[2]) => (v: Record<string, string>) =>
-    api.questionAction(changeId, q.id, action, { role, ...Object.fromEntries(Object.entries(v).filter(([, x]) => x !== '')) });
+    api.questionAction(changeId, q.id, action, { role, ...(action === 'confirm' || action === 'reject' ? reference : {}), ...Object.fromEntries(Object.entries(v).filter(([, x]) => x !== '')) });
   const confirmed = q.status === 'confirmed';
   // 代录对象：名册中拥有尚缺角色的其他用户
   const proxyOptions = users
@@ -274,7 +276,7 @@ function QuestionActions({ q, changeId, missing, users, onChanged }: { q: Questi
           ]}
           run={(v) => {
             const [onBehalfName, onBehalfRole] = v.subject!.split(':');
-            return api.questionAction(changeId, q.id, 'confirm', { role, onBehalfName, onBehalfRole, via: v.via, ...(v.note ? { note: v.note } : {}) });
+            return api.questionAction(changeId, q.id, 'confirm', { role, ...reference, onBehalfName, onBehalfRole, via: v.via, ...(v.note ? { note: v.note } : {}) });
           }}
           onDone={onChanged}
         />

@@ -22,7 +22,7 @@ import {
   resolveFixRound,
 } from '@specforge/core';
 import { headSha } from '@specforge/runner';
-import type { Actor, ArtifactComment, ArtifactTarget, Question, ReviewFinding, ReviewRecord, Role, Stage } from '@specforge/shared';
+import type { Actor, AnswerReference, ArtifactComment, ArtifactTarget, Question, ReviewFinding, ReviewRecord, Role, Stage } from '@specforge/shared';
 import { bindingNow, evaluateAll, factsTree, readDesignFacts, readSpecFacts, readTasksFacts, workTree } from './engine.ts';
 import type { ChangeState, Store } from './store.ts';
 
@@ -43,8 +43,8 @@ function replaceQuestion(state: ChangeState, q: Question): ChangeState {
 
 export type QuestionOp =
   | { kind: 'answer'; text: string; optionId?: string; reason?: string; via?: string }
-  | { kind: 'confirm'; onBehalfOf?: Actor; via?: string; note?: string }
-  | { kind: 'reject'; note: string; onBehalfOf?: Actor }
+  | { kind: 'confirm'; onBehalfOf?: Actor; via?: string; note?: string; expected?: AnswerReference }
+  | { kind: 'reject'; note: string; onBehalfOf?: Actor; expected?: AnswerReference }
   | { kind: 'defer'; reason: string }
   | { kind: 'invalidate'; reason: string }
   | { kind: 'require'; role: Role; reason: string };
@@ -70,9 +70,9 @@ export function questionAction(store: Store, changeId: string, actor: Actor, qid
         if (!op.text.trim()) throw new ForgeError('missing_arg', '答案不能为空');
         return proposeAnswer(q, { text: op.text, optionId: op.optionId, reason: op.reason, via: op.via }, actor, t);
       case 'confirm':
-        return confirmAnswer(q, { onBehalfOf: op.onBehalfOf, via: op.via, note: op.note }, actor, t);
+        return confirmAnswer(q, { onBehalfOf: op.onBehalfOf, via: op.via, note: op.note, expected: op.expected }, actor, t);
       case 'reject':
-        return rejectAnswer(q, op.note, actor, t, op.onBehalfOf);
+        return rejectAnswer(q, op.note, actor, t, op.onBehalfOf, op.expected);
       case 'defer':
         return deferQuestion(q, op.reason, actor, t);
       case 'invalidate':
@@ -91,7 +91,7 @@ export function questionAction(store: Store, changeId: string, actor: Actor, qid
         return { questionId: q.id, rev: r!.rev, answerHash: r!.hash, role: c.role, confirmer: c.actor, recordedBy: c.recordedBy, via: c.via, note: c.note, status: q.status };
       }
       case 'reject':
-        return { questionId: q.id, rev: r!.rev, note: r!.rejection!.note, by: r!.rejection!.actor };
+        return { questionId: q.id, rev: r!.rev, answerHash: r!.hash, note: r!.rejection!.note, by: r!.rejection!.actor };
       case 'defer':
       case 'invalidate':
         return { questionId: q.id, reason: q.closure!.reason };

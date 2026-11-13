@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { addUser, createQuestion, emptyAnalysis, sha256 } from '@specforge/core';
 import { headSha } from '@specforge/runner';
 import { defaultConfig, Store } from '@specforge/store';
-import type { Stage } from '@specforge/shared';
+import type { Question, Stage } from '@specforge/shared';
 import { createApp } from '../src/app.ts';
 import { ForgeIndex } from '../src/index-db.ts';
 
@@ -15,6 +15,7 @@ afterEach(() => dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force
 const g = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' });
 
 const tokenOf = (name: string) => `tok-${name}`;
+const reference = (question: Question) => ({ rev: question.revisions.at(-1)!.rev, answerHash: question.revisions.at(-1)!.hash });
 
 function project(opts: { users?: boolean; stage?: Stage } = {}): Store {
   const dir = mkdtempSync(join(tmpdir(), 'sf-act-'));
@@ -91,24 +92,67 @@ describe('控制台写操作（T3.4）', () => {
     const a = await post('/api/changes/c1/questions/Q-1/answer', 'alice', { role: 'dev', text: '不能，一律 member', optionId: 'A' });
     expect(a.body.question).toMatchObject({ status: 'drafted' });
     // 回答者的 dev 确认已自动记录；产品确认后变为已确认
-    const c = await post('/api/changes/c1/questions/Q-1/confirm', 'lily', { role: 'product', note: '同意' });
+    const c = await post('/api/changes/c1/questions/Q-1/confirm', 'lily', { role: 'product', ...reference(a.body.question), note: '同意', name: 'alice', actor: { name: 'alice', role: 'dev' } });
     expect(c.body.question.status).toBe('confirmed');
     const events = store.events().filter((e) => e.changeId === 'c1').slice(-2);
     expect(events.map((e) => [e.type, e.actor.name, e.actor.role])).toEqual([
       ['question.answered', 'alice', 'dev'],
       ['question.confirmed', 'lily', 'product'],
     ]);
+    const confirmation = c.body.question.revisions.at(-1).confirmations.at(-1);
+    expect(confirmation).toMatchObject({ actor: { name: 'lily', role: 'product' } });
+    expect(confirmation.recordedBy).toBeUndefined();
+    expect(events.at(-1)!.payload).toMatchObject({ rev: 1, answerHash: reference(a.body.question).answerHash, confirmer: { name: 'lily', role: 'product' } });
+    expect(events.at(-1)!.payload.recordedBy).toBeUndefined();
     expect(store.outOfBand('c1')).toBeUndefined();
+    index.close();
+  });
+
+  it.each(['confirm', 'reject'])('T4.2：产品从旧页面 %s 时拒绝作用于新答案，且不写状态或事件', async (action) => {
+    const store = project();
+    const { post, login, index } = setup(store);
+    await login('alice');
+    await login('lily');
+    const first = await post('/api/changes/c1/questions/Q-1/answer', 'alice', { role: 'dev', text: '不能导入 admin' });
+    const seen = first.body.question.revisions.at(-1);
+    await post('/api/changes/c1/questions/Q-1/answer', 'alice', { role: 'dev', text: '允许导入 admin' });
+    const state = store.load('c1');
+    const events = store.events();
+    const result = await post(`/api/changes/c1/questions/Q-1/${action}`, 'lily', { role: 'product', rev: seen.rev, answerHash: seen.hash, note: '旧页面的意见' });
+    expect(result).toMatchObject({ status: 409, body: { error: { code: 'stale_answer' } } });
+    expect(store.load('c1')).toEqual(state);
+    expect(store.events()).toEqual(events);
+    const fresh = await post(`/api/changes/c1/questions/Q-1/${action}`, 'lily', { role: 'product', ...reference(state.questions[0]!), note: '重新核对后操作' });
+    expect(fresh.status).toBe(200);
+    expect(store.events().at(-1)!.payload).toMatchObject({ rev: 2, answerHash: reference(state.questions[0]!).answerHash });
+    index.close();
+  });
+
+  it.each(['confirm', 'reject'])('T4.2：%s 不能省略或伪造答案引用的格式', async (action) => {
+    const store = project();
+    const { post, login, index } = setup(store);
+    await login('alice');
+    await login('lily');
+    const answer = await post('/api/changes/c1/questions/Q-1/answer', 'alice', { role: 'dev', text: '不能' });
+    const seen = reference(answer.body.question);
+    const state = store.load('c1');
+    const events = store.events();
+    for (const invalid of [{}, { rev: seen.rev }, { answerHash: seen.answerHash }, { ...seen, rev: 0 }, { ...seen, rev: 1.5 }, { ...seen, rev: '1' }, { ...seen, answerHash: 'fake' }]) {
+      expect((await post(`/api/changes/c1/questions/Q-1/${action}`, 'lily', { role: 'product', note: '同意', ...invalid })).status).toBe(400);
+    }
+    expect(store.load('c1')).toEqual(state);
+    expect(store.events()).toEqual(events);
     index.close();
   });
 
   it('代录：必须写渠道，代录对象必须在名册中且有该角色', async () => {
     const { post, login, index } = setup(project());
     await login('alice');
-    await post('/api/changes/c1/questions/Q-1/answer', 'alice', { role: 'dev', text: '不能' });
-    expect((await post('/api/changes/c1/questions/Q-1/confirm', 'alice', { role: 'dev', onBehalfName: 'lily', onBehalfRole: 'product' })).body.error.code).toBe('via_required');
-    expect((await post('/api/changes/c1/questions/Q-1/confirm', 'alice', { role: 'dev', onBehalfName: 'bob', onBehalfRole: 'product', via: '会议' })).body.error.code).toBe('bad_proxy');
-    const ok = await post('/api/changes/c1/questions/Q-1/confirm', 'alice', { role: 'dev', onBehalfName: 'lily', onBehalfRole: 'product', via: '产品评审会' });
+    const answer = await post('/api/changes/c1/questions/Q-1/answer', 'alice', { role: 'dev', text: '不能' });
+    const seen = reference(answer.body.question);
+    expect((await post('/api/changes/c1/questions/Q-1/confirm', 'alice', { role: 'dev', ...seen, onBehalfName: 'lily', onBehalfRole: 'product' })).body.error.code).toBe('via_required');
+    expect((await post('/api/changes/c1/questions/Q-1/confirm', 'alice', { role: 'dev', ...seen, onBehalfName: 'bob', onBehalfRole: 'product', via: '会议' })).body.error.code).toBe('bad_proxy');
+    const ok = await post('/api/changes/c1/questions/Q-1/confirm', 'alice', { role: 'dev', ...seen, onBehalfName: 'lily', onBehalfRole: 'product', via: '产品评审会' });
     expect(ok.body.question.revisions.at(-1).confirmations.at(-1)).toMatchObject({ role: 'product', actor: { name: 'lily' }, recordedBy: { name: 'alice' }, via: '产品评审会' });
     index.close();
   });
@@ -117,8 +161,8 @@ describe('控制台写操作（T3.4）', () => {
     const { post, login, index } = setup(project());
     await login('alice');
     await login('lily');
-    await post('/api/changes/c1/questions/Q-1/answer', 'alice', { role: 'dev', text: '不能' });
-    expect((await post('/api/changes/c1/questions/Q-1/reject', 'lily', { role: 'product', note: '要问运营' })).body.question.revisions.at(-1).state).toBe('rejected');
+    const answer = await post('/api/changes/c1/questions/Q-1/answer', 'alice', { role: 'dev', text: '不能' });
+    expect((await post('/api/changes/c1/questions/Q-1/reject', 'lily', { role: 'product', ...reference(answer.body.question), note: '要问运营' })).body.question.revisions.at(-1).state).toBe('rejected');
     expect((await post('/api/changes/c1/questions/Q-1/reject', 'lily', { role: 'product' })).body.error.code).toBe('missing_arg');
     expect((await post('/api/changes/c1/questions/Q-1/invalidate', 'alice', { role: 'dev', reason: '需求取消' })).body.question.status).toBe('invalidated');
     expect((await post('/api/changes/c1/questions/Q-1/delete', 'alice', { role: 'dev' })).status).toBe(404);

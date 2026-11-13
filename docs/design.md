@@ -461,6 +461,7 @@ specforge/
 - **前提**：项目启用了用户名册并已登录。没有名册时控制台只读（写接口返回 403），避免匿名修改。
 - **身份**：登录用户 + 请求中选择的角色（顶栏切换，必须已授予），服务端用名册重新校验。所有写操作都调用 `@specforge/store` 的操作函数（`questionAction`、`confirmRestatement`、`decideAssumption`、`approve`、`signOff`、`advance`、`recordReview`），与 CLI 共用同一份代码与事件格式，最终走 `Store.mutate` 写入哈希链。
 - **接口**：`POST /api/changes/:id/questions/:qid/{answer|confirm|reject|defer|invalidate}`（代录：`onBehalfName` + `onBehalfRole` + `via`，对象必须在名册中且有该角色）、`/restatement/confirm`、`/assumptions/:aid/decide`、`/approve`（dev）、`/signoff`（dev；不通过即打回，必须写原因，可附锚定的阻塞问题，收尾阶段会打回实现或升级）、`/advance`（门禁把关，不通过返回 409 并记录拒绝事件）。
+- **答案版本保护（T4.2）**：HTTP `confirm` / `reject` 必须携带用户所见答案的 `rev`（正整数）和 `answerHash`（SHA-256）；缺失或格式不符返回 400。引擎在 `Store.mutate` 中按当前版本号与哈希同时校验，不匹配返回 `409 stale_answer`，不修改状态、不写确认 / 驳回事件。同文的新版本也需要重新核对。CLI 保留命令执行时操作当前版本的行为；内部调用可显式传入版本引用。
 - **防 CSRF**：所有 POST 只接受 `application/json`（跨站表单发不出），会话 Cookie 为 SameSite=Strict。
 - **错误码**：角色或权限问题 403，门禁拦截与状态冲突（带外修改）409，参数问题 400。
 - **端到端测试**：`npm run web:e2e`（需要本机 Chrome 与 `npm run web:build`）：真实浏览器中走完回答 → 产品确认 → 推进 → 审批 → 推进 → 被门禁拦截，最后校验事件身份与哈希链。不属于 `npm test`。
@@ -472,6 +473,14 @@ specforge/
 - **评论**：对本 change 的 proposal / spec / design / tasks 的某一行评论（控制台「产物审阅」点行号，或 `sf comment add --file --line --text`）。评论锚定行号 + 该行原文，文件修改后按原文重新定位（原位 / 移动到最近一处 / 原文已不在）。只有人能添加、确认解决、重新打开（必须写原因）。状态：待处理 → 已回应（agent）→ 已解决（人）。存于 `.specforge/changes/<id>/comments.json`，所有修改走 `Store.mutate`（`comment.*` 事件）；没有评论的旧项目状态哈希不变。
 - **门禁**：该产物上有未解决（待处理或已回应）的评论时，G2 / G3 / G4 增加的「产物上的评论都已解决」不通过。评论不参与绑定哈希：只改评论状态不会让审批失效。
 - **回传给 agent**：有待处理评论时，`sf agent spec|design|plan` 进入修订模式（不需要 `--force`）：prompt 带现有内容（含行号）与全部评论；提交必须对每条评论回应（fixed 已修改 / declined 不修改并说明理由），否则退回；仍要通过 G2/G3/G4 的自检。引擎写入后把评论标为「已回应」（`comment.addressed`），agent 的自述不直接算解决，由人核对后确认。评论不构成新需求的授权：超出已确认需求的要求，agent 应提问。
+
+### 9.7 产品方本人确认（T4.2）
+
+- **范围**：原任务为「产品方直接登录或通过链接确认问题」，由 T4.1 的账号登录与 T3.4 的本人确认路径满足；普通问题深链接保留现有登录要求。免登录、一次性的确认链接尚未实现，如需增加应另行定义需求。
+- **入口**：管理员用 `sf user add <名字> --role product` 创建账号。产品方打开 `#/changes/<id>/analysis/<Q-n>`，未登录时输入用户名与令牌，登录后保留原问题地址。GET / 打开链接不执行确认，URL 不携带凭据。
+- **确认与留痕**：本人确认的身份取自登录会话，并按名册校验所选角色；请求体声明其他用户名不能替换确认人。经 `Store.mutate` 写入指定答案版本的确认记录和 `question.confirmed` 事件（含 `rev`、`answerHash`、本人身份，无 `recordedBy`）；代录仍是明确区分的操作，必须填写渠道。
+- **修订**：问题出现新答案版本时，前端重建该问题的操作区，关闭旧表单，避免表单随实时刷新悄悄改为确认新版本。已经发出的旧确认 / 驳回请求由引擎的版本保护拒绝，用户重新核对后再操作。
+- **权限**：需要有效会话和 product 角色；角色伪造、停用账号、重置令牌后的旧会话由现有身份门禁拒绝。product 不获得 dev 的规格审批或最终签字权限。
 
 ---
 
@@ -504,5 +513,5 @@ specforge/
 ## 12. 待定事项
 
 - DeepSeek 的接入方式（Anthropic 兼容接口 vs 自研循环）需要实测。
-- 产品方的入口：第一期由开发者代录；第四期之前是否需要一个免登录的只读确认链接？
+- 产品方本人登录确认已由 T4.2 覆盖；免登录、一次性的确认链接尚未实现，按需另行定义。
 - 测试数量统计需要解析各语言的测试报告格式，第三期再定方案。
