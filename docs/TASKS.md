@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6、T2.8 完成
+最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6、T2.8、T3.1 完成
 
 ---
 
 ## 当前快照
 
-- 测试：131 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
+- 测试：140 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T3.1`**（server，纯代码）。第二期只剩 `T2.3c`（需要 Codex 登录）。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
+- **下一个建议任务：`T3.2`**（Web 只读控制台，React + Vite，基于 T3.1 的接口）。第二期只剩 `T2.3c`（需要 Codex 登录）。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
 
 ---
 
@@ -52,7 +52,7 @@
 
 | ID | 任务 | 状态 | 依赖 | 验收标准 |
 |---|---|---|---|---|
-| T3.1 | server（Hono）：REST 读接口 + WebSocket 推送；SQLite 作为 `.specforge/` 的索引（文件为准） | todo | T2.* 主体 | 读接口覆盖 change、门禁评估、问题、事件 |
+| T3.1 | server（Hono）：REST 读接口 + WebSocket 推送；SQLite 作为 `.specforge/` 的索引（文件为准） | done | T2.* 主体 | `apps/server`：只读 REST（change 列表 / 详情、实时门禁评估、问题、事件、链校验）+ WebSocket 推送（按 change 过滤、断线补发）；`node:sqlite` 内存索引，按事件序号增量同步，日志被改写时全量重建；默认只监听本机。`Store` 与门禁评估移到 `packages/store`，CLI 与 server 共用。测试：`apps/server/test/server.test.ts`（9 个）；实测 `/tmp/sf-t28` |
 | T3.2 | Web 只读控制台（React + Vite）：看板、门禁面板（可点开证据）、事件时间线 | todo | T3.1 | |
 | T3.3 | 需求分析视图：分解树 + 问题卡片 + 完整核对历史 | todo | T3.2 | |
 | T3.4 | 交互：回答/确认/驳回问题、审批 spec、签字、打回、接管 | todo | T3.3 | 所有写操作仍走 `Store.mutate`，写入哈希链 |
@@ -81,6 +81,9 @@
 | 升级给人后没有"解除升级"命令 | 人只能在 closing 阶段手工修复、重新验证和审查后交付；不能再让 agent 修复 | 需要时加 `sf escalation resolve` |
 | 验证（6A）失败不自动打回 | 需要人判断后手工修复 | 视使用情况再定 |
 | 生成类 agent 实测中，Q-2/Q-3 由 Claude 按推荐项代答、spec 由 Claude 以演示 dev 身份审批 | 仅限演示项目 `/tmp/sf-t28`，不代表真实产品决定 | — |
+| server 没有登录 | 默认只监听 127.0.0.1；监听其他地址时任何人都能读取全部数据 | T4.1 |
+| server 启动时打印 `node:sqlite` 的 ExperimentalWarning | 仅提示，不影响功能 | Node 稳定后自然消失 |
+| server 索引只在 `events.jsonl` 变化时同步 | 绕过引擎直接改状态文件不会触发推送；详情接口读文件，并会报告带外修改 | — |
 | G5 以测试文件为粒度 | 修改已有测试文件时，文件中任一测试先失败即算 RED，不能确认每个新测试都先失败 | 需要逐个测试的结果（如 JUnit XML / TAP 逐条解析）；T3.6 只解析了总数 |
 | 本机没有 `rtk` 命令 | `AGENTS.md`（用户目录）要求的 rtk 前缀无法使用 | 用原生命令 |
 
@@ -137,4 +140,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T2.9 · 问题回流：后续阶段 agent 提问、任务级暂停 · `adc28f8`
 - 2026-11-13 · Claude Code (Opus 5.5) · T2.11 · 打回与修复轮次上限、升级给人 · `6597904`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.6 · 测试数量不得下降（G6A） · `cb90838`
-- 2026-11-13 · Claude Code (Opus 5.5) · T2.8 · 生成类 agent（spec-writer / architect / planner），DeepSeek 实测 · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · T2.8 · 生成类 agent（spec-writer / architect / planner），DeepSeek 实测 · `3039a81`
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.1 · server：只读 REST + WebSocket、SQLite 索引；Store 移到 packages/store · （本次提交）

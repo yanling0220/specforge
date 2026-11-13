@@ -26,7 +26,7 @@
 
 ## 完成一个任务
 
-1. 代码 + 测试。纯逻辑放 `packages/core`（纯函数、不做 IO），git/进程放 `packages/runner`，模型相关放 `packages/agents`，命令放 `apps/cli`。
+1. 代码 + 测试。纯逻辑放 `packages/core`（纯函数、不做 IO），git/进程放 `packages/runner`，模型相关放 `packages/agents`，`.specforge/` 读写与门禁实时评估放 `packages/store`，命令放 `apps/cli`，HTTP/WebSocket 放 `apps/server`。
 2. `npm run typecheck && npm test` 全部通过。
 3. 更新 docs/TASKS.md：状态改为 `done`（需要真实模型或人工确认的改为 `verify`）、填验收证据、更新"当前快照"的测试数和"下一个建议任务"、在"变更日志"追加一行。
 4. 有设计变化时同步更新 docs/design.md。
@@ -43,6 +43,6 @@
 
 ## 环境备注
 
-- Node ≥ 22.18，直接运行 TypeScript，无构建步骤。CLI：`node apps/cli/src/main.ts`。
+- Node ≥ 22.18，直接运行 TypeScript，无构建步骤。CLI：`node apps/cli/src/main.ts`；server：在项目目录运行 `node <本仓库>/apps/server/src/main.ts`。
 - DeepSeek：`DEEPSEEK_API_KEY`（用户已写入 `~/.zshrc`）。
 - 远程仓库：`git@github.com:yanling0220/specforge.git`；本仓库的提交邮箱已设为 GitHub noreply 地址，不要改成真实邮箱（GitHub 会拒绝推送）。

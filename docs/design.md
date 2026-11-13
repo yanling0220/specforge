@@ -414,15 +414,24 @@ specforge/
 │   ├── shared/   # 类型定义
 │   ├── core/     # 状态机、门禁、问题节点、哈希链、spec 解析、路径策略
 │   ├── runner/   # git / worktree、验证执行、AC 覆盖、防作弊扫描
-│   └── agents/   # （第二期）AgentAdapter 与各后端实现
+│   ├── agents/   # AgentAdapter 与各后端实现、各角色 agent 的工具与 prompt
+│   └── store/    # .specforge/ 读写（Store.mutate、哈希链）、OpenSpec 文件读取、门禁实时评估
 ├── apps/
-│   ├── cli/      # 命令行 sf（第一期主入口）
-│   ├── server/   # （第二期）
-│   └── web/      # （第二期）
+│   ├── cli/      # 命令行 sf
+│   ├── server/   # Hono：只读 REST + WebSocket 推送；SQLite 索引（T3.1）
+│   └── web/      # （第三期）
 └── docs/
 ```
 
 技术栈：TypeScript 全栈；Node ≥ 22（直接运行 TS）；npm workspaces；vitest。
+
+### 9.2 server（T3.1）
+
+- **文件为准**：SQLite（`node:sqlite`，默认在内存中，启动时重建）只是 `.specforge/` 的索引，用于 change 列表、问题过滤、事件分页。详情、门禁评估、链校验直接读文件并实时计算，不缓存。
+- **同步**：每个 REST 请求前、以及事件日志变化时（轮询 `events.jsonl`）按事件序号增量同步，只重建有新事件的 change；已索引的最后一条事件与文件不一致（日志被改写或截断）时全量重建。
+- **REST（只读）**：`/api/changes`、`/api/changes/:id`（含带外修改与 OpenSpec 读取来源）、`/gates`、`/questions`、`/questions/:qid`、`/events`、`/api/events`、`/api/log/verify`。写操作在 T3.4 加入，仍只能走 `Store.mutate`。
+- **WebSocket `/ws`**：推送 `hello` / `event` / `changes` / `rebuilt`；`?changeId=` 过滤，`?after=` 断线补发。推送进度独立于索引同步，REST 先同步也不会漏推。
+- **安全**：没有登录（T4.1），默认只监听 127.0.0.1；监听其他地址时启动会警告。
 
 ---
 

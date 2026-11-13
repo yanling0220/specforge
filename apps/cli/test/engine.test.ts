@@ -8,8 +8,7 @@ import { callPlatformTool, type AgentAdapter } from '@specforge/agents';
 import { headSha, runVerification } from '@specforge/runner';
 import type { Actor, Stage } from '@specforge/shared';
 import { cmdAgentReview } from '../src/agent-cmds.ts';
-import { commitTree, evaluateAll, readSpecFacts, uncommittedSpecChanges, workTree } from '../src/engine.ts';
-import { defaultConfig, Store } from '../src/store.ts';
+import { commitTree, defaultConfig, evaluateAll, readSpecFacts, Store, uncommittedSpecChanges, workTree } from '@specforge/store';
 
 const dev: Actor = { name: 'yan', role: 'dev' };
 const dirs: string[] = [];

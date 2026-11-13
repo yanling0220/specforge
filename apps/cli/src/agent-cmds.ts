@@ -63,8 +63,7 @@ import {
   workspaceFingerprint,
 } from '@specforge/runner';
 import type { Actor, AgentProfile, AgentRole, GateEvaluation, ProjectConfig } from '@specforge/shared';
-import { bindingNow, commitTree, readDesignFacts, readSpecFacts, readTasksFacts } from './engine.ts';
-import type { Store } from './store.ts';
+import { bindingNow, commitTree, readDesignFacts, readSpecFacts, readTasksFacts, type Store } from '@specforge/store';
 import { recordReview } from './review.ts';
 import { checkTdd } from './tdd.ts';
 

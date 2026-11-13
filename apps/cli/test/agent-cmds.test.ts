@@ -8,7 +8,7 @@ import { ScriptedAdapter, type AgentAdapter, type AgentRunSpec } from '@specforg
 import { headSha } from '@specforge/runner';
 import type { Actor } from '@specforge/shared';
 import { cmdAgentAnalyze, cmdAgentReview } from '../src/agent-cmds.ts';
-import { defaultConfig, Store } from '../src/store.ts';
+import { defaultConfig, Store } from '@specforge/store';
 
 const dev: Actor = { name: 'yan', role: 'dev' };
 const dirs: string[] = [];

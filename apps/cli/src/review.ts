@@ -1,6 +1,6 @@
 import { applyReviewOutcome, maxFixRounds } from '@specforge/core';
 import type { Actor, ReviewRecord } from '@specforge/shared';
-import type { Store } from './store.ts';
+import type { Store } from '@specforge/store';
 
 /**
  * 写入审查记录，并按结论推进流程：收尾阶段不通过时打回实现阶段（开启新的修复轮次），

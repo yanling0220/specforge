@@ -1,7 +1,7 @@
 import { ForgeError, tddAttemptChecks } from '@specforge/core';
 import { runTdd } from '@specforge/runner';
 import type { Actor, CheckResult, TddEvidence } from '@specforge/shared';
-import type { Store } from './store.ts';
+import type { Store } from '@specforge/store';
 
 /** 运行 G5 TDD 检查并记录证据；返回证据与未通过的检查项 */
 export function checkTdd(

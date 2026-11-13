@@ -45,8 +45,18 @@ import type {
 import { cmdAgentAnalyze, cmdAgentGenerate, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
 import { recordReview } from './review.ts';
 import { checkTdd } from './tdd.ts';
-import { bindingNow, evaluateAll, factsTree, readTasksFacts, uncommittedSpecChanges } from './engine.ts';
-import { defaultConfig, FORGE_DIR, parseActor, Store, type ChangeState } from './store.ts';
+import {
+  bindingNow,
+  defaultConfig,
+  evaluateAll,
+  factsTree,
+  FORGE_DIR,
+  parseActor,
+  readTasksFacts,
+  Store,
+  uncommittedSpecChanges,
+  type ChangeState,
+} from '@specforge/store';
 
 const HELP = `SpecForge CLI（第一期）
 
