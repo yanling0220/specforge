@@ -53,6 +53,10 @@ export interface AppOptions {
   webDir?: string;
   /** 登录与会话；默认按项目的用户名册新建 */
   auth?: Auth;
+  basePath?: string;
+  projectId?: string;
+  readOnly?: boolean;
+  check?: () => void;
 }
 
 /** 校验客户端提交的打回问题 */
@@ -90,14 +94,22 @@ const PUBLIC_API = new Set(['/api/health', '/api/auth/me', '/api/auth/login', '/
 export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   const auth = opts.auth ?? new Auth(store);
+  const localPath = (c: Context) => c.req.path.slice(opts.basePath?.length ?? 0);
+  if (opts.check) app.use('*', async (_, next) => { opts.check!(); await next(); });
 
   // 启用用户名册后，除公开接口外都需要登录（含 WebSocket）
   const guard = auth.guard();
-  app.use('/api/*', (c, next) => (PUBLIC_API.has(c.req.path) ? next() : guard(c, next)));
+  app.use('/api/*', (c, next) => (PUBLIC_API.has(localPath(c)) ? next() : guard(c, next)));
   app.use('/ws', guard);
+  app.use('/api/*', async (c, next) => {
+    if (opts.readOnly && !['GET', 'HEAD'].includes(c.req.method) && !['/api/auth/login', '/api/auth/logout'].includes(localPath(c))) {
+      return c.json({ error: { code: 'read_only', message: '多项目模式当前只读' } }, 403);
+    }
+    await next();
+  });
   // 所有 POST 只接受 JSON：跨站表单无法发送，配合 SameSite=Strict 防 CSRF
   app.use('/api/*', async (c, next) => {
-    if (c.req.method === 'POST' && c.req.path !== '/api/auth/logout' && !c.req.header('content-type')?.startsWith('application/json')) {
+    if (c.req.method === 'POST' && localPath(c) !== '/api/auth/logout' && !c.req.header('content-type')?.startsWith('application/json')) {
       return c.json({ error: { code: 'bad_request', message: '需要 application/json' } }, 415);
     }
     await next();
@@ -111,6 +123,9 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
   });
 
   app.onError((err, c) => {
+    if (opts.projectId && (!(err instanceof ForgeError) || ['out_of_band', 'no_registry', 'project_unavailable'].includes(err.code))) {
+      return c.json({ error: { code: 'project_unavailable', message: '项目暂不可用，请联系管理员' } }, 503);
+    }
     if (err instanceof ForgeError) {
       const status = STATUS_OF[err.code] ?? 400;
       return c.json({ error: { code: err.code, message: err.message } }, status);
@@ -133,7 +148,8 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
     return c.json({ error: { code: 'not_found', message: `没有这个接口：${c.req.method} ${c.req.path}` } }, 404);
   });
 
-  app.get('/api/health', (c) => c.json({ ok: true, root: store.root }));
+  app.get('/api/health', (c) => c.json(opts.projectId ? { ok: true } : { ok: true, root: store.root }));
+  if (opts.projectId) app.get('/api/project', (c) => c.json({ id: opts.projectId, readOnly: !!opts.readOnly }));
 
   /** 名册的公开视图（不含令牌哈希），供代录时选择对象 */
   app.get('/api/users', (c) => {

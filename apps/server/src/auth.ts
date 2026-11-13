@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { findUser, sha256 } from '@specforge/core';
+import { findUser, ForgeError, sha256 } from '@specforge/core';
 import type { Store } from '@specforge/store';
 import type { HumanRole } from '@specforge/shared';
 
@@ -31,19 +31,27 @@ export type AuthEnv = { Variables: { user?: SessionUser } };
 const sameHash = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 export class Auth {
+  readonly cookieName: string;
+  readonly cookiePath: string;
   private sessions = new Map<string, Session>();
   private failures = new Map<string, { count: number; resetAt: number }>();
   private store: Store;
   private now: () => number;
+  private requireRegistry: boolean;
 
-  constructor(store: Store, now: () => number = Date.now) {
+  constructor(store: Store, now: () => number = Date.now, opts: { cookieName?: string; cookiePath?: string; requireRegistry?: boolean } = {}) {
     this.store = store;
     this.now = now;
+    this.cookieName = opts.cookieName ?? SESSION_COOKIE;
+    this.cookiePath = opts.cookiePath ?? '/';
+    this.requireRegistry = opts.requireRegistry ?? false;
   }
 
   /** 是否需要登录：启用了用户名册 */
   required(): boolean {
-    return !!this.store.users();
+    const required = !!this.store.users();
+    if (!required && this.requireRegistry) throw new ForgeError('no_registry', '项目用户名册不可用');
+    return required;
   }
 
   /** 校验令牌并创建会话；失败返回原因 */
@@ -86,7 +94,7 @@ export class Auth {
   guard(): MiddlewareHandler<AuthEnv> {
     return async (c, next) => {
       if (this.required()) {
-        const user = this.user(getCookie(c, SESSION_COOKIE));
+        const user = this.user(getCookie(c, this.cookieName));
         if (!user) return c.json({ error: { code: 'unauthorized', message: '需要登录' } }, 401);
         c.set('user', user);
       }
@@ -104,7 +112,7 @@ function clientOf(c: Context): string {
 export function mountAuthRoutes(app: import('hono').Hono<AuthEnv>, auth: Auth): void {
   app.get('/api/auth/me', (c) => {
     const required = auth.required();
-    return c.json({ required, user: required ? (auth.user(getCookie(c, SESSION_COOKIE)) ?? null) : null });
+    return c.json({ required, user: required ? (auth.user(getCookie(c, auth.cookieName)) ?? null) : null });
   });
 
   app.post('/api/auth/login', async (c) => {
@@ -123,13 +131,13 @@ export function mountAuthRoutes(app: import('hono').Hono<AuthEnv>, auth: Auth): 
         ? c.json({ error: { code: 'locked', message: '失败次数过多，请 10 分钟后再试' } }, 429)
         : c.json({ error: { code: 'invalid', message: '用户名或令牌不正确' } }, 401);
     }
-    setCookie(c, SESSION_COOKIE, r.sid, { httpOnly: true, sameSite: 'Strict', path: '/', maxAge: SESSION_TTL_MS / 1000 });
+    setCookie(c, auth.cookieName, r.sid, { httpOnly: true, sameSite: 'Strict', path: auth.cookiePath, maxAge: SESSION_TTL_MS / 1000 });
     return c.json({ user: r.user });
   });
 
   app.post('/api/auth/logout', (c) => {
-    auth.logout(getCookie(c, SESSION_COOKIE));
-    deleteCookie(c, SESSION_COOKIE, { path: '/' });
+    auth.logout(getCookie(c, auth.cookieName));
+    deleteCookie(c, auth.cookieName, { path: auth.cookiePath });
     return c.json({ ok: true });
   });
 }

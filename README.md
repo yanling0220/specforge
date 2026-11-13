@@ -73,6 +73,32 @@ sf user add pam --role product --as devon:dev
 链接中不携带登录令牌，打开链接本身不会确认答案。
 其他人修订答案时，旧操作表单会关闭；需要核对新版本后重新确认。
 
+## 多项目只读服务（T4.3b）
+
+管理员先在每个独立 Git 仓库中执行 `sf init` 并启用用户名册，再编写服务端项目登记文件，例如 `/srv/specforge/projects.json`：
+
+```json
+{
+  "version": 1,
+  "projects": [
+    { "id": "alpha", "root": "/srv/projects/alpha" },
+    { "id": "beta", "root": "/srv/projects/beta" }
+  ]
+}
+```
+
+```bash
+node /opt/specforge/apps/server/src/main.ts --projects /srv/specforge/projects.json --port 4317
+```
+
+可从任意目录启动；相对 `root` 按登记文件所在目录解析。ID 为 1–64 位小写字母、数字、下划线或短横线，首位需为字母或数字。重复真实仓库、共享 Git 元数据的 worktree，以及 `.specforge/` 或 `openspec/` 中的符号链接会被拒绝。
+
+各项目独立登录：`POST /p/alpha/api/auth/login`，JSON 正文为 `{ "name": "用户名", "token": "登录令牌" }`；会话 Cookie 的名称与路径按项目隔离。令牌不写入登记文件或 URL。读接口使用 `/p/alpha/api/...`，订阅使用 `/p/alpha/ws?changeId=<id>&after=<seq>`；B 的接口对应 `/p/beta/...`，需另行登录。
+
+这一阶段只提供后台查询和订阅：多项目业务写接口返回 `403 read_only`，Web 项目切换和 Postgres 尚未实现。每个项目使用独立内存 SQLite 索引，不能同时传 `--db`。全局 `/api/health` 只报告服务模式，不提供项目列表。不可用项目返回通用 `503 project_unavailable`，健康项目继续服务；启动时不可用的项目需修复后重启，运行中修复可恢复查询，已关闭的订阅需重连。
+
+省略 `--projects` 仍使用原单项目 CLI / Web 模式。自动日志锚定按各仓库原有配置运行；只读限制针对多项目业务接口。跨进程写入保护将在 T4.3c 实现；非本机访问仍需 HTTPS 反向代理。
+
 ## 日志锚定
 
 `sf log anchor`（dev）将当前事件序号和链头哈希保存到独立的 `specforge-audit` Git 分支。
