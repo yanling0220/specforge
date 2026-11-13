@@ -9,6 +9,7 @@ import {
 } from '@specforge/core';
 import type { Actor, Analysis, ProjectConfig, Question, ReviewRecord, Stage } from '@specforge/shared';
 import type { AnalysisDraft } from './analyst.ts';
+import type { RaisedQuestion } from './raise-question.ts';
 import type { ReviewDraft } from './reviewer.ts';
 
 export interface AppliedAnalysis {
@@ -80,4 +81,23 @@ export function reviewRecordFromDraft(draft: ReviewDraft, sha: string, reviewer:
     findings: draft.findings,
     note: draft.summary,
   };
+}
+
+/** 把后续阶段 agent 提出的问题追加为正式问题节点；返回追加后的问题列表与新编号 */
+export function applyRaisedQuestions(
+  questions: Question[],
+  raised: RaisedQuestion[],
+  config: ProjectConfig,
+  agent: Actor,
+  stage: Stage,
+  now: string,
+): { questions: Question[]; ids: string[] } {
+  let qs = [...questions];
+  const ids: string[] = [];
+  for (const r of raised) {
+    const id = nextQuestionId(qs);
+    qs = [...qs, createQuestion({ ...r, id, raisedAtStage: stage }, config, agent, now)];
+    ids.push(id);
+  }
+  return { questions: qs, ids };
 }

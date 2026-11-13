@@ -26,6 +26,7 @@ export interface NewQuestionInput {
   defaultOptionId?: string;
   dependsOn?: string[];
   raisedAtStage: Stage;
+  taskIds?: string[];
 }
 
 export function requiredRolesFor(category: string, config: ProjectConfig): Role[] {
@@ -54,6 +55,7 @@ export function createQuestion(input: NewQuestionInput, config: ProjectConfig, a
     status: 'open',
     dependsOn: input.dependsOn ?? [],
     raisedAtStage: input.raisedAtStage,
+    ...(input.taskIds?.length ? { taskIds: input.taskIds } : {}),
     raisedBy: actor,
     raisedAt: now,
     revisions: [],

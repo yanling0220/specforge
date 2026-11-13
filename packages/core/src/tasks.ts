@@ -1,3 +1,6 @@
+import type { Question } from '@specforge/shared';
+import { isResolved } from './questions.ts';
+
 // OpenSpec tasks.md 解析。约定（仍是合法的 OpenSpec 勾选清单）：
 //   - [ ] T-1 实现 importUsers（AC-1, AC-2, S-1）
 //   - [x] T-2 入口加管理员校验（AC-3）依赖 T-1
@@ -108,8 +111,37 @@ export function markTaskDone(text: string, id: string): string {
   return text.replace(re, '$1[x]$2');
 }
 
-/** 下一个可做的任务：未完成、依赖都已完成，按文档顺序取第一个 */
-export function nextTask(parsed: ParsedTasks): ParsedTask | undefined {
+/**
+ * 任务级暂停（问题回流）：未解决的阻塞问题暂停其关联任务及（传递）依赖它们的任务；
+ * 没有关联任务的阻塞问题暂停全部任务。返回 任务编号 → 导致暂停的问题编号。
+ */
+export function pausedTasks(tasks: Pick<ParsedTask, 'id' | 'dependsOn'>[], questions: Question[]): Map<string, string[]> {
+  const paused = new Map<string, string[]>();
+  const add = (taskId: string, qid: string) => {
+    const list = paused.get(taskId) ?? [];
+    if (!list.includes(qid)) paused.set(taskId, [...list, qid]);
+  };
+  for (const q of questions) {
+    if (q.severity !== 'blocking' || isResolved(q)) continue;
+    const roots = q.taskIds?.length ? q.taskIds : tasks.map((t) => t.id);
+    const affected = new Set(roots);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const t of tasks) {
+        if (!affected.has(t.id) && t.dependsOn.some((d) => affected.has(d))) {
+          affected.add(t.id);
+          grew = true;
+        }
+      }
+    }
+    for (const id of affected) if (tasks.some((t) => t.id === id)) add(id, q.id);
+  }
+  return paused;
+}
+
+/** 下一个可做的任务：未完成、依赖都已完成、未被暂停，按文档顺序取第一个 */
+export function nextTask(parsed: ParsedTasks, paused: Map<string, string[]> = new Map()): ParsedTask | undefined {
   const done = new Set(parsed.tasks.filter((t) => t.done).map((t) => t.id));
-  return parsed.tasks.find((t) => !t.done && t.dependsOn.every((d) => done.has(d)));
+  return parsed.tasks.find((t) => !t.done && !paused.has(t.id) && t.dependsOn.every((d) => done.has(d)));
 }

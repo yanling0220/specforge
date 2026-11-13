@@ -15,6 +15,7 @@ import {
   missingRoles,
   nextQuestionId,
   nextStage,
+  pausedTasks,
   proposeAnswer,
   rejectAnswer,
   requireRole,
@@ -65,6 +66,7 @@ change
 问题节点
   sf q add <id> --q <问题> --severity blocking|important|minor --category <分类>
                [--why <原因>] [--evidence <依据>] [--node <节点>] [--depends Q-1,Q-2]
+               [--tasks T-1,T-2]                  关联任务：阻塞问题未解决时暂停这些任务（不填则暂停全部）
                [--option "A=文本|影响"]... [--recommend A] [--default A]
   sf q list <id>
   sf q show <id> <Q-n>                            完整修订与核对历史
@@ -139,6 +141,7 @@ const { values: opts, positionals: args } = parseArgs({
     budget: { type: 'string' },
     verbose: { type: 'boolean', short: 'v' },
     task: { type: 'string' },
+    tasks: { type: 'string' },
     base: { type: 'string' },
     sha: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
@@ -243,6 +246,11 @@ function cmdStatus(store: Store, id: string): void {
   const upstream = upstreamGates(change.stage, change.tier).filter((g) => evals[g]?.status !== 'passed');
   if (upstream.length) console.log(`⚠️  上游门禁已失效：${upstream.join(', ')}（需要重新满足后才能继续推进）`);
   console.log();
+  if (change.stage === 'implement') {
+    const tasks = readTasksFacts(store, id, tree);
+    const paused = tasks ? pausedTasks(tasks.tasks.filter((t) => !t.done), state.questions) : new Map<string, string[]>();
+    if (paused.size) console.log(`⏸  暂停的任务：${[...paused].map(([t, qs]) => `${t}（等待 ${qs.join(', ')}）`).join('、')}`);
+  }
   for (const g of ['G1', 'G2', 'G3', 'G4', 'G5', 'G6A', 'G6B', 'G6'] as const) {
     const ev = evals[g];
     if (ev) printGate(ev);
@@ -316,6 +324,7 @@ function cmdQuestion(store: Store, sub: string, id: string, qid?: string): void 
             evidence: opts.evidence,
             nodeId: opts.node,
             dependsOn: list(opts.depends),
+            taskIds: list(opts.tasks),
             options,
             defaultOptionId: opts.default,
             raisedAtStage: s.change.stage,

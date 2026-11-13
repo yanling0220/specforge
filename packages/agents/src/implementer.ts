@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RAISE_QUESTION_RULE, raiseQuestionTool, type RaiseContext, type RaisedQuestion } from './raise-question.ts';
 import { defineTool, type PlatformTool } from './types.ts';
 
 // 实现 agent：在独立 worktree 中实现一个任务。它能改代码、跑测试，
@@ -9,6 +10,8 @@ export interface ImplementDraft {
   blocked?: string;
   summary?: string;
   testsAdded: string[];
+  /** raise_question 提出的问题，运行结束后由引擎写入 */
+  questions: RaisedQuestion[];
 }
 
 export interface ImplementerContext {
@@ -21,10 +24,11 @@ export interface ImplementerContext {
   verifyCommands: { name: string; command: string }[];
   forbidden: string[];
   conventions?: string;
+  raise?: RaiseContext;
 }
 
 export function emptyImplementDraft(): ImplementDraft {
-  return { finished: false, testsAdded: [] };
+  return { finished: false, testsAdded: [], questions: [] };
 }
 
 export function implementerTools(draft: ImplementDraft, ctx: ImplementerContext): PlatformTool[] {
@@ -41,6 +45,7 @@ export function implementerTools(draft: ImplementDraft, ctx: ImplementerContext)
       shape: { summary: z.string().min(4), testsAdded: z.array(z.string()).min(1) },
       handler: ({ summary, testsAdded }) => {
         open();
+        if (draft.questions.some((q) => q.severity === 'blocking')) throw new Error('已提出阻塞问题，任务暂停：请调用 report_blocked 结束');
         const missing = ctx.task.acRefs.filter((ac) => !testsAdded.some((t) => t.includes(`[${ac}]`)));
         if (missing.length) throw new Error(`testsAdded 中没有覆盖：${missing.join(', ')}（测试名称需包含 [AC-n]）`);
         Object.assign(draft, { finished: true, summary, testsAdded });
@@ -57,6 +62,7 @@ export function implementerTools(draft: ImplementDraft, ctx: ImplementerContext)
         return '已报告阻塞';
       },
     }),
+    raiseQuestionTool(draft.questions, ctx.raise ?? { questionIds: [], taskIds: [ctx.task.id], defaultTaskIds: [ctx.task.id] }),
   ];
 }
 
@@ -70,7 +76,8 @@ export const IMPLEMENTER_SYSTEM_PROMPT = `你是 SpecForge 的实现 agent。你
 - 不要修改 openspec/ 和 .specforge/：规格和任务清单由引擎维护。
 - 不要 git commit / push，也不要改动工作目录之外的任何文件；提交由引擎完成。
 - 运行项目的验证命令，确认通过后调用 finish_task。
-- 如果发现规格有歧义或必须违反约束才能完成，调用 report_blocked，不要猜。`;
+- ${RAISE_QUESTION_RULE}提出 blocking 问题后任务会暂停：调用 report_blocked 结束，改动会被丢弃，等人回答后重做。
+- 必须违反约束（改 spec、受保护文件）才能完成时，调用 report_blocked。`;
 
 export function implementerPrompt(ctx: ImplementerContext): string {
   const parts = [

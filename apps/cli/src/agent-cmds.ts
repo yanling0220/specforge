@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   adapterFor,
+  applyRaisedQuestions,
   analystPrompt,
   analystTools,
   ANALYST_SYSTEM_PROMPT,
@@ -21,8 +22,9 @@ import {
   type AgentEvent,
   type AgentRunResult,
   type AgentRunSpec,
+  type RaisedQuestion,
 } from '@specforge/agents';
-import { acIdsOf, checkPathPolicy, ForgeError, implementPolicy, markTaskDone, nextTask, type PathPolicy } from '@specforge/core';
+import { acIdsOf, checkPathPolicy, ForgeError, implementPolicy, markTaskDone, nextTask, pausedTasks, type PathPolicy } from '@specforge/core';
 import {
   createWorktree,
   diffStat,
@@ -146,6 +148,27 @@ async function runReadOnly(
   return { result, profile };
 }
 
+/** 把 agent 提出的问题写入状态（问题回流）；返回新问题编号 */
+function recordRaisedQuestions(store: Store, changeId: string, agent: Actor, raised: RaisedQuestion[], log: (l: string) => void): string[] {
+  if (!raised.length) return [];
+  let ids: string[] = [];
+  store.mutate(
+    changeId,
+    agent,
+    'question.raised',
+    (s) => {
+      const applied = applyRaisedQuestions(s.questions, raised, store.config(), agent, s.change.stage, new Date().toISOString());
+      ids = applied.ids;
+      return { ...s, questions: applied.questions };
+    },
+    (s) => ({ questionIds: ids, questions: s.questions.filter((q) => ids.includes(q.id)) }),
+  );
+  raised.forEach((q, i) => log(`  ❓ ${ids[i]}（${q.severity}${q.taskIds.length ? ` · 关联 ${q.taskIds.join(', ')}` : ''}）${q.question}`));
+  return ids;
+}
+
+const pauseText = (paused: Map<string, string[]>) => [...paused].map(([t, qs]) => `${t}（等待 ${qs.join(', ')}）`).join('、');
+
 function agentActor(role: AgentRole, result: AgentRunResult, profile: AgentProfile): Actor {
   return { name: `${role}@${result.backend}/${result.model ?? profile.model ?? 'default'}`, role: 'agent' };
 }
@@ -251,6 +274,11 @@ export async function cmdAgentReview(store: Store, changeId: string, actor: Acto
     diffStat: diffStat(store.root, state.change.baseSha, sha),
     diff,
     conventions: readConventions(store.root),
+    raise: {
+      categories: questionCategories(store.config()),
+      questionIds: state.questions.map((q) => q.id),
+      taskIds: readTasksFacts(store, changeId, tree)?.tasks.map((t) => t.id) ?? [],
+    },
   };
   const draft = emptyReviewDraft();
   const { result, profile } = await runReadOnly(
@@ -268,8 +296,9 @@ export async function cmdAgentReview(store: Store, changeId: string, actor: Acto
     }),
     opts,
   );
-  if (headSha(store.root) !== sha) throw new ForgeError('head_moved', '审查期间 HEAD 发生了变化，结论作废，请重新审查');
   const agent = agentActor('reviewer', result, profile);
+  recordRaisedQuestions(store, changeId, agent, draft.questions, log);
+  if (headSha(store.root) !== sha) throw new ForgeError('head_moved', '审查期间 HEAD 发生了变化，结论作废，请重新审查');
   const record = reviewRecordFromDraft(draft, sha, agent, new Date().toISOString());
   store.mutate(changeId, agent, 'review.recorded', (s) => ({ ...s, reviews: [...s.reviews, record] }), () => ({ ...record, sessionId: result.sessionId }));
   log(`审查结论：${record.verdict}（commit ${sha.slice(0, 7)}，覆盖 ${record.coverage.join(', ') || '无'}）`);
@@ -295,6 +324,8 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
   const tree = commitTree(store.root, base);
   const tasks = readTasksFacts(store, changeId, tree);
   if (!tasks?.tasks.length) throw new ForgeError('no_tasks', `openspec/changes/${changeId}/tasks.md 中没有任务`);
+  // 问题回流：未解决的阻塞问题暂停关联任务，互不相关的任务可以继续
+  const paused = pausedTasks(tasks.tasks.filter((t) => !t.done), state.questions);
   let task;
   if (opts.taskId) {
     task = tasks.tasks.find((t) => t.id === opts.taskId);
@@ -302,9 +333,12 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
     if (task.done) throw new ForgeError('done', `任务 ${task.id} 已完成`);
     const pending = task.dependsOn.filter((d) => !tasks.tasks.find((t) => t.id === d)?.done);
     if (pending.length) throw new ForgeError('deps', `任务 ${task.id} 的依赖尚未完成：${pending.join(', ')}`);
+    if (paused.has(task.id)) throw new ForgeError('paused', `任务 ${task.id} 已暂停，等待阻塞问题的回答：${paused.get(task.id)!.join(', ')}`);
   } else {
-    task = nextTask(tasks);
-    if (!task) throw new ForgeError('no_task', '没有可做的任务（全部完成，或剩余任务的依赖未完成）');
+    task = nextTask(tasks, paused);
+    if (!task) {
+      throw new ForgeError('no_task', `没有可做的任务（全部完成，或剩余任务的依赖未完成${paused.size ? `；暂停中：${pauseText(paused)}` : ''}）`);
+    }
   }
 
   const facts = readSpecFacts(store, changeId, tree);
@@ -326,6 +360,12 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
     verifyCommands: config.verify,
     forbidden: policy.forbidden,
     conventions: readConventions(store.root),
+    raise: {
+      categories: questionCategories(config),
+      questionIds: state.questions.map((q) => q.id),
+      taskIds: tasks.tasks.map((t) => t.id),
+      defaultTaskIds: [task.id],
+    },
   };
 
   const wt = createWorktree(store.root, base);
@@ -334,9 +374,10 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
     store.append({ type, actor, changeId, payload: { taskId: task.id, base, reason, ...extra } });
     throw new ForgeError('implement_rejected', `任务 ${task.id} 的改动未被接受：${reason}`);
   };
+  let ran: { result: AgentRunResult; profile: AgentProfile } | undefined;
   try {
     log(`实现任务 ${task.id}：${task.title}（worktree ${wt}）`);
-    const { result, profile } = await runReadOnly(
+    ran = await runReadOnly(
       store,
       changeId,
       actor,
@@ -346,12 +387,16 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
         systemPrompt: IMPLEMENTER_SYSTEM_PROMPT,
         prompt: implementerPrompt(ctx),
         tools: implementerTools(draft, ctx),
-        isComplete: () => draft.finished || !!draft.blocked,
+        isComplete: () => draft.finished || !!draft.blocked || draft.questions.some((q) => q.severity === 'blocking'),
         reset: () => Object.assign(draft, emptyImplementDraft()),
       }),
       opts,
       { cwd: wt, readOnly: false, pathPolicy: policy },
     );
+    const { result, profile } = ran;
+    const questionIds = recordRaisedQuestions(store, changeId, agentActor('implementer', result, profile), draft.questions, log);
+    const blocking = questionIds.filter((_, i) => draft.questions[i]!.severity === 'blocking');
+    if (blocking.length) reject('implement.blocked', `agent 提出阻塞问题 ${blocking.join(', ')}，任务暂停，等人回答后重做`, { questionIds: blocking });
     if (draft.blocked) reject('implement.blocked', `agent 报告阻塞：${draft.blocked}`);
     if (headSha(store.root) !== base) reject('implement.rejected', '实现期间项目 HEAD 发生了变化');
 
@@ -391,8 +436,16 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
     log(`✓ 任务 ${task.id} 已提交 ${sha.slice(0, 7)}（${files.length} 个文件）`);
     for (const f of files) log(`  ${f}`);
     if (draft.summary) log(`总结：${draft.summary}`);
-    const next = nextTask(readTasksFacts(store, changeId)!);
-    log(next ? `下一个任务：${next.id} ${next.title}` : '全部任务已完成，可以 sf advance 进入收尾');
+    const after = readTasksFacts(store, changeId)!;
+    const stillPaused = pausedTasks(after.tasks.filter((t) => !t.done), store.load(changeId).questions);
+    const next = nextTask(after, stillPaused);
+    if (next) log(`下一个任务：${next.id} ${next.title}`);
+    else if (stillPaused.size) log(`暂停中：${pauseText(stillPaused)}`);
+    else log('全部任务已完成，可以 sf advance 进入收尾');
+  } catch (e) {
+    // agent 运行失败时（例如提问后没有正常结束）也要保留它提出的问题
+    if (!ran && draft.questions.length) recordRaisedQuestions(store, changeId, { name: 'implementer', role: 'agent' }, draft.questions, log);
+    throw e;
   } finally {
     removeWorktree(store.root, wt);
   }

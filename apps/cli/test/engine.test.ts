@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { acIdsOf, emptyAnalysis } from '@specforge/core';
-import type { AgentAdapter } from '@specforge/agents';
+import { callPlatformTool, type AgentAdapter } from '@specforge/agents';
 import { headSha } from '@specforge/runner';
 import type { Actor, Stage } from '@specforge/shared';
 import { cmdAgentReview } from '../src/agent-cmds.ts';
@@ -107,5 +107,30 @@ describe('OpenSpec 文件的读取来源（T2.10）', () => {
     await expect(cmdAgentReview(store, 'c1', dev, { override: {}, verbose: false, log: () => {}, adapter })).rejects.toThrow(/只看 prompt/);
     expect(prompt).toContain('[AC-2]');
     expect(prompt).not.toContain('AC-9');
+  });
+});
+
+describe('审查 agent 提问（T2.9）', () => {
+  it('审查发现未经提问的假设：问题入库、G1 失效，审查记录照常写入', async () => {
+    const store = project('closing');
+    const adapter: AgentAdapter = {
+      backend: 'fake',
+      async run(spec) {
+        for (const [tool, args] of [
+          ['raise_question', { category: '业务规则', severity: 'blocking', question: '导入上限写死为 1000 行，是否正确？', why: 'spec 与答案中没有上限' }],
+          ['submit_review', { verdict: 'fail', coverage: ['AC-1', 'AC-2'], findings: [{ severity: 'blocking', kind: 'unplanned', anchor: 'AC-1', text: '写死了 1000 行上限' }], summary: '有未经提问的假设' }],
+        ] as const) {
+          const out = callPlatformTool(spec.tools, tool, args);
+          if (out.isError) throw new Error(out.text);
+        }
+        return { ok: true, backend: 'fake', turns: 2, costUsd: 0, durationMs: 0, deniedTools: [] };
+      },
+    };
+    await cmdAgentReview(store, 'c1', dev, { override: {}, verbose: false, log: () => {}, adapter });
+    const state = store.load('c1');
+    expect(state.questions[0]).toMatchObject({ id: 'Q-1', severity: 'blocking', raisedAtStage: 'closing', raisedBy: { role: 'agent' } });
+    expect(state.questions[0]!.taskIds).toBeUndefined();
+    expect(state.reviews.at(-1)).toMatchObject({ verdict: 'fail' });
+    expect(evaluateAll(store, state).G1!.status).toBe('failed');
   });
 });

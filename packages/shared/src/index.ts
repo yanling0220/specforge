@@ -186,6 +186,8 @@ export interface Question {
   status: QuestionStatus;
   dependsOn: string[];
   raisedAtStage: Stage;
+  /** 关联任务：阻塞问题未解决时这些任务（及依赖它们的任务）暂停；为空表示影响全部任务 */
+  taskIds?: string[];
   raisedBy: Actor;
   raisedAt: string;
   revisions: AnswerRevision[];

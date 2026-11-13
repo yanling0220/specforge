@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ReviewFinding } from '@specforge/shared';
+import { RAISE_QUESTION_RULE, raiseQuestionTool, type RaiseContext, type RaisedQuestion } from './raise-question.ts';
 import { defineTool, type PlatformTool } from './types.ts';
 
 // 独立审查 agent（G6 6B）：新上下文，只看 spec / 已确认的问题答案 / diff，
@@ -11,6 +12,8 @@ export interface ReviewDraft {
   coverage: string[];
   findings: ReviewFinding[];
   summary?: string;
+  /** raise_question 提出的问题，运行结束后由引擎写入 */
+  questions: RaisedQuestion[];
 }
 
 export interface ReviewerContext {
@@ -26,10 +29,11 @@ export interface ReviewerContext {
   diffStat: string;
   diff: string;
   conventions?: string;
+  raise?: RaiseContext;
 }
 
 export function emptyReviewDraft(): ReviewDraft {
-  return { submitted: false, coverage: [], findings: [] };
+  return { submitted: false, coverage: [], findings: [], questions: [] };
 }
 
 export function reviewerTools(draft: ReviewDraft, ctx: ReviewerContext): PlatformTool[] {
@@ -76,6 +80,7 @@ export function reviewerTools(draft: ReviewDraft, ctx: ReviewerContext): Platfor
         return '审查结论已提交';
       },
     }),
+    raiseQuestionTool(draft.questions, ctx.raise ?? { questionIds: [], taskIds: [] }),
   ];
 }
 
@@ -92,6 +97,7 @@ export const REVIEWER_SYSTEM_PROMPT = `你是 SpecForge 的独立代码审查 ag
 - 你只能读，不能修改文件。需要时用 Read / Glob / Grep 查看完整文件和上下文。
 - 风格、命名之类的意见只能是 non-blocking。不要因为"可以写得更好"就判 fail。
 - 审查建议不构成新需求的授权。
+- 发现未经提问的假设（代码写死了 spec 和答案中找不到依据的业务规则）时，用 raise_question 提一个 blocking 问题请人决定，并在 findings 中以 blocking 记录（anchor 填相关 AC）。${RAISE_QUESTION_RULE}
 - 最后必须调用一次 submit_review。`;
 
 export function reviewerPrompt(ctx: ReviewerContext): string {

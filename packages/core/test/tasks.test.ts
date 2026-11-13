@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateTasks, executionOrder, findCycles, nextStage, parseTasks, tasksBinding, type TasksInputs } from '../src/index.ts';
+import type { ProjectConfig, Question } from '@specforge/shared';
+import { createQuestion, evaluateTasks, executionOrder, findCycles, nextStage, nextTask, parseTasks, pausedTasks, tasksBinding, type TasksInputs } from '../src/index.ts';
+
+const defaultTestConfig = { confirmPolicy: { default: ['dev'] } } as unknown as ProjectConfig;
 
 const T = '2026-11-12T10:00:00Z';
 
@@ -85,5 +88,30 @@ describe('状态机加入 tasks 阶段', () => {
     expect(nextStage('design', 'M', up)).toBe('tasks');
     expect(() => nextStage('tasks', 'M', up)).toThrow(/G4/);
     expect(nextStage('tasks', 'M', { ...up, G4: pass('G4') })).toBe('implement');
+  });
+});
+
+describe('任务级暂停（问题回流）', () => {
+  const four = parseTasks('tasks.md', good + '- [ ] T-4 文档（AC-1）\n');
+  const q = (id: string, over: Partial<Question> = {}): Question =>
+    createQuestion({ id, category: '业务规则', severity: 'blocking', question: '怎么办？', raisedAtStage: 'implement', ...over }, defaultTestConfig, { name: 'x', role: 'agent' }, T);
+
+  it('阻塞问题暂停关联任务及传递依赖它的任务，其余任务继续', () => {
+    const paused = pausedTasks(four.tasks, [q('Q-1', { taskIds: ['T-2'] })]);
+    expect([...paused]).toEqual([['T-2', ['Q-1']], ['T-3', ['Q-1']]]);
+    expect(nextTask(four, paused)!.id).toBe('T-1');
+  });
+
+  it('没有关联任务的阻塞问题暂停全部；非阻塞或已解决的问题不暂停', () => {
+    expect([...pausedTasks(four.tasks, [q('Q-1')]).keys()]).toEqual(['T-1', 'T-2', 'T-3', 'T-4']);
+    expect(nextTask(four, pausedTasks(four.tasks, [q('Q-1')]))).toBeUndefined();
+    expect(pausedTasks(four.tasks, [q('Q-1', { severity: 'important' })]).size).toBe(0);
+    expect(pausedTasks(four.tasks, [{ ...q('Q-1'), status: 'confirmed' }]).size).toBe(0);
+  });
+
+  it('多个问题叠加：记录每个任务等待的全部问题', () => {
+    const paused = pausedTasks(four.tasks, [q('Q-1', { taskIds: ['T-1'] }), q('Q-2', { taskIds: ['T-3'] })]);
+    expect(paused.get('T-3')).toEqual(['Q-1', 'Q-2']);
+    expect(paused.has('T-4')).toBe(false);
   });
 });

@@ -129,7 +129,7 @@ describe('openai-compatible 适配层', () => {
     expect(result.deniedTools).toEqual([{ name: 'Bash', reason: '不存在的工具' }]);
     expect(draft).toMatchObject({ submitted: true, verdict: 'pass' });
     expect(bodies[0]).toMatchObject({ model: 'deepseek-v4-pro', reasoning_effort: 'high', thinking: { type: 'enabled' } });
-    expect(bodies[0]!.tools!.map((t) => (t as { function: { name: string } }).function.name)).toEqual(['read_file', 'list_files', 'grep', 'submit_review']);
+    expect(bodies[0]!.tools!.map((t) => (t as { function: { name: string } }).function.name)).toEqual(['read_file', 'list_files', 'grep', 'submit_review', 'raise_question']);
     const second = bodies[1]!.messages;
     expect(second[2]).toMatchObject({ role: 'assistant', reasoning_content: '先看看文件' });
     expect(second[3]).toMatchObject({ role: 'tool', tool_call_id: '1' });

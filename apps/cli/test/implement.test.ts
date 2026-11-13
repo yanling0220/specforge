@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { emptyAnalysis } from '@specforge/core';
+import { createQuestion, emptyAnalysis, nextStage } from '@specforge/core';
 import { callPlatformTool, type AgentAdapter, type AgentRunSpec } from '@specforge/agents';
 import { headSha } from '@specforge/runner';
 import type { Actor } from '@specforge/shared';
@@ -60,7 +60,10 @@ function project(config: Record<string, unknown> = {}): Store {
 }
 
 /** 假 agent：在 cwd 中写入文件，然后调用 finish_task */
-function writer(files: Record<string, string>, opts: { finish?: boolean; extra?: (spec: AgentRunSpec) => void; tests?: string[] } = {}): AgentAdapter {
+function writer(
+  files: Record<string, string>,
+  opts: { finish?: boolean; extra?: (spec: AgentRunSpec) => void; tests?: string[]; questions?: Record<string, unknown>[] } = {},
+): AgentAdapter {
   return {
     backend: 'fake',
     async run(spec) {
@@ -70,6 +73,10 @@ function writer(files: Record<string, string>, opts: { finish?: boolean; extra?:
         writeFileSync(abs, c);
       }
       opts.extra?.(spec);
+      for (const q of opts.questions ?? []) {
+        const out = callPlatformTool(spec.tools, 'raise_question', q);
+        if (out.isError) throw new Error(out.text);
+      }
       if (opts.finish !== false) {
         const out = callPlatformTool(spec.tools, 'finish_task', { summary: '完成实现', testsAdded: opts.tests ?? ['[AC-1] 正常'] });
         if (out.isError) throw new Error(out.text);
@@ -232,5 +239,59 @@ describe('G5 TDD 门', () => {
     const g5 = evaluateAll(store, store.load('c1')).G5!;
     expect(g5.status).toBe('failed');
     expect(g5.checks.find((c) => c.id === 'red-green')!.detail).toMatch(/T-1 的 TDD 证据所在 commit 已不在当前历史中/);
+  });
+});
+
+describe('问题回流（T2.9）', () => {
+  const ask = (over: Record<string, unknown> = {}) => ({ category: '业务规则', severity: 'blocking', question: '超过 1000 行怎么办？', why: '规格没有说明上限', ...over });
+
+  it('实现中提出阻塞问题：改动丢弃、问题入库、G1 失效、advance 被拦截、关联任务暂停', async () => {
+    const store = project();
+    const base = headSha(store.root);
+    const adapter = writer(impl('x', 'AC-1'), { finish: false, questions: [ask()] });
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter })).rejects.toThrow(/提出阻塞问题 Q-1/);
+    expect(headSha(store.root)).toBe(base);
+
+    const state = store.load('c1');
+    expect(state.questions).toHaveLength(1);
+    expect(state.questions[0]).toMatchObject({ id: 'Q-1', severity: 'blocking', status: 'open', raisedAtStage: 'implement', taskIds: ['T-1'], raisedBy: { role: 'agent' } });
+    expect(types(store)).toEqual(expect.arrayContaining(['question.raised', 'implement.blocked']));
+    expect(store.outOfBand('c1')).toBeUndefined();
+
+    const evals = evaluateAll(store, state);
+    expect(evals.G1!.status).toBe('failed');
+    expect(() => nextStage('implement', 'M', evals)).toThrow(/G1/);
+
+    // T-1 暂停；T-2 依赖 T-1，也暂停
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer({}) })).rejects.toThrow(/暂停中：T-1（等待 Q-1）、T-2（等待 Q-1）/);
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, taskId: 'T-1', adapter: writer({}) })).rejects.toThrow(/T-1 已暂停.*Q-1/);
+  });
+
+  it('阻塞问题只关联 T-2 时，T-1 可以继续；之后剩余任务提示暂停', async () => {
+    const store = project();
+    store.mutate('c1', dev, 'question.raised', (s) => ({
+      ...s,
+      questions: [createQuestion({ id: 'Q-1', category: '业务规则', severity: 'blocking', question: 'T-2 的规则？', raisedAtStage: 'implement', taskIds: ['T-2'] }, store.config(), dev, 'T')],
+    }), () => ({}));
+    const lines: string[] = [];
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, log: (l) => lines.push(l), adapter: writer(impl('x', 'AC-1')) });
+    expect(types(store)).toContain('implement.committed');
+    expect(lines.at(-1)).toBe('暂停中：T-2（等待 Q-1）');
+  });
+
+  it('非阻塞问题：照常提交，问题入库待回答', async () => {
+    const store = project();
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('x', 'AC-1'), { questions: [ask({ severity: 'important', taskIds: ['T-2'] })] }) });
+    expect(types(store)).toContain('implement.committed');
+    expect(store.load('c1').questions[0]).toMatchObject({ severity: 'important', taskIds: ['T-2'] });
+  });
+
+  it('raise_question 校验：分类、任务编号、依赖的问题必须存在；阻塞问题之后不能 finish_task', async () => {
+    const store = project();
+    const adapter = (q: Record<string, unknown>) => writer(impl('x', 'AC-1'), { finish: false, questions: [q] });
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: adapter(ask({ category: '随便' })) })).rejects.toThrow(/category 必须是/);
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: adapter(ask({ taskIds: ['T-9'] })) })).rejects.toThrow(/不存在的任务：T-9/);
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: adapter(ask({ dependsOn: ['Q-7'] })) })).rejects.toThrow(/不存在的问题：Q-7/);
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('x', 'AC-1'), { questions: [ask()] }) })).rejects.toThrow(/已提出阻塞问题/);
   });
 });
