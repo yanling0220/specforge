@@ -63,8 +63,15 @@ function Console({ onLogout }: { onLogout?: () => void }) {
         </nav>
         <span className="spacer" />
         {chain.data && (
-          <span className={`pill ${chain.data.ok ? 'ok' : 'bad'}`} title={chain.data.ok ? '' : [...chain.data.chainProblems.map((p) => `#${p.seq} ${p.problem}`), ...chain.data.outOfBand.map((o) => `${o.changeId}：${o.problem}`)].join('\n')}>
-            {chain.data.ok ? `哈希链完整 · ${chain.data.events} 条事件` : '哈希链 / 状态文件异常'}
+          <span className={`pill ${chain.data.ok ? 'ok' : 'bad'}`} title={chain.data.ok
+            ? chain.data.anchors.latest ? `已锚定至事件 #${chain.data.anchors.latest.seq}` : '尚未创建日志锚定'
+            : [
+              ...chain.data.chainProblems.map((problem) => `#${problem.seq} ${problem.problem}`),
+              ...chain.data.anchors.problems.map((problem) => `锚定 #${problem.seq} ${problem.problem}`),
+              ...chain.data.outOfBand.map((item) => `${item.changeId}：${item.problem}`),
+              ...(chain.data.usersProblem ? [`用户名册${chain.data.usersProblem}`] : []),
+            ].join('\n')}>
+            {chain.data.ok ? `哈希链完整 · ${chain.data.events} 条事件 · ${chain.data.anchors.status === 'passed' ? '已锚定' : '未锚定'}` : '审计校验异常'}
           </span>
         )}
         <span className={`live ${live.status}`}>● {LIVE_TEXT[live.status]}</span>

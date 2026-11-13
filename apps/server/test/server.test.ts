@@ -2,10 +2,10 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createQuestion, emptyAnalysis } from '@specforge/core';
-import { headSha } from '@specforge/runner';
-import { defaultConfig, Store } from '@specforge/store';
+import { headSha, readLogAnchors } from '@specforge/runner';
+import { anchorLog, defaultConfig, Store } from '@specforge/store';
 import type { Actor } from '@specforge/shared';
 import { createApp } from '../src/app.ts';
 import { ForgeIndex } from '../src/index-db.ts';
@@ -17,6 +17,8 @@ const servers: RunningServer[] = [];
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.close()));
   dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true }));
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 function project(): Store {
@@ -166,6 +168,54 @@ describe('REST 接口（只读）', () => {
     expect((await app.request('/api/changes', { method: 'POST' })).status).toBe(415);
     expect((await app.request('/api/changes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(404);
     index.close();
+  });
+
+  it('链被完整重算后，REST 返回 Git 锚定冲突', async () => {
+    const { store, app, index } = setup();
+    anchorLog(store);
+    const { chainEvent } = await import('@specforge/core');
+    const rewritten = store.events().reduce<ReturnType<Store['events']>>((events, event) => {
+      events.push(chainEvent(events.at(-1), { type: event.type, actor: event.actor, payload: { rewritten: true } }, event.at));
+      return events;
+    }, []);
+    writeFileSync(store.path('events.jsonl'), rewritten.map((event) => JSON.stringify(event)).join('\n') + '\n');
+    expect((await get(app, '/api/log/verify')).body).toMatchObject({ ok: false, chainProblems: [], anchors: { count: 1, problems: [{ problem: expect.stringMatching(/重写/) }] } });
+    index.close();
+  });
+});
+
+describe('server 定期锚定（T4.4）', () => {
+  it('按配置锚定新事件；没有变化时不提交；清空日志后报错且保留原锚定', async () => {
+    const store = project();
+    writeFileSync(store.path('config.json'), JSON.stringify({ ...store.config(), audit: { anchorIntervalMs: 1000 } }));
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const server = await startServer({ store, port: 0 });
+    servers.push(server);
+    expect(readLogAnchors(store.root)).toHaveLength(1);
+    raise(store, 'c1', 'Q-1');
+    vi.advanceTimersByTime(1000);
+    const anchors = readLogAnchors(store.root);
+    expect(anchors).toHaveLength(2);
+    expect(anchors[1]!.seq).toBe(3);
+    vi.advanceTimersByTime(1000);
+    expect(readLogAnchors(store.root)).toEqual(anchors);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    writeFileSync(store.path('events.jsonl'), '');
+    vi.advanceTimersByTime(1000);
+    expect(error).toHaveBeenCalledWith('日志锚定失败：', expect.objectContaining({ code: 'log_invalid' }));
+    expect(readLogAnchors(store.root)).toEqual(anchors);
+    await server.close();
+    servers.splice(servers.indexOf(server), 1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('未配置时不创建锚定；无效间隔在启动前拒绝', async () => {
+    const store = project();
+    const server = await startServer({ store, port: 0 });
+    servers.push(server);
+    expect(readLogAnchors(store.root)).toEqual([]);
+    writeFileSync(store.path('config.json'), JSON.stringify({ ...store.config(), audit: { anchorIntervalMs: 0 } }));
+    await expect(startServer({ store, port: 0 })).rejects.toThrow(/anchorIntervalMs/);
   });
 });
 

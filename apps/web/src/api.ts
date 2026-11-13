@@ -93,6 +93,13 @@ export interface ChainStatus {
   events: number;
   chainProblems: { seq: number; problem: string }[];
   outOfBand: { changeId: string; problem: string }[];
+  usersProblem: string | null;
+  anchors: {
+    status: 'passed' | 'failed' | 'unverified';
+    count: number;
+    latest: { seq: number; hash: string; commit: string } | null;
+    problems: { seq: number; problem: string }[];
+  };
 }
 
 export const UNAUTHORIZED_EVENT = 'specforge:unauthorized';

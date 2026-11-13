@@ -17,7 +17,6 @@ import {
   setDimension,
   setRestatement,
   upstreamGates,
-  verifyChain,
 } from '@specforge/core';
 import { git, headSha, repoRoot, runVerification } from '@specforge/runner';
 import type {
@@ -39,6 +38,7 @@ import { cmdAgentAnalyze, cmdAgentGenerate, cmdAgentImplement, cmdAgentReview } 
 import { checkTdd } from './tdd.ts';
 import {
   addComment,
+  anchorLog,
   advance,
   approve,
   artifactViews,
@@ -59,6 +59,7 @@ import {
   signOff,
   Store,
   uncommittedSpecChanges,
+  verifyLog,
   type ChangeState,
   type QuestionOp,
 } from '@specforge/store';
@@ -138,7 +139,8 @@ AI agent
 
 审计
   sf log [<id>]                                   事件时间线
-  sf log verify                                   校验哈希链与带外修改
+  sf log verify [--anchor <commit>]                校验哈希链、Git 锚定与带外修改（可指定可信锚定 commit）
+  sf log anchor                                   将当前链头写入独立的 specforge-audit 分支（dev）
   sf log ack <id> --reason <说明>                  确认带外修改
 `;
 
@@ -188,6 +190,7 @@ const { values: opts, positionals: args } = parseArgs({
     force: { type: 'boolean' },
     base: { type: 'string' },
     sha: { type: 'string' },
+    anchor: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -414,25 +417,27 @@ function cmdReview(store: Store, id: string): void {
 }
 
 function cmdLog(store: Store, sub?: string, id?: string): void {
+  if (sub === 'anchor') {
+    if (store.identity(opts.as).role !== 'dev') throw new ForgeError('bad_role', '只有 dev 可以手工锚定日志');
+    const { anchor, created } = anchorLog(store);
+    console.log(`${created ? '已锚定' : '链头已经锚定'}事件 #${anchor.seq}：${anchor.hash}`);
+    console.log(`Git commit ${anchor.commit}（specforge-audit）`);
+    return;
+  }
   if (sub === 'verify') {
-    const events = store.events();
-    const problems = verifyChain(events);
-    problems.forEach((p) => console.log(`❌ 事件 #${p.seq}：${p.problem}`));
-    let oob = 0;
-    for (const c of store.listChanges()) {
-      const msg = store.outOfBand(c);
-      if (msg) {
-        oob++;
-        console.log(`❌ ${c}：状态文件被绕过引擎修改（${msg}）`);
-      }
+    const result = verifyLog(store, opts.anchor);
+    result.chainProblems.forEach((problem) => console.log(`❌ 事件 #${problem.seq}：${problem.problem}`));
+    result.anchors.problems.forEach((problem) => console.log(`❌ Git 锚定 #${problem.seq}：${problem.problem}`));
+    result.outOfBand.forEach(({ changeId, problem }) => console.log(`❌ ${changeId}：状态文件被绕过引擎修改（${problem}）`));
+    if (result.usersProblem) console.log(`❌ 用户名册${result.usersProblem}`);
+    if (result.ok) console.log(`✅ 哈希链完整（${result.events} 条事件），所有 change 状态${existsSync(store.path('users.json')) ? '、用户名册' : ''}与日志一致`);
+    if (result.anchors.latest && !result.anchors.problems.length) {
+      console.log(`✅ ${result.anchors.count} 个 Git 锚定，最新事件 #${result.anchors.latest.seq}（commit ${result.anchors.latest.commit}）`);
+    } else if (!result.anchors.count && opts.anchor === undefined && !result.anchors.problems.length) {
+      console.log('⚪ 尚未锚定：sf log anchor');
     }
-    const users = store.usersOutOfBand();
-    if (users) {
-      oob++;
-      console.log(`❌ 用户名册${users}`);
-    }
-    if (!problems.length && !oob) console.log(`✅ 哈希链完整（${events.length} 条事件），所有 change 状态${existsSync(store.path('users.json')) ? '、用户名册' : ''}与日志一致`);
-    if (problems.length || oob) process.exitCode = 1;
+    if (opts.anchor !== undefined && !result.anchors.problems.length) console.log(`✅ 可信 Git 锚定 commit ${opts.anchor} 校验通过`);
+    if (!result.ok) process.exitCode = 1;
     return;
   }
   if (sub === 'ack') {

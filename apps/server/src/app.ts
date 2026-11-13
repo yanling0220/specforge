@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { Hono, type Context } from 'hono';
-import { activeClaims, ForgeError, isResolved, missingRoles, pausedTasks, pipelineFor, publicUsers, resolveIdentity, upstreamGates, verifyChain } from '@specforge/core';
+import { activeClaims, ForgeError, isResolved, missingRoles, pausedTasks, pipelineFor, publicUsers, resolveIdentity, upstreamGates } from '@specforge/core';
 import {
   addComment,
   advance,
@@ -19,6 +19,7 @@ import {
   resolveComment,
   signOff,
   uncommittedSpecChanges,
+  verifyLog,
   type QuestionOp,
   type Store,
 } from '@specforge/store';
@@ -328,12 +329,7 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
   });
 
   app.get('/api/log/verify', (c) => {
-    const problems = verifyChain(store.events());
-    const outOfBand = store.listChanges().flatMap((id) => {
-      const msg = store.outOfBand(id);
-      return msg ? [{ changeId: id, problem: msg }] : [];
-    });
-    return c.json({ ok: !problems.length && !outOfBand.length, events: store.events().length, chainProblems: problems, outOfBand });
+    return c.json(verifyLog(store));
   });
 
   return app;

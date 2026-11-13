@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Claude Code（Opus 5.5） · 当日收工（节点 `checkpoint-2026-11-13`）
+最后更新：2026-11-13 · Codex（GPT-6） · T4.4 完成
 
 ---
 
 ## 当前快照
 
-- 测试：198 个全部通过（`npm test`）；浏览器端到端 `npm run web:e2e` 通过；类型检查无错误（`npm run typecheck`，含 `apps/web`）
-- 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T4.4`**（哈希链头定期锚定）。可选：用 DeepSeek 在 `/tmp/sf-t35` 重跑修订模式，验证 spec-writer 会使用 `outOfScope`（约 2 万 token，需用户同意）；复核 `T4.2` 是否已被 T4.1 + T3.4 覆盖；`T2.3c` 需要 Codex 登录。
+- 测试：212 个全部通过（`npm test`，26 个文件）；浏览器端到端 `npm run web:e2e` 通过；类型检查无错误（`npm run typecheck`，含 `apps/web`）；`npm run web:build` 通过
+- 远程：https://github.com/yanling0220/specforge （`main`）；本次 T4.4 尚未推送
+- **下一个建议任务：`T4.2`**（先复核 T4.1 + T3.4 已覆盖的产品方直接登录，再明确链接确认是否仍需实现）。可选：用 DeepSeek 在 `/tmp/sf-t35` 重跑修订模式，验证 spec-writer 会使用 `outOfScope`（约 2 万 token，需用户同意）；`T2.3c` 需要 Codex 登录。
 - **使用提示**：Web 控制台需先 `npm run web:build`，再在项目目录运行 server；在控制台修改需要启用用户名册（`sf user add … --admin`）。已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit。浏览器端到端：`npm run web:e2e`（需本机 Chrome）。
 - **与用户的协作约定**：每完成一个任务就停下汇报并等待确认，推送前先问；给出多种改法时逐个写明优缺点。
 
@@ -68,7 +68,7 @@
 | T4.1 | 身份与登录、角色权限（目前身份是自己声明的） | done | 用户名册 `.specforge/users.json`（`sf user add / list / set / token / disable`），修改写入哈希链，篡改即拒绝使用；CLI 身份（`whoami`、`--as`、`--on-behalf`）按名册校验角色；server 令牌登录（HttpOnly + SameSite=Strict 会话、12 小时过期、停用或重置令牌立即失效、失败 5 次锁定 10 分钟），启用名册后接口与 WebSocket 都需要登录，无名册时只能监听本机；Web 登录页与 401 自动回到登录。测试：`core/test/users.test.ts`、`cli/test/users.test.ts`、`server/test/auth.test.ts`。实测：`/tmp/sf-t33` 启用名册、角色与代录校验、curl 登录、登录页截图。依据见 design.md 9.3 |
 | T4.2 | 产品方直接登录或通过链接确认问题（替代代录） | todo | |
 | T4.3 | Postgres、多项目 | todo | |
-| T4.4 | 哈希链头定期锚定（git 提交或服务端），防止整条链被重写 | todo | |
+| T4.4 | 哈希链头定期锚定（git 提交或服务端），防止整条链被重写 | done | `sf log anchor` 保存到独立 `specforge-audit` 分支；`audit.anchorIntervalMs` 启用 server 定期锚定；CLI / REST 对比全部历史锚定；`sf log verify --anchor <可信 commit>` 检测本地分支整体重建；控制台展示锚定状态与异常原因。新增 14 个测试（`core/test/events-policy.test.ts`、`store/test/audit.test.ts`、`server/test/server.test.ts`），覆盖整链重算、截断/清空、并发冲突、受损审计历史、暂存区不变和独立 Git 仓库保存。全量 212/212、typecheck、Web 构建及浏览器端到端通过；信任边界见 design.md 7.1 |
 | T4.5 | IM 通知（待确认问题、待签字） | todo | |
 
 ---
@@ -78,7 +78,7 @@
 | 问题 | 影响 | 计划 |
 |---|---|---|
 | 未启用用户名册的项目仍是自行声明身份 | 兼容旧项目；server 此时只能监听本机 | 在项目中 `sf user add … --admin` 启用 |
-| CLI 身份基于本地文件信任 | 名册只能防误用与冒名记录；有文件写权限的人仍可篡改，但会被 `sf log verify` 与名册校验发现 | T4.4（哈希链锚定）可进一步防整体改写 |
+| CLI 身份基于本地文件信任 | 名册只能防误用与冒名记录；有文件写权限的人仍可篡改 | T4.4 已实现：需将审计分支 / commit SHA 保存在独立可信位置，以发现日志与本地审计分支整体改写；不自动推送 |
 | server 不提供 HTTPS；会话只在内存中 | 非本机访问需放在 HTTPS 反向代理之后；server 重启后需重新登录 | — |
 | 兼容接口（DeepSeek 等）不返回费用，`--budget` 不生效 | 只能看 token 数 | 可加按 token 的上限 |
 | 实现 agent 的 Bash / run_command 能执行任意命令（如联网、写 worktree 外） | 写主工作区会被指纹检测拦截，但写其他目录无法发现 | 后续可接入沙箱（容器或 Claude SDK sandbox） |
@@ -92,6 +92,7 @@
 | 修复前创建的评论没有上下文 | 原文不唯一时仍可能被定位到同文的另一行 | 只影响旧评论；可重新打开后由人重新评论 |
 | G5 以测试文件为粒度 | 修改已有测试文件时，文件中任一测试先失败即算 RED，不能确认每个新测试都先失败 | 需要逐个测试的结果（如 JUnit XML / TAP 逐条解析）；T3.6 只解析了总数 |
 | 本机没有 `rtk` 命令 | `AGENTS.md`（用户目录）要求的 rtk 前缀无法使用 | 用原生命令 |
+| Codex 沙箱禁止监听本机端口 | HTTP / WebSocket 基线测试报 `listen EPERM` 并超时；非代码回归 | 在沙箱外运行 `npm test` 已确认 198/198 通过 |
 
 ---
 
@@ -158,4 +159,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 产物审阅器：行内评论、门禁、生成类 agent 按评论修订 · `2184e14`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · DeepSeek 实测修订模式；修复同文行导致的评论误定位（评论记录上下文） · `73fcc03`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 用户选定方案：spec-writer 可向 proposal「范围外」追加引用已确认问题的条目（只追加） · `9ece245`
-- 2026-11-13 · Claude Code (Opus 5.5) · — · 当日收工：更新快照，打节点 `checkpoint-2026-11-13` · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · — · 当日收工：更新快照，打节点 `checkpoint-2026-11-13` · `24163e9`
+- 2026-11-13 · Codex（GPT-6） · T4.4 · Git 链头锚定、server 定时器、可信 commit 校验、控制台锚定状态；新增 14 个测试，全量 212/212、typecheck、Web 构建及浏览器端到端通过 · （本次提交）

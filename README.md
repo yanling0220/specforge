@@ -58,6 +58,21 @@ sf advance add-bulk-import               # closing → delivered（需要 G6）
 sf log verify                            # 校验哈希链与带外修改
 ```
 
+## 日志锚定
+
+`sf log anchor`（dev）将当前事件序号和链头哈希保存到独立的 `specforge-audit` Git 分支。
+它不切换分支、不改 HEAD、暂存区或工作区；链头未变时不重复提交。
+`sf log verify` 和 `GET /api/log/verify` 会检查所有历史锚定，发现整链重算或截断后拒绝创建新锚定。
+尚无锚定时，CLI 明确提示「尚未锚定」，接口的 `anchors.status` 为 `unverified`。
+
+在 `.specforge/config.json` 加上 `"audit": { "anchorIntervalMs": 60000 }`，server 启动时和每分钟会自动锚定有变化的日志。
+间隔至少 1000 毫秒；不配置时关闭自动锚定。失败会报告错误并保留原锚定，server 关闭时停止定时器。
+
+防止本地日志和审计分支一起被重写，需要把审计分支或可信 commit SHA 保存在独立的可信位置。
+经确认后可手工执行 `git push origin specforge-audit`，并在远端保护该分支、禁止强推和删除；平台不会自动推送。
+从可信副本取回完整审计历史后，用 `sf log verify --anchor <完整审计 commit SHA>` 校验，即使本地审计分支已删除或重建仍能检测旧记录冲突。
+首次锚定不能证明此前日志没有被重写；最后一次锚定之后的尾部事件需要下一次锚定。
+
 ## AI agent
 
 四种后端，按角色在 `.specforge/config.json` 中配置，或用命令行 `--backend` 临时指定：

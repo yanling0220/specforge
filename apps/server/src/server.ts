@@ -5,7 +5,7 @@ import { serve, type ServerType } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import type { WSContext } from 'hono/ws';
 import { ForgeError } from '@specforge/core';
-import type { Store } from '@specforge/store';
+import { anchorLog, type Store } from '@specforge/store';
 import type { ForgeEvent } from '@specforge/shared';
 import { createApp } from './app.ts';
 import { ForgeIndex } from './index-db.ts';
@@ -53,11 +53,23 @@ export const isLoopback = (host: string) => LOOPBACK.has(host);
 
 export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const { store } = opts;
+  const audit = store.config().audit;
+  if (audit !== undefined && (!audit || !Number.isInteger(audit.anchorIntervalMs) || audit.anchorIntervalMs < 1000 || audit.anchorIntervalMs > 2_147_483_647)) {
+    throw new ForgeError('bad_arg', 'audit.anchorIntervalMs 必须是 1000–2147483647 的整数（毫秒）');
+  }
   const hostname = opts.host ?? '127.0.0.1';
   // 没有用户名册就没有登录：只允许本机访问
   if (!isLoopback(hostname) && !store.users()) {
     throw new ForgeError('no_registry', `项目还没有启用用户名册（没有登录），只能监听本机。先 sf user add <名字> --role dev --admin，再监听 ${hostname}`);
   }
+  const anchor = () => {
+    try {
+      anchorLog(store);
+    } catch (error) {
+      if (!(error instanceof ForgeError && error.code === 'no_events')) throw error;
+    }
+  };
+  if (audit) anchor();
   const index = new ForgeIndex(store, opts.dbPath);
   index.sync();
   const app = createApp(store, index, { webDir: opts.webDir ?? DEFAULT_WEB_DIR });
@@ -149,6 +161,13 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     const s = serve({ fetch: app.fetch, hostname, port: opts.port ?? 4317 }, () => resolve(s));
   });
   injectWebSocket(server);
+  const anchorTimer = audit ? setInterval(() => {
+    try {
+      anchor();
+    } catch (error) {
+      console.error('日志锚定失败：', error);
+    }
+  }, audit.anchorIntervalMs) : undefined;
   const addr = server.address() as AddressInfo;
   const host = addr.family === 'IPv6' ? `[${addr.address}]` : addr.address;
 
@@ -159,6 +178,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     close: () =>
       new Promise((resolve, reject) => {
         clearInterval(timer);
+        clearInterval(anchorTimer);
         for (const c of clients) c.ws.close();
         server.close((err) => {
           index.close();

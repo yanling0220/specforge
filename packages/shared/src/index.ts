@@ -58,6 +58,7 @@ export interface ProjectConfig {
   workflow?: WorkflowConfig;
   /** 测试数量检查（G6A）：从哪个验证步骤的输出解析测试总数 */
   testReport?: TestReportConfig;
+  audit?: { anchorIntervalMs: number };
 }
 
 export interface TestReportConfig {
@@ -408,4 +409,11 @@ export interface ForgeEvent extends EventInput {
   at: string;
   prevHash: string;
   hash: string;
+}
+
+export interface LogAnchor {
+  version: 1;
+  seq: number;
+  hash: string;
+  at: string;
 }

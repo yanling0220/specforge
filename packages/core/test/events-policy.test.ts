@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ForgeEvent } from '@specforge/shared';
-import { chainEvent, checkPathPolicy, findAddedSkips, globToRegExp, verifyChain } from '../src/index.ts';
+import type { ForgeEvent, LogAnchor } from '@specforge/shared';
+import { chainEvent, checkPathPolicy, findAddedSkips, globToRegExp, verifyChain, verifyLogAnchors } from '../src/index.ts';
 
 const actor = { name: 'yan', role: 'dev' as const };
 
@@ -23,6 +23,36 @@ describe('哈希链事件日志', () => {
     const removed = chain(3);
     removed.splice(1, 1);
     expect(verifyChain(removed).length).toBeGreaterThan(0);
+  });
+});
+
+describe('Git 链头锚定', () => {
+  const checkpoint = (event: ForgeEvent): LogAnchor => ({ version: 1, seq: event.seq, hash: event.hash, at: event.at });
+
+  it('允许在锚定后继续追加；重算整条链仍会与旧锚定冲突', () => {
+    const events = chain(3);
+    const anchors = [checkpoint(events[0]!), checkpoint(events[1]!)];
+    expect(verifyLogAnchors(events, anchors)).toEqual([]);
+    const rewritten: ForgeEvent[] = [];
+    for (const event of events) rewritten.push(chainEvent(rewritten.at(-1), { type: 't', actor, payload: { changed: true } }, event.at));
+    expect(verifyChain(rewritten)).toEqual([]);
+    expect(verifyLogAnchors(rewritten, anchors).map((problem) => problem.seq)).toEqual([1, 2]);
+  });
+
+  it('检测截断和清空，包括内部哈希链仍然完整的情况', () => {
+    const events = chain(3);
+    const anchors = [checkpoint(events[2]!)];
+    expect(verifyChain(events.slice(0, 2))).toEqual([]);
+    expect(verifyLogAnchors(events.slice(0, 2), anchors)[0]!.problem).toMatch(/截断/);
+    expect(verifyLogAnchors([], anchors)[0]!.problem).toMatch(/截断/);
+  });
+
+  it('不采信无效格式或倒退的锚定序号', () => {
+    const events = chain(3);
+    expect(verifyLogAnchors(events, [checkpoint(events[1]!), checkpoint(events[0]!)])[0]!.problem).toMatch(/递增/);
+    for (const invalid of [null, {}, { ...checkpoint(events[0]!), seq: 0 }, { ...checkpoint(events[0]!), hash: 'fake' }]) {
+      expect(verifyLogAnchors(events, [invalid as LogAnchor])[0]!.problem).toMatch(/格式无效/);
+    }
   });
 });
 
