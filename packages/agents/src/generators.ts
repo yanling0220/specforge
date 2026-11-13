@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { appendOutOfScope, questionRefsIn } from '@specforge/core';
 import type { AgentRole } from '@specforge/shared';
 import { RAISE_QUESTION_RULE, raiseQuestionTool, type RaiseContext, type RaisedQuestion } from './raise-question.ts';
 import { defineTool, type PlatformTool } from './types.ts';
@@ -54,6 +55,10 @@ export interface ArtifactContext {
   conventions?: string;
   raise?: RaiseContext;
   revision?: ArtifactRevision;
+  /** spec-writer 可以向其「范围外」一节追加条目的 proposal（只能追加，不能改其他内容） */
+  proposal?: { path: string; text: string };
+  /** 已确认的问题编号：范围外条目只能引用这些问题 */
+  confirmedQuestionIds?: string[];
   /** 引擎提供的校验：返回不通过的项，空数组表示通过 */
   validate: (files: ArtifactFile[]) => string[];
 }
@@ -91,18 +96,34 @@ export function artifactTools(draft: ArtifactDraft, ctx: ArtifactContext): Platf
     tools.push(
       defineTool({
         name: 'submit_spec',
-        description: '提交规格。每个 capability 一个 spec.md（OpenSpec 格式），写到 specs/<capability>/spec.md。引擎会校验 AC 编号与问题引用，不通过会返回问题。',
+        description: [
+          '提交规格。每个 capability 一个 spec.md（OpenSpec 格式），写到 specs/<capability>/spec.md。引擎会校验 AC 编号与问题引用，不通过会返回问题。',
+          'outOfScope：已确认「不做」的事项（每条必须引用对应的已确认问题，例如"不发送欢迎邮件（Q-4）"），由引擎追加到 proposal.md 的「## 范围外」一节；不要把「不做某事」写成 Requirement 或 AC。',
+        ].join('\n'),
         shape: {
           specs: z.array(z.object({ capability: z.string(), content: z.string().min(20) })).min(1),
           summary: z.string().min(2),
           responses: responsesShape,
+          outOfScope: z.array(z.string().min(4)).default([]),
         },
-        handler: ({ specs, summary, responses }) => {
+        handler: ({ specs, summary, responses, outOfScope }) => {
           const bad = specs.filter((s) => !CAPABILITY.test(s.capability)).map((s) => s.capability);
           if (bad.length) throw new Error(`capability 只能是小写字母、数字和连字符：${bad.join(', ')}`);
           const names = specs.map((s) => s.capability);
           if (new Set(names).size !== names.length) throw new Error('capability 重复');
-          return submit(draft, ctx, specs.map((s) => ({ path: `specs/${s.capability}/spec.md`, content: s.content })), summary, responses);
+          const files = specs.map((s) => ({ path: `specs/${s.capability}/spec.md`, content: s.content }));
+          if (outOfScope.length) {
+            if (!ctx.proposal) throw new Error('没有 proposal.md，不能追加范围外条目');
+            const confirmed = new Set(ctx.confirmedQuestionIds ?? []);
+            for (const item of outOfScope) {
+              const refs = [...questionRefsIn(item)];
+              if (!refs.length) throw new Error(`范围外条目必须引用已确认的问题编号（Q-n）：${item}`);
+              const bad = refs.filter((q) => !confirmed.has(q));
+              if (bad.length) throw new Error(`范围外条目引用了未确认或不存在的问题：${bad.join(', ')}`);
+            }
+            files.push({ path: 'proposal.md', content: appendOutOfScope(ctx.proposal.text, outOfScope) });
+          }
+          return submit(draft, ctx, files, summary, responses);
         },
       }),
     );
@@ -144,6 +165,7 @@ const SYSTEM: Record<ArtifactKind, string> = {
 - 每个已确认的问题编号（Q-n）都必须在规格中被引用，说明它决定了哪条规则。
 - THEN 要写可验证的结果（返回值、错误信息、状态），不要写"正确处理"之类的空话。
 - 覆盖正常、异常、边界场景，但只写需求范围内的。
+- 已确认「不做」的决定（范围外）放进 submit_spec 的 outOfScope，由引擎追加到 proposal 的「范围外」一节，并在条目中引用问题编号；不要为「不做某事」写 Requirement / Scenario / AC。
 ${COMMON_RULES}
 - 最后调用 submit_spec。`,
   design: `你是 SpecForge 的方案设计 agent（architect）。根据已批准的规格和现有代码，写技术方案 design.md。

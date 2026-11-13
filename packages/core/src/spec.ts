@@ -56,3 +56,24 @@ export function acIdsOf(specs: ParsedSpec[]): string[] {
 export function questionRefsIn(text: string): Set<string> {
   return new Set(text.match(QUESTION_REF_RE) ?? []);
 }
+
+const OUT_OF_SCOPE_RE = /^##\s+(范围外|Out of Scope)\s*$/im;
+
+/**
+ * 在 proposal 的「## 范围外」一节末尾追加条目（T3.5 后续）：已有内容一字不改；
+ * 没有这一节时在文末新建；与已有行完全相同的条目不重复追加。
+ */
+export function appendOutOfScope(proposal: string, items: string[]): string {
+  const lines = proposal.replace(/\n+$/, '').split('\n');
+  const existing = new Set(lines.map((l) => l.trim()));
+  const add = items.map((i) => `- ${i.trim().replace(/^-\s*/, '')}`).filter((l) => !existing.has(l));
+  if (!add.length) return proposal;
+  const start = lines.findIndex((l) => OUT_OF_SCOPE_RE.test(l));
+  if (start < 0) return `${lines.join('\n')}\n\n## 范围外\n${add.join('\n')}\n`;
+  let end = lines.findIndex((l, i) => i > start && /^##\s/.test(l));
+  if (end < 0) end = lines.length;
+  // 插在本节最后一个非空行之后
+  let at = end;
+  while (at > start + 1 && !lines[at - 1]!.trim()) at--;
+  return [...lines.slice(0, at), ...add, ...lines.slice(at)].join('\n') + '\n';
+}

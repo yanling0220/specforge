@@ -197,3 +197,28 @@ describe('按评论修订（T3.5）', () => {
     expect(store.outOfBand('c1')).toBeUndefined();
   });
 });
+
+describe('范围外决定写进 proposal（T3.5 实测后）', () => {
+  const declined: Question = { ...confirmed, id: 'Q-2', question: '是否发送欢迎邮件？', revisions: [{ ...confirmed.revisions[0]!, text: '不发送，不在本次范围' }] };
+
+  it('spec-writer 只能向「范围外」追加引用已确认问题的条目；G2 的问题引用因此满足', async () => {
+    const store = project('spec');
+    store.mutate('c1', dev, 'question.raised', (s) => ({ ...s, questions: [...s.questions, declined, { ...declined, id: 'Q-3', status: 'open', revisions: [] }] }), () => ({}));
+    const before = readFileSync(join(store.root, C, 'proposal.md'), 'utf8');
+    const adapter = script([
+      ['submit_spec', { specs: [{ capability: 'user-import', content: SPEC }], summary: '没引用问题', outOfScope: ['不发欢迎邮件'] }],
+      ['submit_spec', { specs: [{ capability: 'user-import', content: SPEC }], summary: '引用未确认问题', outOfScope: ['不发欢迎邮件（Q-3）'] }],
+      ['submit_spec', { specs: [{ capability: 'user-import', content: SPEC }], summary: '规格完成', outOfScope: ['批量导入不发送欢迎邮件（Q-2）'] }],
+    ]);
+    await cmdAgentGenerate(store, 'c1', dev, 'spec', { ...quiet, adapter });
+    expect(adapter.outputs.map((o) => o.isError)).toEqual([true, true, false]);
+    expect(adapter.outputs[0]!.text).toMatch(/必须引用已确认的问题编号/);
+    expect(adapter.outputs[1]!.text).toMatch(/未确认或不存在的问题：Q-3/);
+
+    const after = readFileSync(join(store.root, C, 'proposal.md'), 'utf8');
+    expect(after).toBe(before.replace(/\n$/, '') + '\n\n## 范围外\n- 批量导入不发送欢迎邮件（Q-2）\n');
+    expect(store.events().at(-1)!.payload).toMatchObject({ kind: 'spec', files: [{ path: `${C}/specs/user-import/spec.md` }, { path: `${C}/proposal.md` }] });
+    const g2 = evaluateAll(store, store.load('c1')).G2!;
+    expect(g2.checks.find((c) => c.id === 'questions-traced')!.passed).toBe(true);
+  });
+});

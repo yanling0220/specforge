@@ -11,7 +11,7 @@
 
 ## 当前快照
 
-- 测试：194 个全部通过；浏览器端到端 `npm run web:e2e` 通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
+- 测试：198 个全部通过；浏览器端到端 `npm run web:e2e` 通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
 - **下一个建议任务：`T4.4`**（哈希链头定期锚定，防止整条链被重写）；`T4.2`（产品方直接登录确认）已基本被 T4.1 + T3.4 覆盖，可复核后关闭；`T2.3c` 需要 Codex 登录。Web 控制台需先 `npm run web:build`，再在项目目录运行 server。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
 
@@ -86,7 +86,7 @@
 | server 启动时打印 `node:sqlite` 的 ExperimentalWarning | 仅提示，不影响功能 | Node 稳定后自然消失 |
 | server 索引只在 `events.jsonl` 变化时同步 | 绕过引擎直接改状态文件不会触发推送；详情接口读文件，并会报告带外修改 | — |
 | Web 控制台的实时刷新只在单元测试中验证了 WebSocket 推送 | 浏览器中「别人写入后自动刷新」没有端到端测试（自己写入后的刷新已覆盖） | 可扩展 `web:e2e` |
-| G2 要求每个已确认问题都被 spec 或 proposal 引用，但 spec-writer 只能写 spec | 「范围外」类的决定（如 Q-4 不发欢迎邮件）被 agent 写成了新的 Requirement/AC-8，需求被不必要地扩充 | 可让 spec-writer 也能写 proposal 的「范围外」一节，或允许问题标记为「范围外，无需引用」 |
+| spec-writer 的 `outOfScope` 未用真实模型验证 | 已用 ScriptedAdapter 测试；DeepSeek 是否会改用 outOfScope 而不再写「不做某事」的 AC 未验证 | 用户同意费用后在 `/tmp/sf-t35` 重跑（约 2 万 token） |
 | 修复前创建的评论没有上下文 | 原文不唯一时仍可能被定位到同文的另一行 | 只影响旧评论；可重新打开后由人重新评论 |
 | G5 以测试文件为粒度 | 修改已有测试文件时，文件中任一测试先失败即算 RED，不能确认每个新测试都先失败 | 需要逐个测试的结果（如 JUnit XML / TAP 逐条解析）；T3.6 只解析了总数 |
 | 本机没有 `rtk` 命令 | `AGENTS.md`（用户目录）要求的 rtk 前缀无法使用 | 用原生命令 |
@@ -154,4 +154,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.4 · 控制台写操作（问题、复述、假设、审批、签字/打回、推进），写操作与 CLI 共用 store/actions；浏览器端到端测试 · `767052e`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.4 · 接管：任务由人接手实现（sf task、控制台任务面板），agent 跳过 · `4cc5c60`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 产物审阅器：行内评论、门禁、生成类 agent 按评论修订 · `2184e14`
-- 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · DeepSeek 实测修订模式；修复同文行导致的评论误定位（评论记录上下文） · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · DeepSeek 实测修订模式；修复同文行导致的评论误定位（评论记录上下文） · `73fcc03`
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 用户选定方案：spec-writer 可向 proposal「范围外」追加引用已确认问题的条目（只追加） · （本次提交）

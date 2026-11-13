@@ -192,6 +192,7 @@ confirmed ──(需要改答案)──▶ 新建修订版本（必须填写变�
 - `sf agent spec|design|plan <id>`，分别在 spec / design / tasks 阶段运行；agent 对工作区只读（运行前后指纹校验）。
 - 产物通过 `submit_spec` / `submit_design` / `submit_tasks` 提交草稿，引擎用 G2/G3/G4 的同一套检查（人工审批项除外）校验，不通过把问题返回给 agent 修改；通过后由引擎写入 `openspec/changes/<id>/`（路径由引擎拼出），记录 `artifact.generated`（含文件哈希）。已有产物默认不覆盖（`--force`）。
 - 审批、提交、推进仍由人完成；agent 遇到歧义用 `raise_question`，提出阻塞问题后可不提交。
+- **范围外的决定**：spec-writer 不能把「不做某事」写成 Requirement / AC，而是通过 `submit_spec` 的 `outOfScope` 提交，引擎只把这些条目**追加**到 proposal.md 的「## 范围外」一节末尾（其余内容与人写的条目一字不改；没有这一节时在文末新建）。每个条目必须引用已确认的问题编号，否则退回。这样 G2 的「每个已确认问题都被引用」可以由 proposal 满足（T3.5 DeepSeek 实测发现：只能写 spec 时，agent 把「不发欢迎邮件」写成了 AC-8）。
 
 ---
 

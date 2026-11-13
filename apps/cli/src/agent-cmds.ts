@@ -573,10 +573,11 @@ export async function cmdAgentGenerate(
   const validate = (files: ArtifactFile[]): string[] => {
     const withPath = files.map((f) => ({ path: `${rel}/${f.path}`, text: f.content }));
     if (kind === 'spec') {
-      const sources = [...proposal, ...withPath].sort((a, b) => a.path.localeCompare(b.path));
+      // 提交中带了新版 proposal（追加了范围外条目）时，以新版为准
+      const sources = [...proposal.filter((p) => !withPath.some((w) => w.path === p.path)), ...withPath].sort((a, b) => a.path.localeCompare(b.path));
       const ev = evaluateSpec(
         {
-          specs: withPath.map((f) => parseSpec(f.path, f.text)),
+          specs: withPath.filter((f) => f.path.endsWith('spec.md')).map((f) => parseSpec(f.path, f.text)),
           sources,
           questions: state.questions,
           understandingBinding: understandingBinding(state.analysis, state.questions),
@@ -617,6 +618,8 @@ export async function cmdAgentGenerate(
     conventions: readConventions(store.root),
     raise: { categories: questionCategories(config), questionIds: state.questions.map((q) => q.id), taskIds: [] },
     revision,
+    ...(kind === 'spec' && proposal[0] ? { proposal: proposal[0] } : {}),
+    confirmedQuestionIds: state.questions.filter((q) => q.status === 'confirmed').map((q) => q.id),
     validate,
   };
   const draft = emptyArtifactDraft();
