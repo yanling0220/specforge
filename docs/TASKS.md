@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v 完成
+最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7 完成
 
 ---
 
 ## 当前快照
 
-- 测试：81 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
+- 测试：94 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T2.7`**（G5 TDD 门，纯代码，不需要真实模型）
+- **下一个建议任务：`T2.10`**（spec 从 commit 读取，纯代码）或 `T2.9`（问题回流）；`T2.8` 生成类 agent 也已解锁。注意：已有项目需在 `.specforge/config.json` 中配置 `tdd.command`，否则 G5 不通过、`sf agent implement` 拒绝运行
 
 ---
 
@@ -42,7 +42,7 @@
 | T2.5 | G4 任务门：解析 `tasks.md`（`- [ ] T-n 标题（AC-n, S-n）依赖 T-m`）；每个任务关联 AC；引用必须存在；每个 AC 与结构变更都有任务负责；依赖存在、无自依赖、无环；绑定任务结构而非原文（勾选进度不使 G4 失效） | done | T2.4 | `packages/core/test/tasks.test.ts`；状态机加入 `tasks` 阶段；`executionOrder` 供 T2.6 使用；CLI 端到端演示通过 |
 | T2.6 | 可写的实现 agent `sf agent implement [--task T-n]`：独立 worktree；写文件执行时拦截（Claude canUseTool / openai-compatible 写工具）+ 引擎事后路径校验（`implementPolicy`：禁 openspec/、.specforge/、.git/、受保护路径）；主工作区指纹兜底；agent 自己的提交会被收拢；引擎勾选任务、提交（带 SpecForge-* trailer）、fast-forward 合入；`implement.committed / rejected / blocked` 事件 | done | T2.5 | `apps/cli/test/implement.test.ts`（8 个场景）、`packages/agents/test/implementer.test.ts` |
 | T2.6v | 用真实模型跑 `sf agent implement`（DeepSeek，示例项目 `/tmp/sf-t26v`） | done | T2.6 | 全流程跑通：T-1 提交 `5d4f4d0`（测试 3/3），T-2 提交 `c57cbc3`（测试 4/4），均无越界；发现并修复符号链接路径误拦截。`sf advance` → `sf verify`（G6A 通过，AC-1~3 均有测试）→ `sf agent review`（pass）→ 开发者签字 → `delivered`；`sf log verify` 哈希链完整（30 条）。重建示例：`bash docs/demo-t26v.sh` |
-| T2.7 | G5 TDD 门：引擎先确认新测试失败（RED），实现后通过（GREEN），绑定任务尝试与 commit | todo | T2.6 | runner 支持只跑指定测试；测试覆盖"先红后绿"和"测试一开始就通过"两种情况 |
+| T2.7 | G5 TDD 门：引擎先确认新测试失败（RED），实现后通过（GREEN），绑定任务尝试与 commit | done | T2.6 | 配置 `tdd.command`（`{files}` 占位）+ 可选 `tdd.setup`；runner `runTdd`（base + 新测试 → RED，任务 commit → GREEN）；`sf agent implement` 合入前执行，不通过整体丢弃；手工任务用 `sf tdd`；G5 为 M/L 档 implement 出口门，要求证据 commit 仍在 HEAD 历史中。测试：`packages/core/test/tdd.test.ts`、`packages/runner/test/tdd.test.ts`、`apps/cli/test/implement.test.ts`（先红后绿、一开始就通过、没改测试、GREEN 失败、未配置、改写历史）；CLI 端到端（`/tmp/sf-t27`，手工实现 + `sf tdd` → G5 通过 → `implement → closing`）。局限见 design.md 4.3 |
 | T2.8 | 生成类 agent：spec-writer（proposal→spec）、architect（→design）、planner（→tasks），只能写 `openspec/changes/<id>/**` | todo | T2.4, T2.5 | 生成结果仍需过 G2/G3/G4 |
 | T2.9 | 问题回流：所有阶段的 agent 都能 `raise_question`；新阻塞问题使 G1 失效并暂停相关任务 | todo | T2.6 | 测试：实现阶段提问后 `advance` 被拦截 |
 | T2.10 | spec 从 commit 读取，而不是工作区（目前 AC 列表读工作区、AC 覆盖读 commit，两者不一致） | todo | — | `readSpecFacts` 支持按 SHA 读取；G6 使用 HEAD 版本 |
@@ -79,6 +79,7 @@
 | 兼容接口（DeepSeek 等）不返回费用，`--budget` 不生效 | 只能看 token 数 | 可加按 token 的上限 |
 | AC 列表读工作区，AC 覆盖读 commit | 未提交的 spec 改动会影响 G6 判断 | T2.10 |
 | 实现 agent 的 Bash / run_command 能执行任意命令（如联网、写 worktree 外） | 写主工作区会被指纹检测拦截，但写其他目录无法发现 | 后续可接入沙箱（容器或 Claude SDK sandbox） |
+| G5 以测试文件为粒度 | 修改已有测试文件时，文件中任一测试先失败即算 RED，不能确认每个新测试都先失败 | 需要解析测试报告（可与 T3.6 一起做） |
 | 本机没有 `rtk` 命令 | `AGENTS.md`（用户目录）要求的 rtk 前缀无法使用 | 用原生命令 |
 
 ---
@@ -124,4 +125,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.5 · G4 任务门、tasks 阶段 · `536f636`
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.6 · 可写实现 agent（worktree 隔离、双重路径校验、引擎提交） · `1ebb54a`
 - 2026-11-12 · Claude Code (Opus 5.5) · T2.6v · DeepSeek 实现 T-1 成功；修复符号链接路径误拦截；收工，T-2 待继续 · `fe99f90`
-- 2026-11-13 · Claude Code (Opus 5.5) · T2.6v · DeepSeek 实现 T-2，验证、agent 审查、签字，交付完成 · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · T2.6v · DeepSeek 实现 T-2，验证、agent 审查、签字，交付完成 · `e756239`
+- 2026-11-13 · Claude Code (Opus 5.5) · T2.7 · G5 TDD 门（runner 只跑指定测试、实现合入前先红后绿、`sf tdd`） · （本次提交）

@@ -37,6 +37,7 @@ import {
 import type { Actor, AgentProfile, AgentRole, ProjectConfig } from '@specforge/shared';
 import { readDesignFacts, readSpecFacts, readTasksFacts } from './engine.ts';
 import type { Store } from './store.ts';
+import { checkTdd } from './tdd.ts';
 
 const MAX_DIFF_CHARS = 150_000;
 const CONVENTION_FILES = ['AGENTS.md', 'CLAUDE.md'];
@@ -284,6 +285,9 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
   if (isDirty(store.root)) {
     throw new ForgeError('dirty', '项目工作区有未提交的改动（.specforge/ 除外），请先提交：实现在独立 worktree 中进行，并以 fast-forward 合入');
   }
+  if (!config.tdd?.command) {
+    throw new ForgeError('no_tdd', '.specforge/config.json 缺少 tdd.command（只跑指定测试的命令，如 "node --test {files}"），无法执行 G5 TDD 门');
+  }
   const tasks = readTasksFacts(store, changeId);
   if (!tasks?.tasks.length) throw new ForgeError('no_tasks', `openspec/changes/${changeId}/tasks.md 中没有任务`);
   let task;
@@ -366,12 +370,19 @@ export async function cmdAgentImplement(store: Store, changeId: string, actor: A
       `${task.id}: ${task.title}\n\n${draft.summary ?? ''}\n\nSpecForge-Change: ${changeId}\nSpecForge-Task: ${task.id}\nSpecForge-Agent: ${agent.name}`,
     ]);
     const sha = headSha(wt);
+
+    // G5：引擎亲自确认新测试先红后绿，通过后才合入
+    const tdd = checkTdd(store, changeId, actor, { taskId: task.id, base, sha }, log);
+    if (tdd.failures.length) {
+      reject('implement.rejected', `G5 TDD 门未通过：${tdd.failures.map((c) => c.detail).join('；')}`, { sha, files, tddEvidenceId: tdd.evidence.id });
+    }
+
     git(store.root, ['merge', '--ff-only', '-q', sha]);
     store.append({
       type: 'implement.committed',
       actor: agent,
       changeId,
-      payload: { taskId: task.id, base, sha, files, summary: draft.summary, testsAdded: draft.testsAdded, sessionId: result.sessionId },
+      payload: { taskId: task.id, base, sha, files, summary: draft.summary, testsAdded: draft.testsAdded, tddEvidenceId: tdd.evidence.id, sessionId: result.sessionId },
     });
     log(`✓ 任务 ${task.id} 已提交 ${sha.slice(0, 7)}（${files.length} 个文件）`);
     for (const f of files) log(`  ${f}`);

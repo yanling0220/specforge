@@ -30,6 +30,16 @@ export interface ProjectConfig {
   dimensions: string[];
   /** agent 后端配置；未配置时使用 Claude 默认值 */
   agents?: AgentsConfig;
+  /** G5 TDD 门：只跑指定测试的方式；未配置时 G5 不通过 */
+  tdd?: TddConfig;
+}
+
+export interface TddConfig {
+  /** 只跑指定测试文件的命令，{files} 替换为加引号的文件列表（没有占位符则追加在末尾） */
+  command: string;
+  /** 在 RED / GREEN 两个 worktree 中先执行的准备命令，例如 npm ci */
+  setup?: string;
+  timeoutMs?: number;
 }
 
 /**
@@ -185,7 +195,7 @@ export interface Question {
 
 // ---------- 门禁 ----------
 
-export type GateId = 'G1' | 'G2' | 'G3' | 'G4' | 'G6A' | 'G6B' | 'G6';
+export type GateId = 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | 'G6A' | 'G6B' | 'G6';
 
 export type GateStatus = 'passed' | 'failed' | 'unverified';
 
@@ -224,6 +234,30 @@ export interface VerificationEvidence {
   finishedAt: string;
   mainTreeDirty: boolean;
   steps: StepEvidence[];
+  host: { node: string; platform: string };
+}
+
+/** 一次 TDD 运行：准备命令（可选）+ 只跑新测试 */
+export interface TddRun {
+  setup?: StepEvidence;
+  test?: StepEvidence;
+}
+
+/**
+ * G5 证据：同一组新增/修改的测试文件，先放在 base 上跑（应失败，RED），
+ * 再在任务 commit 上跑（应通过，GREEN）。由引擎采集。
+ */
+export interface TddEvidence {
+  id: string;
+  taskId: string;
+  base: string;
+  sha: string;
+  /** base..sha 中新增或修改的测试文件 */
+  testFiles: string[];
+  red: TddRun;
+  green: TddRun;
+  startedAt: string;
+  finishedAt: string;
   host: { node: string; platform: string };
 }
 

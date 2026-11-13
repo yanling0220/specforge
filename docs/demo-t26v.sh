@@ -12,7 +12,7 @@ test('创建用户', () => assert.equal(createUser({ email: 'a@b.c', name: 'A' }
 JS
 git add -A; git commit -qm init
 sf init >/dev/null
-node -e "const fs=require('fs'),f='.specforge/config.json',c=JSON.parse(fs.readFileSync(f));c.verify=[{name:'test',command:'node --test'}];c.agents={default:{backend:'deepseek'}};fs.writeFileSync(f,JSON.stringify(c,null,2))"
+node -e "const fs=require('fs'),f='.specforge/config.json',c=JSON.parse(fs.readFileSync(f));c.verify=[{name:'test',command:'node --test'}];c.agents={default:{backend:'deepseek'}};c.tdd={command:'node --test {files}'};fs.writeFileSync(f,JSON.stringify(c,null,2))"
 git add -A; git commit -qm "specforge init"
 sf whoami --set yan:dev >/dev/null
 sf change new bulk-import --title "管理员批量导入用户" --tier M >/dev/null

@@ -6,6 +6,7 @@ import {
   evaluateReview,
   evaluateSpec,
   evaluateTasks,
+  evaluateTdd,
   evaluateTwin,
   evaluateUnderstanding,
   evaluateVerification,
@@ -16,7 +17,7 @@ import {
   type ParsedDesign,
   type ParsedSpec,
 } from '@specforge/core';
-import { acCoverage, antiCheat, headSha } from '@specforge/runner';
+import { acCoverage, antiCheat, headSha, isAncestor } from '@specforge/runner';
 import type { GateEvaluation, GateId } from '@specforge/shared';
 import type { ChangeState, Store } from './store.ts';
 
@@ -115,6 +116,16 @@ export function evaluateAll(store: Store, state: ChangeState): Evaluations {
 
   if (change.stage === 'implement' || change.stage === 'closing' || change.stage === 'delivered') {
     const sha = headSha(store.root);
+    if (change.tier !== 'S') {
+      out.G5 = evaluateTdd(
+        {
+          configured: !!config.tdd?.command,
+          tasks: readTasksFacts(store, change.id),
+          records: store.tddEvidence(change.id).map((evidence) => ({ evidence, reachable: isAncestor(store.root, evidence.sha, sha) })),
+        },
+        now,
+      );
+    }
     const acIds = acIdsOf(facts.specs);
     const cheat = antiCheat(store.root, change.baseSha, sha, config);
     const a = evaluateVerification(

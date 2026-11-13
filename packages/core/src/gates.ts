@@ -6,6 +6,8 @@ import type {
   GateId,
   Question,
   ReviewRecord,
+  StepEvidence,
+  TddEvidence,
   Tier,
   VerificationEvidence,
 } from '@specforge/shared';
@@ -253,6 +255,85 @@ export function evaluateTasks(inputs: TasksInputs, now: string): GateEvaluation 
     );
   }
   return evaluation('G4', checks, { kind: 'content', value: tasksBinding(inputs) }, now);
+}
+
+// ---------------- G5 TDD 门 ----------------
+
+function stepFailure(label: string, s: StepEvidence | undefined): string | undefined {
+  if (!s) return `${label} 未执行`;
+  if (s.timedOut) return `${label} 超时`;
+  return s.exitCode === 0 ? undefined : `${label} 退出码 ${s.exitCode}`;
+}
+
+const present = (xs: (string | undefined)[]): string[] => xs.filter((x): x is string => !!x);
+
+/** 单次任务尝试的 TDD 检查：有新测试；新测试在 base 上失败（RED）；在任务 commit 上通过（GREEN） */
+export function tddAttemptChecks(ev: TddEvidence): CheckResult[] {
+  const redSetup = ev.red.setup && stepFailure('RED 准备命令', ev.red.setup);
+  const red = ev.red.test;
+  return [
+    check('tests-changed', '任务新增或修改了测试', ev.testFiles.length ? [] : ['没有新增或修改测试文件']),
+    check(
+      'red',
+      '新测试在实现前失败（RED）',
+      redSetup
+        ? [redSetup]
+        : present([
+            !red ? 'RED 未执行' : undefined,
+            red?.timedOut ? 'RED 超时，不能作为失败证据' : undefined,
+            red && !red.timedOut && red.exitCode === 0 ? '新测试在实现前就通过了，没有证明它能发现问题' : undefined,
+          ]),
+    ),
+    check(
+      'green',
+      '新测试在实现后通过（GREEN）',
+      present([ev.green.setup && stepFailure('GREEN 准备命令', ev.green.setup), stepFailure('GREEN', ev.green.test)]),
+    ),
+  ];
+}
+
+export function tddAttemptPassed(ev: TddEvidence): boolean {
+  return tddAttemptChecks(ev).every((c) => c.passed);
+}
+
+export interface TddInputs {
+  /** 未配置 tdd.command 时 G5 不通过 */
+  configured: boolean;
+  tasks?: ParsedTasks;
+  /** 引擎记录的 TDD 证据；reachable 表示其 commit 在当前 HEAD 的历史中 */
+  records: { evidence: TddEvidence; reachable: boolean }[];
+}
+
+/** 每个任务都必须有一次通过的 TDD 尝试，且该尝试的 commit 仍在当前历史中 */
+export function evaluateTdd(inputs: TddInputs, now: string): GateEvaluation {
+  const tasks = inputs.tasks?.tasks ?? [];
+  const accepted = new Map<string, TddEvidence>();
+  for (const r of inputs.records) {
+    if (r.reachable && tddAttemptPassed(r.evidence)) accepted.set(r.evidence.taskId, r.evidence);
+  }
+  const checks: CheckResult[] = [
+    check('configured', '已配置只跑指定测试的命令（tdd.command）', inputs.configured ? [] : ['.specforge/config.json 缺少 tdd.command']),
+    check('tasks-done', '所有任务已完成', [
+      ...(!tasks.length ? ['没有任务'] : []),
+      ...tasks.filter((t) => !t.done).map((t) => `${t.id} 未完成`),
+    ]),
+    check(
+      'red-green',
+      '每个任务都有先红后绿的引擎证据（commit 在当前历史中）',
+      tasks.length
+        ? tasks.flatMap((t) => {
+            if (accepted.has(t.id)) return [];
+            const own = inputs.records.filter((r) => r.evidence.taskId === t.id);
+            if (!own.length) return [`${t.id} 没有 TDD 证据`];
+            if (!own.some((r) => r.reachable)) return [`${t.id} 的 TDD 证据所在 commit 已不在当前历史中`];
+            const last = own.filter((r) => r.reachable).at(-1)!.evidence;
+            return [`${t.id}：${tddAttemptChecks(last).filter((c) => !c.passed).map((c) => c.detail).join('；')}`];
+          })
+        : ['没有任务'],
+    ),
+  ];
+  const binding = hashOf(tasks.map((t) => ({ task: t.id, evidence: accepted.get(t.id)?.id ?? null, sha: accepted.get(t.id)?.sha ?? null })));
+  return evaluation('G5', checks, { kind: 'content', value: binding }, now);
 }
 
 // ---------------- G6 双子门禁 ----------------

@@ -12,6 +12,7 @@ import type {
   Question,
   ReviewRecord,
   Role,
+  TddEvidence,
   VerificationEvidence,
 } from '@specforge/shared';
 
@@ -35,6 +36,7 @@ export function defaultConfig(): ProjectConfig {
       'pytest\\.mark\\.skip',
       '\\bt\\.Skip\\(',
     ],
+    tdd: { setup: 'npm ci', command: 'npm test -- {files}' },
     confirmPolicy: {
       业务规则: ['dev', 'product'],
       范围: ['dev', 'product'],
@@ -231,6 +233,41 @@ export class Store {
       if (hashOf(ev) === event.payload.evidenceHash) return ev;
     }
     return undefined;
+  }
+
+  /** 保存 G5 证据；事件记录证据哈希与结论，证据文件被改动后不再被采信 */
+  saveTddEvidence(changeId: string, ev: TddEvidence, actor: Actor, passed: boolean): string {
+    const file = join(this.changeDir(changeId), 'evidence', `${ev.id}.json`);
+    writeJson(file, ev);
+    this.append({
+      type: 'tdd.recorded',
+      actor,
+      changeId,
+      payload: {
+        evidenceId: ev.id,
+        taskId: ev.taskId,
+        base: ev.base,
+        sha: ev.sha,
+        testFiles: ev.testFiles,
+        red: ev.red.test ? { exitCode: ev.red.test.exitCode, timedOut: ev.red.test.timedOut } : null,
+        green: ev.green.test ? { exitCode: ev.green.test.exitCode, timedOut: ev.green.test.timedOut } : null,
+        passed,
+        evidenceHash: hashOf(ev),
+      },
+    });
+    return file;
+  }
+
+  /** 全部 G5 证据（按记录顺序）；哈希与事件日志不一致的证据被忽略 */
+  tddEvidence(changeId: string): TddEvidence[] {
+    return this.events()
+      .filter((e) => e.changeId === changeId && e.type === 'tdd.recorded')
+      .flatMap((event) => {
+        const file = join(this.changeDir(changeId), 'evidence', `${String(event.payload.evidenceId)}.json`);
+        if (!existsSync(file)) return [];
+        const ev = readJson<TddEvidence>(file);
+        return hashOf(ev) === event.payload.evidenceHash ? [ev] : [];
+      });
   }
 
   // ---------- 事件日志 ----------

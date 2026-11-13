@@ -1,14 +1,20 @@
 import type { GateEvaluation, GateId, Stage, Tier } from '@specforge/shared';
 import { ForgeError } from './errors.ts';
 
-// 阶段与出口门禁。G5（TDD）在后续任务中加入。
+// 阶段与出口门禁。S 档没有任务清单，实现阶段不设 G5。
 const EXIT_GATE: Partial<Record<Stage, GateId>> = {
   analysis: 'G1',
   spec: 'G2',
   design: 'G3',
   tasks: 'G4',
+  implement: 'G5',
   closing: 'G6',
 };
+
+function exitGate(stage: Stage, tier: Tier): GateId | undefined {
+  if (tier === 'S' && stage === 'implement') return undefined;
+  return EXIT_GATE[stage];
+}
 
 export function stagesFor(tier: Tier): Stage[] {
   return tier === 'S'
@@ -20,14 +26,14 @@ export function stagesFor(tier: Tier): Stage[] {
 export function gatesRequiredToLeave(stage: Stage, tier: Tier): GateId[] {
   const path = stagesFor(tier);
   const idx = path.indexOf(stage);
-  return path.slice(0, idx + 1).flatMap((s) => (EXIT_GATE[s] ? [EXIT_GATE[s]] : []));
+  return path.slice(0, idx + 1).flatMap((s) => exitGate(s, tier) ?? []);
 }
 
 /** 进入当前阶段所依赖的上游门禁（用于发现"上游失效"） */
 export function upstreamGates(stage: Stage, tier: Tier): GateId[] {
   const path = stagesFor(tier);
   const idx = path.indexOf(stage);
-  return path.slice(0, idx).flatMap((s) => (EXIT_GATE[s] ? [EXIT_GATE[s]] : []));
+  return path.slice(0, idx).flatMap((s) => exitGate(s, tier) ?? []);
 }
 
 /**

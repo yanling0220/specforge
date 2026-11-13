@@ -23,7 +23,7 @@ import {
   upstreamGates,
   verifyChain,
 } from '@specforge/core';
-import { headSha, repoRoot, runVerification } from '@specforge/runner';
+import { git, headSha, repoRoot, runVerification } from '@specforge/runner';
 import type {
   AgentBackend,
   Role,
@@ -37,7 +37,8 @@ import type {
   Tier,
 } from '@specforge/shared';
 import { cmdAgentAnalyze, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
-import { bindingNow, evaluateAll } from './engine.ts';
+import { checkTdd } from './tdd.ts';
+import { bindingNow, evaluateAll, readTasksFacts } from './engine.ts';
 import { defaultConfig, FORGE_DIR, parseActor, Store, type ChangeState } from './store.ts';
 
 const HELP = `SpecForge CLI（第一期）
@@ -79,6 +80,8 @@ change
   sf design approve <id> [--note <说明>]          审批当前版本的方案（L 档或涉及受保护路径时需要）
     design.md 约定：正文引用每个 AC；「## 结构变更」逐条 - [S-n] …，无变更写 - 无：<原因>
     tasks.md 约定：- [ ] T-1 标题（AC-1, S-1）依赖 T-0；勾选进度不影响 G4
+  sf tdd <id> <T-n> --base <sha> [--sha <sha>]     G5：手工实现的任务，确认 base..sha 新增的测试先红后绿（sha 默认 HEAD）
+    config.tdd：{ "command": "node --test {files}", "setup": "npm ci" }（{files} 为新增/修改的测试文件）
   sf verify <id>                                  在干净 worktree 中执行验证并记录证据
   sf review <id> --kind agent|human --verdict pass|fail
                [--reviewer <名字>] [--coverage AC-1,AC-2] [--file <审查报告.json>] [--note <说明>]
@@ -86,7 +89,7 @@ change
 AI agent
   sf agent analyze <id>                           需求分析 agent：复述、分解树、假设、维度、问题节点
   sf agent implement <id> [--task T-n]            实现 agent：在独立 worktree 中实现下一个（或指定）任务，
-                                                  越界改动整体丢弃，通过后由引擎提交并 fast-forward 合入
+                                                  越界改动或 G5（先红后绿）不通过则整体丢弃，通过后由引擎提交并 fast-forward 合入
   sf agent review <id>                            独立审查 agent（G6 6B），针对当前 HEAD
                [--backend claude|deepseek|codex|openai-compatible] [--provider deepseek|ollama]
                [--model <模型>] [--effort low|medium|high|xhigh|max] [--budget <美元上限>] [--verbose]
@@ -136,6 +139,8 @@ const { values: opts, positionals: args } = parseArgs({
     budget: { type: 'string' },
     verbose: { type: 'boolean', short: 'v' },
     task: { type: 'string' },
+    base: { type: 'string' },
+    sha: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -234,7 +239,7 @@ function cmdStatus(store: Store, id: string): void {
   const upstream = upstreamGates(change.stage, change.tier).filter((g) => evals[g]?.status !== 'passed');
   if (upstream.length) console.log(`⚠️  上游门禁已失效：${upstream.join(', ')}（需要重新满足后才能继续推进）`);
   console.log();
-  for (const g of ['G1', 'G2', 'G3', 'G4', 'G6A', 'G6B', 'G6'] as const) {
+  for (const g of ['G1', 'G2', 'G3', 'G4', 'G5', 'G6A', 'G6B', 'G6'] as const) {
     const ev = evals[g];
     if (ev) printGate(ev);
   }
@@ -579,6 +584,26 @@ async function main(): Promise<void> {
       if (ev.mainTreeDirty) console.log('  ⚠️ 工作区有未提交的改动；它们不在本次验证范围内');
       const file = store.saveEvidence(id, ev, actor);
       console.log(`证据已记录：${store.rel(file)}`);
+      return;
+    }
+    case 'tdd': {
+      const id = need(sub, '<id>');
+      const taskId = need(a1, '<T-n>');
+      const actor = store.identity(opts.as);
+      store.load(id);
+      if (!readTasksFacts(store, id)?.tasks.some((t) => t.id === taskId)) throw new ForgeError('not_found', `任务 ${taskId} 不在 tasks.md 中`);
+      const resolve = (ref: string) => {
+        try {
+          return git(store.root, ['rev-parse', '--verify', `${ref}^{commit}`]);
+        } catch {
+          throw new ForgeError('bad_ref', `找不到 commit ${ref}`);
+        }
+      };
+      const base = resolve(need(opts.base, '--base'));
+      const sha = resolve(opts.sha ?? 'HEAD');
+      const { evidence, failures } = checkTdd(store, id, actor, { taskId, base, sha }, console.log);
+      if (failures.length) throw new ForgeError('tdd_failed', `G5 未通过（证据 ${evidence.id}）：${failures.map((c) => c.detail).join('；')}`);
+      console.log(`✓ ${taskId} 先红后绿已确认（${base.slice(0, 7)}..${sha.slice(0, 7)}，证据 ${evidence.id}）`);
       return;
     }
     case 'review':

@@ -8,6 +8,8 @@ import { callPlatformTool, type AgentAdapter, type AgentRunSpec } from '@specfor
 import { headSha } from '@specforge/runner';
 import type { Actor } from '@specforge/shared';
 import { cmdAgentImplement } from '../src/agent-cmds.ts';
+import { evaluateAll } from '../src/engine.ts';
+import { checkTdd } from '../src/tdd.ts';
 import { defaultConfig, Store } from '../src/store.ts';
 
 const dev: Actor = { name: 'yan', role: 'dev' };
@@ -16,7 +18,14 @@ afterEach(() => dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force
 
 const g = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
-function project(): Store {
+/** 可运行的源码与测试：测试在没有实现时失败（RED），有实现后通过（GREEN） */
+const src = (name: string) => ({ [`src/${name}.mjs`]: `export const ${name} = 1;\n` });
+const testOf = (name: string, ac: string) => ({
+  [`test/${name}.test.mjs`]: `import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { ${name} } from '../src/${name}.mjs';\ntest('[${ac}] ${name}', () => assert.equal(${name}, 1));\n`,
+});
+const impl = (name: string, ac: string) => ({ ...src(name), ...testOf(name, ac) });
+
+function project(config: Record<string, unknown> = {}): Store {
   const dir = mkdtempSync(join(tmpdir(), 'sf-impl-'));
   dirs.push(dir);
   g(dir, 'init', '-q');
@@ -35,7 +44,7 @@ function project(): Store {
   g(dir, 'add', '-A');
   g(dir, 'commit', '-qm', 'init');
   mkdirSync(join(dir, '.specforge', 'changes'), { recursive: true });
-  writeFileSync(join(dir, '.specforge', 'config.json'), JSON.stringify({ ...defaultConfig(), verify: [{ name: 'test', command: 'true' }] }));
+  writeFileSync(join(dir, '.specforge', 'config.json'), JSON.stringify({ ...defaultConfig(), verify: [{ name: 'test', command: 'true' }], tdd: { command: 'node --test {files}' }, ...config }));
   const store = new Store(dir);
   store.create(
     {
@@ -77,18 +86,22 @@ describe('sf agent implement', () => {
   it('在 worktree 中实现下一个任务：引擎勾选任务、提交、fast-forward 合入，并留痕', async () => {
     const store = project();
     const base = headSha(store.root);
-    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer({ 'src/x.js': 'export const x = 1;\n', 'test/x.test.js': "test('[AC-1] 正常')\n" }) });
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('x', 'AC-1')) });
 
     const sha = headSha(store.root);
     expect(sha).not.toBe(base);
     expect(g(store.root, 'rev-parse', `${sha}~1`)).toBe(base);
-    expect(readFileSync(join(store.root, 'src/x.js'), 'utf8')).toContain('x = 1');
+    expect(readFileSync(join(store.root, 'src/x.mjs'), 'utf8')).toContain('x = 1');
     expect(readFileSync(join(store.root, 'openspec/changes/c1/tasks.md'), 'utf8')).toMatch(/^- \[x\] T-1/m);
     const msg = g(store.root, 'log', '-1', '--format=%B');
     expect(msg).toMatch(/^T-1: 实现 x/);
     expect(msg).toContain('SpecForge-Task: T-1');
     const committed = store.events().at(-1)!;
-    expect(committed).toMatchObject({ type: 'implement.committed', payload: { taskId: 'T-1', sha, files: ['src/x.js', 'test/x.test.js'] } });
+    expect(committed).toMatchObject({ type: 'implement.committed', payload: { taskId: 'T-1', sha, files: ['src/x.mjs', 'test/x.test.mjs'] } });
+    const tdd = store.events().find((e) => e.type === 'tdd.recorded')!;
+    expect(tdd.payload).toMatchObject({ taskId: 'T-1', base, sha, testFiles: ['test/x.test.mjs'], passed: true, green: { exitCode: 0 } });
+    expect((tdd.payload.red as { exitCode: number }).exitCode).not.toBe(0);
+    expect(committed.payload.tddEvidenceId).toBe(tdd.payload.evidenceId);
     expect(g(store.root, 'worktree', 'list').split('\n')).toHaveLength(1);
   });
 
@@ -118,7 +131,7 @@ describe('sf agent implement', () => {
   it('agent 自己 git commit 也会被收拢为引擎的单个提交', async () => {
     const store = project();
     const base = headSha(store.root);
-    const adapter = writer({ 'src/x.js': 'x' }, {
+    const adapter = writer(impl('x', 'AC-1'), {
       extra: (spec) => {
         g(spec.cwd, 'add', '-A');
         g(spec.cwd, 'commit', '-qm', 'agent 自己的提交');
@@ -155,9 +168,69 @@ describe('sf agent implement', () => {
 
   it('按依赖顺序推进：T-1 完成后再做 T-2', async () => {
     const store = project();
-    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer({ 'src/x.js': 'x' }) });
-    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer({ 'src/y.js': 'y' }, { tests: ['[AC-2] 另一个'] }) });
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('x', 'AC-1')) });
+    expect(evaluateAll(store, store.load('c1')).G5).toMatchObject({ status: 'failed' });
+    await cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(impl('y', 'AC-2'), { tests: ['[AC-2] 另一个'] }) });
     expect(readFileSync(join(store.root, 'openspec/changes/c1/tasks.md'), 'utf8')).toBe('- [x] T-1 实现 x（AC-1, S-1）\n- [x] T-2 补充（AC-2）依赖 T-1\n');
     await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer({}) })).rejects.toThrow(/没有可做的任务/);
+    expect(evaluateAll(store, store.load('c1')).G5).toMatchObject({ status: 'passed' });
+  });
+});
+
+describe('G5 TDD 门', () => {
+  it('新测试在实现前就通过：拒绝合入，记录未通过的证据', async () => {
+    const store = project();
+    const base = headSha(store.root);
+    // 测试只验证已有的 a.js，实现前就能通过，证明不了新行为
+    const passing = { 'test/x.test.mjs': "import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { a } from '../a.js';\ntest('[AC-1] x', () => assert.equal(a, 1));\n" };
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer({ ...src('x'), ...passing }) })).rejects.toThrow(/G5.*实现前就通过/);
+    expect(headSha(store.root)).toBe(base);
+    expect(store.events().find((e) => e.type === 'tdd.recorded')!.payload).toMatchObject({ passed: false, red: { exitCode: 0 } });
+    expect(store.events().at(-1)).toMatchObject({ type: 'implement.rejected', payload: { taskId: 'T-1' } });
+    expect(g(store.root, 'worktree', 'list').split('\n')).toHaveLength(1);
+  });
+
+  it('只改实现不改测试、或实现后测试仍失败：都被拒绝', async () => {
+    const store = project();
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(src('x')) })).rejects.toThrow(/没有新增或修改测试文件/);
+    const wrong = { 'src/x.mjs': 'export const x = 2;\n', ...testOf('x', 'AC-1') };
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter: writer(wrong) })).rejects.toThrow(/GREEN 退出码/);
+    expect(types(store)).not.toContain('implement.committed');
+  });
+
+  it('未配置 tdd.command：运行 agent 之前就拒绝，G5 也不通过', async () => {
+    const store = project({ tdd: undefined });
+    let ran = false;
+    const adapter: AgentAdapter = { backend: 'fake', async run() { ran = true; throw new Error('不应运行'); } };
+    await expect(cmdAgentImplement(store, 'c1', dev, { ...quiet, adapter })).rejects.toThrow(/tdd\.command/);
+    expect(ran).toBe(false);
+    expect(evaluateAll(store, store.load('c1')).G5!.checks.find((c) => c.id === 'configured')!.passed).toBe(false);
+  });
+
+  it('手工实现的任务用 sf tdd 补证据；commit 被改写出历史后证据失效', () => {
+    const store = project();
+    const base = headSha(store.root);
+    const write = (files: Record<string, string>) => Object.entries(files).forEach(([f, c]) => {
+      mkdirSync(dirname(join(store.root, f)), { recursive: true });
+      writeFileSync(join(store.root, f), c);
+    });
+    write(impl('x', 'AC-1'));
+    g(store.root, 'add', '-A');
+    g(store.root, 'commit', '-qm', 'T-1 手工实现');
+    const sha = headSha(store.root);
+    expect(checkTdd(store, 'c1', dev, { taskId: 'T-1', base, sha }, () => {}).failures).toEqual([]);
+    write(impl('y', 'AC-2'));
+    write({ 'openspec/changes/c1/tasks.md': '- [x] T-1 实现 x（AC-1, S-1）\n- [x] T-2 补充（AC-2）依赖 T-1\n' });
+    g(store.root, 'add', '-A');
+    g(store.root, 'commit', '-qm', 'T-2 手工实现');
+    expect(checkTdd(store, 'c1', dev, { taskId: 'T-2', base: sha, sha: headSha(store.root) }, () => {}).failures).toEqual([]);
+    expect(evaluateAll(store, store.load('c1')).G5).toMatchObject({ status: 'passed' });
+
+    // 改写历史：T-1 的 commit 不再在 HEAD 的历史中
+    g(store.root, 'reset', '-q', '--soft', base);
+    g(store.root, 'commit', '-qm', '压成一个提交');
+    const g5 = evaluateAll(store, store.load('c1')).G5!;
+    expect(g5.status).toBe('failed');
+    expect(g5.checks.find((c) => c.id === 'red-green')!.detail).toMatch(/T-1 的 TDD 证据所在 commit 已不在当前历史中/);
   });
 });
