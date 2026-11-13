@@ -5,15 +5,15 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6、T2.8、T3.1、T3.2、T3.3、T4.1 完成
+最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6、T2.8、T3.1、T3.2、T3.3、T4.1、T3.4 完成
 
 ---
 
 ## 当前快照
 
-- 测试：172 个全部通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
+- 测试：180 个全部通过；浏览器端到端 `npm run web:e2e` 通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T3.4`**（交互：在控制台回答 / 确认 / 驳回问题、审批、签字、打回；写操作以登录用户身份、走 `Store.mutate`；角色按 T4.1 的名册校验）。Web 控制台需先 `npm run web:build`，再在项目目录运行 server。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
+- **下一个建议任务：`T3.5`**（产物审阅器：spec / design 行内评论回传给 agent）；另有 T3.4 遗留的「接管」需要用户先明确含义。Web 控制台需先 `npm run web:build`，再在项目目录运行 server。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
 
 ---
 
@@ -55,7 +55,7 @@
 | T3.1 | server（Hono）：REST 读接口 + WebSocket 推送；SQLite 作为 `.specforge/` 的索引（文件为准） | done | T2.* 主体 | `apps/server`：只读 REST（change 列表 / 详情、实时门禁评估、问题、事件、链校验）+ WebSocket 推送（按 change 过滤、断线补发）；`node:sqlite` 内存索引，按事件序号增量同步，日志被改写时全量重建；默认只监听本机。`Store` 与门禁评估移到 `packages/store`，CLI 与 server 共用。测试：`apps/server/test/server.test.ts`（9 个）；实测 `/tmp/sf-t28` |
 | T3.2 | Web 只读控制台（React + Vite）：看板、门禁面板（可点开证据）、事件时间线 | done | T3.1 | `apps/web`：看板（等人红点）、change 详情（阶段条、上游失效、提示条、门禁面板）、证据页（G5 RED/GREEN、验证步骤输出、哈希校验）、事件时间线（过滤），WebSocket 实时刷新；server 新增证据接口、托管构建产物（防目录穿越）、`/gates` 返回流水线。测试：`apps/web/test/model.test.ts`、`server.test.ts` 新增 4 个（含按 change 订阅时同批推送只收到自己的编号）。实测：`/tmp/sf-t27` 用 Chrome headless 截图核对看板、门禁、时间线、证据页 |
 | T3.3 | 需求分析视图：分解树 + 问题卡片 + 完整核对历史 | done | T3.2 | 「需求分析」标签页：复述及确认状态、分解树（问题徽标、阻塞数累加）、问题卡片（选项、还缺的确认角色、关联与暂停的任务）、完整核对历史（含代录渠道、驳回、修改原因）、假设、维度；可深链接到问题。server 详情新增 `questionProgress` / `pausedTasks` / `restatementConfirmed`（core 规则计算）。测试：`model.test.ts` 新增 4 个、`server.test.ts` 新增 1 个。实测：`/tmp/sf-t33`（复制自 sf-t28，经 `Store.mutate` 补了分解树与假设）Chrome headless 截图核对 |
-| T3.4 | 交互：回答/确认/驳回问题、审批 spec、签字、打回、接管 | todo | T3.3 | 所有写操作仍走 `Store.mutate`，写入哈希链 |
+| T3.4 | 交互：回答/确认/驳回问题、审批 spec、签字、打回、接管 | done（「接管」除外，含义待定） | T3.3 | 写操作抽到 `packages/store/src/actions.ts`，CLI 与 server 共用；server 写接口（问题 回答/确认/代录/驳回/推迟/作废、确认复述、假设、审批、签字/打回、推进），身份 = 登录用户 + 所选角色（名册校验），无名册不允许写，POST 只收 JSON；控制台按钮与表单、顶栏角色切换。测试：`apps/server/test/actions.test.ts`（8 个）；真实浏览器端到端 `apps/web/e2e/console.e2e.mjs`（连续 3 次通过） |
 | T3.5 | 产物审阅器：spec/design 行内评论，评论回传给 agent | todo | T3.4, T2.8 | |
 | T3.6 | 测试数量不得下降（解析各语言测试报告） | done | — | `packages/core/src/testcount.ts`（node / vitest / jest / pytest / mocha / cargo + 自定义 `testReport.pattern`）；G6A 新增「测试数量没有下降」；`sf verify` 首次同时验证基线。测试：`testcount.test.ts`（各格式样例、判定规则）、`engine.test.ts`（真实 node --test：删测试不通过、补回通过）；CLI 实测（`/tmp/sf-t27`：基线 1 → 当前 4） |
 
@@ -78,7 +78,6 @@
 | 未启用用户名册的项目仍是自行声明身份 | 兼容旧项目；server 此时只能监听本机 | 在项目中 `sf user add … --admin` 启用 |
 | CLI 身份基于本地文件信任 | 名册只能防误用与冒名记录；有文件写权限的人仍可篡改，但会被 `sf log verify` 与名册校验发现 | T4.4（哈希链锚定）可进一步防整体改写 |
 | server 不提供 HTTPS；会话只在内存中 | 非本机访问需放在 HTTPS 反向代理之后；server 重启后需重新登录 | — |
-| 浏览器中的登录流程未做端到端测试 | 登录接口有单元测试并用 curl 实测，登录页只核对了渲染 | 可与 T3.4 的浏览器测试一起做 |
 | 兼容接口（DeepSeek 等）不返回费用，`--budget` 不生效 | 只能看 token 数 | 可加按 token 的上限 |
 | 实现 agent 的 Bash / run_command 能执行任意命令（如联网、写 worktree 外） | 写主工作区会被指纹检测拦截，但写其他目录无法发现 | 后续可接入沙箱（容器或 Claude SDK sandbox） |
 | 升级给人后没有"解除升级"命令 | 人只能在 closing 阶段手工修复、重新验证和审查后交付；不能再让 agent 修复 | 需要时加 `sf escalation resolve` |
@@ -86,7 +85,8 @@
 | 生成类 agent 实测中，Q-2/Q-3 由 Claude 按推荐项代答、spec 由 Claude 以演示 dev 身份审批 | 仅限演示项目 `/tmp/sf-t28`，不代表真实产品决定 | — |
 | server 启动时打印 `node:sqlite` 的 ExperimentalWarning | 仅提示，不影响功能 | Node 稳定后自然消失 |
 | server 索引只在 `events.jsonl` 变化时同步 | 绕过引擎直接改状态文件不会触发推送；详情接口读文件，并会报告带外修改 | — |
-| Web 控制台的实时刷新只在单元测试中验证了 WebSocket 推送 | 浏览器中"写入后自动刷新"没有做端到端测试 | 可在 T3.4 引入浏览器测试 |
+| Web 控制台的实时刷新只在单元测试中验证了 WebSocket 推送 | 浏览器中「别人写入后自动刷新」没有端到端测试（自己写入后的刷新已覆盖） | 可扩展 `web:e2e` |
+| T3.4 的「接管」未实现 | 设计文档只列了名称，含义未定义（升级后由人接手？取消升级？） | 需要用户明确 |
 | G5 以测试文件为粒度 | 修改已有测试文件时，文件中任一测试先失败即算 RED，不能确认每个新测试都先失败 | 需要逐个测试的结果（如 JUnit XML / TAP 逐条解析）；T3.6 只解析了总数 |
 | 本机没有 `rtk` 命令 | `AGENTS.md`（用户目录）要求的 rtk 前缀无法使用 | 用原生命令 |
 
@@ -147,4 +147,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.1 · server：只读 REST + WebSocket、SQLite 索引；Store 移到 packages/store · `f8768dc`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.2 · Web 只读控制台（看板、门禁面板与证据、事件时间线） · `95f86bf`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.3 · 需求分析视图（分解树、问题卡片、核对历史） · `f581de0`
-- 2026-11-13 · Claude Code (Opus 5.5) · T4.1 · 用户名册、CLI 身份校验、Web 令牌登录；全局测试超时调为 20 秒 · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · T4.1 · 用户名册、CLI 身份校验、Web 令牌登录；全局测试超时调为 20 秒 · `538d0ff`
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.4 · 控制台写操作（问题、复述、假设、审批、签字/打回、推进），写操作与 CLI 共用 store/actions；浏览器端到端测试 · （本次提交）

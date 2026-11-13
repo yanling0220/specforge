@@ -4,25 +4,14 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   addAssumption,
-  checkProxySubject,
-  confirmAnswer,
-  confirmRestatement,
   createQuestion,
-  decideAssumption,
-  deferQuestion,
   emptyAnalysis,
   ForgeError,
-  invalidateQuestion,
   missingRoles,
   nextQuestionId,
   maxFixRounds,
-  nextStage,
   openFixRound,
   pausedTasks,
-  resolveFixRound,
-  proposeAnswer,
-  rejectAnswer,
-  requireRole,
   resolveIdentity,
   setDimension,
   setRestatement,
@@ -46,19 +35,25 @@ import type {
 } from '@specforge/shared';
 import { cmdUserAdd, cmdUserDisable, cmdUserList, cmdUserSet, cmdUserToken } from './users.ts';
 import { cmdAgentAnalyze, cmdAgentGenerate, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
-import { recordReview } from './review.ts';
 import { checkTdd } from './tdd.ts';
 import {
-  bindingNow,
+  advance,
+  approve,
+  confirmRestatement,
+  decideAssumption,
   defaultConfig,
   evaluateAll,
   factsTree,
   FORGE_DIR,
   parseActor,
+  questionAction,
   readTasksFacts,
+  recordReview,
+  signOff,
   Store,
   uncommittedSpecChanges,
   type ChangeState,
+  type QuestionOp,
 } from '@specforge/store';
 
 const HELP = `SpecForge CLI（第一期）
@@ -195,10 +190,6 @@ function findQuestion(state: ChangeState, qid: string): Question {
   return q;
 }
 
-function replaceQuestion(state: ChangeState, q: Question): ChangeState {
-  return { ...state, questions: state.questions.map((x) => (x.id === q.id ? q : x)) };
-}
-
 // ---------------- 输出 ----------------
 
 const STATUS_ICON = { passed: '✅', failed: '❌', unverified: '⚪' } as const;
@@ -301,31 +292,8 @@ function printFixState(change: Change, max: number): void {
 }
 
 function cmdAdvance(store: Store, id: string): void {
-  const actor = store.identity(opts.as);
-  const state = store.load(id);
-  const evals = evaluateAll(store, state);
-  let to;
-  let change = state.change;
-  try {
-    to = nextStage(state.change.stage, state.change.tier, evals);
-    if (state.change.stage === 'implement') change = resolveFixRound(state.change, headSha(store.root));
-  } catch (e) {
-    store.append({ type: 'stage.advance_rejected', actor, changeId: id, payload: { from: state.change.stage, reason: (e as Error).message } });
-    throw e;
-  }
-  store.mutate(
-    id,
-    actor,
-    'stage.advanced',
-    (s) => ({ ...s, change: { ...change, stage: to } }),
-    () => ({
-      from: state.change.stage,
-      to,
-      ...(change !== state.change ? { fixRoundResolved: change.fixRounds!.at(-1) } : {}),
-      gates: Object.fromEntries(Object.entries(evals).map(([g, ev]) => [g, { status: ev.status, boundTo: ev.boundTo.value }])),
-    }),
-  );
-  console.log(`✅ ${state.change.stage} → ${to}`);
+  const { from, to } = advance(store, id, store.identity(opts.as));
+  console.log(`✅ ${from} → ${to}`);
 }
 
 function parseOption(raw: string): QuestionOption {
@@ -389,64 +357,17 @@ function cmdQuestion(store: Store, sub: string, id: string, qid?: string): void 
 
   const target = need(qid, '<Q-n>');
   const onBehalfOf = opts['on-behalf'] ? parseActor(opts['on-behalf']) : undefined;
-  if (onBehalfOf) checkProxySubject(store.users(), onBehalfOf);
-  const ops: Record<string, { type: string; apply: (q: Question) => Question; payload: (q: Question) => Record<string, unknown> }> = {
-    answer: {
-      type: 'question.answered',
-      apply: (q) => proposeAnswer(q, { text: need(opts.text, '--text'), optionId: opts.option?.[0], reason: opts.reason, via: opts.via }, actor, now()),
-      payload: (q) => {
-        const r = q.revisions.at(-1)!;
-        return { questionId: q.id, rev: r.rev, answerHash: r.hash, text: r.text, optionId: r.optionId, reason: r.reason, status: q.status };
-      },
-    },
-    confirm: {
-      type: 'question.confirmed',
-      apply: (q) => confirmAnswer(q, { onBehalfOf, via: opts.via, note: opts.note }, actor, now()),
-      payload: (q) => {
-        const r = q.revisions.at(-1)!;
-        const c = r.confirmations.at(-1)!;
-        return { questionId: q.id, rev: r.rev, answerHash: r.hash, role: c.role, confirmer: c.actor, recordedBy: c.recordedBy, via: c.via, note: c.note, status: q.status };
-      },
-    },
-    reject: {
-      type: 'question.rejected',
-      apply: (q) => rejectAnswer(q, need(opts.note, '--note'), actor, now(), onBehalfOf),
-      payload: (q) => ({ questionId: q.id, rev: q.revisions.at(-1)!.rev, note: q.revisions.at(-1)!.rejection!.note, by: q.revisions.at(-1)!.rejection!.actor }),
-    },
-    defer: {
-      type: 'question.deferred',
-      apply: (q) => deferQuestion(q, need(opts.reason, '--reason'), actor, now()),
-      payload: (q) => ({ questionId: q.id, reason: q.closure!.reason }),
-    },
-    require: {
-      type: 'question.role_required',
-      apply: (q) => {
-        const role = need(opts.role, '--role') as Role;
-        if (!['dev', 'product'].includes(role)) throw new ForgeError('bad_arg', '--role 只能是 dev|product');
-        return requireRole(q, role, need(opts.reason, '--reason'));
-      },
-      payload: (q) => ({ questionId: q.id, role: opts.role, reason: opts.reason, requiredRoles: q.requiredRoles, status: q.status }),
-    },
-    invalidate: {
-      type: 'question.invalidated',
-      apply: (q) => invalidateQuestion(q, need(opts.reason, '--reason'), actor, now()),
-      payload: (q) => ({ questionId: q.id, reason: q.closure!.reason }),
-    },
+  const ops: Record<string, () => QuestionOp> = {
+    answer: () => ({ kind: 'answer', text: need(opts.text, '--text'), optionId: opts.option?.[0], reason: opts.reason, via: opts.via }),
+    confirm: () => ({ kind: 'confirm', onBehalfOf, via: opts.via, note: opts.note }),
+    reject: () => ({ kind: 'reject', note: need(opts.note, '--note'), onBehalfOf }),
+    defer: () => ({ kind: 'defer', reason: need(opts.reason, '--reason') }),
+    invalidate: () => ({ kind: 'invalidate', reason: need(opts.reason, '--reason') }),
+    require: () => ({ kind: 'require', role: need(opts.role, '--role') as Role, reason: need(opts.reason, '--reason') }),
   };
   const op = ops[sub];
   if (!op) throw new ForgeError('bad_cmd', `未知命令 sf q ${sub}`);
-  let updated: Question | undefined;
-  store.mutate(
-    id,
-    actor,
-    op.type,
-    (s) => {
-      updated = op.apply(findQuestion(s, target));
-      return replaceQuestion(s, updated);
-    },
-    () => op.payload(updated!),
-  );
-  printQuestionLine(updated!);
+  printQuestionLine(questionAction(store, id, actor, target, op()));
 }
 
 function cmdReview(store: Store, id: string): void {
@@ -455,20 +376,24 @@ function cmdReview(store: Store, id: string): void {
   const verdict = need(opts.verdict, '--verdict') as ReviewRecord['verdict'];
   if (!['agent', 'human'].includes(kind)) throw new ForgeError('bad_arg', '--kind 只能是 agent|human');
   if (!['pass', 'fail'].includes(verdict)) throw new ForgeError('bad_arg', '--verdict 只能是 pass|fail');
-  if (kind === 'human' && actor.role !== 'dev') throw new ForgeError('bad_role', '开发者签字必须由 dev 角色完成');
   const report = opts.file ? (JSON.parse(readFileSync(opts.file, 'utf8')) as { coverage?: string[]; findings?: ReviewFinding[] }) : {};
-  const sha = headSha(store.root);
+  if (kind === 'human') {
+    const record = signOff(store, id, actor, { verdict, note: opts.note, findings: report.findings }, console.log);
+    console.log(`已记录 开发者签字：${verdict}（commit ${record.sha.slice(0, 7)}）`);
+    return;
+  }
+  // 手工登记外部 agent 的审查报告
   const record: ReviewRecord = {
     kind,
-    sha,
+    sha: headSha(store.root),
     verdict,
-    reviewer: kind === 'agent' ? { name: opts.reviewer ?? 'review-agent', role: 'agent' } : actor,
+    reviewer: { name: opts.reviewer ?? 'review-agent', role: 'agent' },
     at: now(),
     coverage: report.coverage ?? list(opts.coverage),
     findings: report.findings ?? [],
     note: opts.note,
   };
-  console.log(`已记录 ${kind === 'agent' ? 'agent 审查' : '开发者签字'}：${verdict}（commit ${sha.slice(0, 7)}）`);
+  console.log(`已记录 agent 审查：${verdict}（commit ${record.sha.slice(0, 7)}）`);
   recordReview(store, id, actor, record, {}, console.log);
 }
 
@@ -602,7 +527,7 @@ async function main(): Promise<void> {
       const id = need(sub, '<id>');
       const actor = store.identity(opts.as);
       if (opts.confirm) {
-        store.mutate(id, actor, 'restatement.confirmed', (s) => ({ ...s, analysis: confirmRestatement(s.analysis, actor, now(), opts.via) }), (s) => ({ hash: s.analysis.restatement!.hash, via: opts.via }));
+        confirmRestatement(store, id, actor, opts.via);
         console.log('需求复述已确认');
       } else {
         store.mutate(id, actor, 'restatement.set', (s) => ({ ...s, analysis: setRestatement(s.analysis, need(opts.text, '--text')) }), (s) => ({ text: s.analysis.restatement!.text, hash: s.analysis.restatement!.hash }));
@@ -620,7 +545,7 @@ async function main(): Promise<void> {
         const aid = need(a2, '<A-n>');
         if (opts.accept === opts.reject) throw new ForgeError('bad_arg', '需要且只能指定 --accept 或 --reject 之一');
         const status = opts.accept ? 'accepted' : 'rejected';
-        store.mutate(id, actor, 'assumption.decided', (s) => ({ ...s, analysis: decideAssumption(s.analysis, aid, status, actor, now(), opts.note) }), () => ({ assumptionId: aid, status, note: opts.note }));
+        decideAssumption(store, id, actor, aid, status, opts.note);
         console.log(`${aid}：${status === 'accepted' ? '已确认' : '已否决'}`);
       } else throw new ForgeError('bad_cmd', `未知命令 sf assume ${sub ?? ''}`);
       return;
@@ -648,11 +573,7 @@ async function main(): Promise<void> {
     case 'design': {
       if (sub !== 'approve') throw new ForgeError('bad_cmd', `未知命令 sf ${cmd} ${sub ?? ''}`);
       const id = need(a1, '<id>');
-      const actor = store.identity(opts.as);
-      if (actor.role !== 'dev') throw new ForgeError('bad_role', `${cmd} 审批需要 dev 角色`);
-      const hash = bindingNow(store, store.load(id), cmd === 'spec' ? 'G2' : 'G3');
-      if (!hash) throw new ForgeError('no_target', `S 档没有 ${cmd} 审批`);
-      store.mutate(id, actor, `${cmd}.approved`, (s) => ({ ...s, approvals: [...s.approvals, { target: cmd, hash, actor, at: now(), note: opts.note }] }), () => ({ hash, note: opts.note }));
+      const hash = approve(store, id, store.identity(opts.as), cmd, opts.note);
       console.log(`已审批当前 ${cmd}（hash ${hash.slice(0, 12)}）；内容或上游再有改动，审批即失效`);
       return;
     }

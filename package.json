@@ -12,7 +12,8 @@
     "sf": "node apps/cli/src/main.ts",
     "server": "node apps/server/src/main.ts",
     "web:build": "npm run build -w @specforge/web",
-    "web:dev": "npm run dev -w @specforge/web"
+    "web:dev": "npm run dev -w @specforge/web",
+    "web:e2e": "node apps/web/e2e/console.e2e.mjs"
   },
   "engines": {
     "node": ">=22.18"

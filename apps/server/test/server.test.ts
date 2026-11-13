@@ -163,7 +163,8 @@ describe('REST 接口（只读）', () => {
     expect(await get(app, '/api/changes/c1/questions/Q-9')).toMatchObject({ status: 404 });
     expect(await get(app, '/api/events?limit=abc')).toMatchObject({ status: 400, body: { error: { code: 'bad_arg' } } });
     expect(await get(app, '/api/nope')).toMatchObject({ status: 404 });
-    expect((await app.request('/api/changes', { method: 'POST' })).status).toBe(404);
+    expect((await app.request('/api/changes', { method: 'POST' })).status).toBe(415);
+    expect((await app.request('/api/changes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(404);
     index.close();
   });
 });

@@ -1,15 +1,21 @@
 import { useEffect } from 'react';
-import type { Question } from '@specforge/shared';
-import type { ChangeDetail } from '../api.ts';
+import type { Question, Role } from '@specforge/shared';
+import { api, type ChangeDetail } from '../api.ts';
+import { useData } from '../live.ts';
+import { useMe } from '../me.tsx';
+import { Action } from './Action.tsx';
 import { buildTree, DIM_STATUS_LABEL, formatTime, href, NODE_KIND_LABEL, Q_STATUS_LABEL, questionHistory, SEVERITY_LABEL, sortQuestions, type TreeNode } from '../model.ts';
 
 // 需求分析视图（只读）：复述、分解树（带问题徽标）、问题卡片与完整核对历史、假设、维度覆盖。
-// 回答 / 确认 / 驳回在 T3.4 加入，目前用 sf q … 命令。
+// 登录后可以回答、确认（本人或代录）、驳回、推迟、作废（T3.4）；校验以服务端为准。
 
-export function AnalysisView({ detail, qid }: { detail: ChangeDetail; qid?: string }) {
+export function AnalysisView({ detail, qid, onChanged }: { detail: ChangeDetail; qid?: string; onChanged: () => void }) {
   const { analysis, questions, change } = detail;
   const { roots, orphans } = buildTree(analysis.nodes, questions);
   const r = analysis.restatement;
+  const { canWrite, role } = useMe();
+  // 代录时选择对象
+  const users = useData(() => (canWrite ? api.users() : Promise.resolve([])), [canWrite]);
 
   // 深链接到某个问题时滚动过去
   useEffect(() => {
@@ -30,6 +36,9 @@ export function AnalysisView({ detail, qid }: { detail: ChangeDetail; qid?: stri
                   ? '✗ 确认后复述被修改，需要重新确认'
                   : '✗ 尚未确认'}
             </p>
+            {canWrite && role && !detail.restatementConfirmed && (
+              <Action label={`以 ${role} 身份确认复述`} fields={[{ key: 'via', label: '核对渠道（可选）' }]} run={(v) => api.confirmRestatement(change.id, { role, via: v.via || undefined })} onDone={onChanged} />
+            )}
           </>
         ) : (
           <p className="muted">还没有需求复述（sf restate 或 sf agent analyze）</p>
@@ -67,7 +76,9 @@ export function AnalysisView({ detail, qid }: { detail: ChangeDetail; qid?: stri
             问题 <small className="muted">{questions.length} 个 · 未解决 {questions.filter((q) => !detail.questionProgress[q.id]?.resolved).length}</small>
           </h2>
           {questions.length ? (
-            sortQuestions(questions).map((q) => <QuestionCard key={q.id} q={q} detail={detail} selected={q.id === qid} />)
+            sortQuestions(questions).map((q) => (
+              <QuestionCard key={q.id} q={q} detail={detail} selected={q.id === qid} users={users.data ?? []} onChanged={onChanged} />
+            ))
           ) : (
             <p className="muted">还没有问题</p>
           )}
@@ -85,6 +96,12 @@ export function AnalysisView({ detail, qid }: { detail: ChangeDetail; qid?: stri
                   <span className={a.status === 'accepted' ? 'pass' : a.status === 'rejected' ? 'fail' : 'warn-text'}>
                     {a.status === 'accepted' ? '✓ 已确认' : a.status === 'rejected' ? '✗ 已否决' : '待决定'}
                   </span>
+                  {canWrite && role && a.status === 'pending' && (
+                    <span className="inline-actions">
+                      <Action label="确认" run={() => api.decideAssumption(change.id, a.id, { role, status: 'accepted' })} onDone={onChanged} />
+                      <Action label="否决" danger fields={[{ key: 'note', label: '否决原因', required: true }]} run={(v) => api.decideAssumption(change.id, a.id, { role, status: 'rejected', note: v.note })} onDone={onChanged} />
+                    </span>
+                  )}
                   {a.decidedBy && (
                     <span className="muted">
                       {' '}
@@ -160,7 +177,9 @@ function QChip({ q, changeId, selected }: { q: Question; changeId: string; selec
   );
 }
 
-function QuestionCard({ q, detail, selected }: { q: Question; detail: ChangeDetail; selected: boolean }) {
+type UserRow = { name: string; roles: Role[]; disabled: boolean };
+
+function QuestionCard({ q, detail, selected, users, onChanged }: { q: Question; detail: ChangeDetail; selected: boolean; users: UserRow[]; onChanged: () => void }) {
   const progress = detail.questionProgress[q.id];
   const current = q.revisions.at(-1);
   const paused = Object.entries(detail.pausedTasks)
@@ -198,6 +217,7 @@ function QuestionCard({ q, detail, selected }: { q: Question; detail: ChangeDeta
         {(q.taskIds?.length ?? 0) > 0 && <span className="muted"> · 关联任务 {q.taskIds!.join(', ')}</span>}
         {paused.length > 0 && <span className="fail"> · 暂停中：{paused.join(', ')}</span>}
       </p>
+      <QuestionActions q={q} changeId={detail.change.id} missing={progress?.missingRoles ?? []} users={users} onChanged={onChanged} />
       <details open={selected}>
         <summary>核对历史（{q.revisions.length} 个版本）</summary>
         <ol className="history">
@@ -213,5 +233,55 @@ function QuestionCard({ q, detail, selected }: { q: Question; detail: ChangeDeta
         </ol>
       </details>
     </article>
+  );
+}
+
+/** 问题的写操作：按状态与当前角色显示可用的操作 */
+function QuestionActions({ q, changeId, missing, users, onChanged }: { q: Question; changeId: string; missing: Role[]; users: UserRow[]; onChanged: () => void }) {
+  const { canWrite, role } = useMe();
+  if (!canWrite || !role || q.status === 'invalidated' || q.status === 'deferred') return null;
+  const run = (action: Parameters<typeof api.questionAction>[2]) => (v: Record<string, string>) =>
+    api.questionAction(changeId, q.id, action, { role, ...Object.fromEntries(Object.entries(v).filter(([, x]) => x !== '')) });
+  const confirmed = q.status === 'confirmed';
+  // 代录对象：名册中拥有尚缺角色的其他用户
+  const proxyOptions = users
+    .filter((u) => !u.disabled)
+    .flatMap((u) => u.roles.filter((r) => missing.includes(r)).map((r) => ({ value: `${u.name}:${r}`, label: `${u.name}（${r}）` })));
+
+  return (
+    <div className="inline-actions">
+      <Action
+        label={confirmed ? '修改答案' : q.revisions.length ? '提交新版本答案' : '回答'}
+        fields={[
+          ...(q.options.length ? [{ key: 'optionId', label: '选项', kind: 'select' as const, options: [{ value: '', label: '（不选）' }, ...q.options.map((o) => ({ value: o.id, label: `${o.id}. ${o.text}` }))] }] : []),
+          { key: 'text', label: '答案', kind: 'textarea', required: true },
+          ...(confirmed ? [{ key: 'reason', label: '修改原因（已确认的答案必须写）', required: true }] : []),
+          { key: 'via', label: '核对渠道（可选）' },
+        ]}
+        run={run('answer')}
+        onDone={onChanged}
+      />
+      {q.status === 'drafted' && missing.includes(role) && (
+        <Action label={`以 ${role} 身份确认`} fields={[{ key: 'note', label: '说明（可选）' }]} run={run('confirm')} onDone={onChanged} />
+      )}
+      {q.status === 'drafted' && proxyOptions.length > 0 && (
+        <Action
+          label="代录确认"
+          fields={[
+            { key: 'subject', label: '代谁确认', kind: 'select', options: proxyOptions },
+            { key: 'via', label: '核对渠道（会议纪要、IM 链接等）', required: true },
+            { key: 'note', label: '说明（可选）' },
+          ]}
+          run={(v) => {
+            const [onBehalfName, onBehalfRole] = v.subject!.split(':');
+            return api.questionAction(changeId, q.id, 'confirm', { role, onBehalfName, onBehalfRole, via: v.via, ...(v.note ? { note: v.note } : {}) });
+          }}
+          onDone={onChanged}
+        />
+      )}
+      {q.status === 'drafted' && <Action label="驳回" danger fields={[{ key: 'note', label: '驳回意见', kind: 'textarea', required: true }]} run={run('reject')} onDone={onChanged} />}
+      {!confirmed && <Action label="推迟" fields={[{ key: 'reason', label: '推迟原因', required: true }]} run={run('defer')} onDone={onChanged} />}
+      <Action label="作废" danger fields={[{ key: 'reason', label: '作废原因', required: true }]} run={run('invalidate')} onDone={onChanged} />
+    </div>
   );
 }

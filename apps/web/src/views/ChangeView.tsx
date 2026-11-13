@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import type { GateEvaluation } from '@specforge/shared';
-import { api, type EvidenceEntry } from '../api.ts';
+import { api, type ChangeDetail, type EvidenceEntry, type GatesResponse } from '../api.ts';
+import { useMe } from '../me.tsx';
+import { Action } from './Action.tsx';
 import { useData } from '../live.ts';
 import { evidenceForGate, formatTime, GATE_LABEL, href, orderedGates, pipelineSteps, STAGE_LABEL } from '../model.ts';
 import { Loading, StatusIcon } from './common.tsx';
@@ -7,9 +10,12 @@ import { AnalysisView } from './AnalysisView.tsx';
 import { Timeline } from './Timeline.tsx';
 
 export function ChangeView({ id, tab, qid, version }: { id: string; tab: 'gates' | 'timeline' | 'analysis'; qid?: string; version: number }) {
-  const detail = useData(() => api.change(id), [id, version]);
-  const gates = useData(() => api.gates(id), [id, version]);
-  const evidence = useData(() => api.evidence(id), [id, version]);
+  // 写操作成功后立即刷新（WebSocket 推送也会触发刷新）
+  const [local, setLocal] = useState(0);
+  const refresh = () => setLocal((v) => v + 1);
+  const detail = useData(() => api.change(id), [id, version, local]);
+  const gates = useData(() => api.gates(id), [id, version, local]);
+  const evidence = useData(() => api.evidence(id), [id, version, local]);
 
   if (!detail.data || !gates.data) return <Loading error={detail.error ?? gates.error} />;
   const { change, questions } = detail.data;
@@ -87,9 +93,10 @@ export function ChangeView({ id, tab, qid, version }: { id: string; tab: 'gates'
       </div>
 
       {tab === 'analysis' ? (
-        <AnalysisView detail={detail.data} qid={qid} />
+        <AnalysisView detail={detail.data} qid={qid} onChanged={refresh} />
       ) : tab === 'gates' ? (
         <>
+          <GateActions id={id} detail={detail.data} gates={gates.data} onDone={refresh} />
           <p className="muted">
             门禁按{detail.data.factsSource.kind === 'commit' ? ` HEAD（${detail.data.factsSource.sha.slice(0, 7)}）` : '工作区'}中的 OpenSpec 文件实时评估
           </p>
@@ -137,5 +144,76 @@ function GateCard({ gate, changeId, evidence }: { gate: GateEvaluation; changeId
         </div>
       )}
     </section>
+  );
+}
+
+/** 门禁相关的人工操作：审批与签字 / 打回需要 dev 角色；推进由门禁把关。服务端最终校验 */
+function GateActions({ id, detail, gates, onDone }: { id: string; detail: ChangeDetail; gates: GatesResponse; onDone: () => void }) {
+  const { canWrite, role } = useMe();
+  if (!canWrite || !role) return null;
+  const { stage } = detail.change;
+  const needsApproval = (g?: GateEvaluation) => !!g?.checks.some((c) => c.id === 'approved' && !c.passed);
+  const notDev = role !== 'dev';
+  const devOnly = notDev ? '需要以 dev 身份操作' : undefined;
+  const next = gates.pipeline[gates.pipeline.findIndex((p) => p.stage === stage) + 1];
+
+  return (
+    <div className="action-bar">
+      {needsApproval(gates.gates.G2) && (
+        <Action label="审批当前 spec" disabled={notDev} title={devOnly} confirm="审批绑定当前 spec 内容的哈希；内容或上游再变化，审批即失效。确认审批？" run={() => api.approve(id, { role, target: 'spec' })} onDone={onDone} />
+      )}
+      {needsApproval(gates.gates.G3) && (
+        <Action label="审批当前方案" disabled={notDev} title={devOnly} confirm="审批绑定当前方案内容的哈希。确认审批？" run={() => api.approve(id, { role, target: 'design' })} onDone={onDone} />
+      )}
+      {stage === 'closing' && (
+        <>
+          <Action
+            label="签字通过"
+            disabled={notDev}
+            title={devOnly}
+            confirm={`以 ${role} 身份对当前 HEAD 签字通过？`}
+            run={() => api.signoff(id, { role, verdict: 'pass' })}
+            onDone={onDone}
+          />
+          <Action
+            label="打回"
+            danger
+            disabled={notDev}
+            title={devOnly}
+            fields={[
+              { key: 'note', label: '打回原因', kind: 'textarea', required: true },
+              { key: 'anchor', label: '锚点（AC 编号或问题编号，可选）', placeholder: 'AC-2' },
+              {
+                key: 'kind',
+                label: '类型',
+                kind: 'select',
+                options: [
+                  { value: 'missing', label: '漏做' },
+                  { value: 'regression', label: '破坏已有' },
+                  { value: 'unplanned', label: '计划外新增' },
+                ],
+              },
+            ]}
+            run={(v) =>
+              api.signoff(id, {
+                role,
+                verdict: 'fail',
+                note: v.note,
+                findings: [{ severity: 'blocking', kind: v.kind as 'missing', text: v.note!, ...(v.anchor ? { anchor: v.anchor } : {}) }],
+              })
+            }
+            onDone={onDone}
+          />
+        </>
+      )}
+      {next && (
+        <Action
+          label={`推进到「${STAGE_LABEL[next.stage]}」`}
+          confirm={`引擎会重新评估门禁，全部通过才能推进。推进到「${STAGE_LABEL[next.stage]}」？`}
+          run={() => api.advance(id, { role })}
+          onDone={onDone}
+        />
+      )}
+    </div>
   );
 }

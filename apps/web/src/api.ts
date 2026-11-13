@@ -7,6 +7,7 @@ import type {
   GateEvaluation,
   GateId,
   Question,
+  ReviewFinding,
   ReviewRecord,
   Role,
   Stage,
@@ -112,6 +113,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const enc = encodeURIComponent;
+
+export type QuestionAction = 'answer' | 'confirm' | 'reject' | 'defer' | 'invalidate';
+
+function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  return request<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+}
 const PAGE = 1000;
 
 export const api = {
@@ -136,4 +143,16 @@ export const api = {
   login: (name: string, token: string) =>
     request<{ user: SessionUser }>('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, token }) }),
   logout: () => request<{ ok: true }>('/api/auth/logout', { method: 'POST' }),
+  users: () => get<{ users: { name: string; roles: Role[]; admin: boolean; disabled: boolean }[] }>('/api/users').then((r) => r.users),
+
+  // ---------- 写操作（T3.4）：服务端按登录用户 + role 校验，走 Store.mutate ----------
+  questionAction: (id: string, qid: string, action: QuestionAction, body: Record<string, unknown>) =>
+    post<{ question: Question }>(`/api/changes/${enc(id)}/questions/${enc(qid)}/${action}`, body),
+  confirmRestatement: (id: string, body: { role: Role; via?: string }) => post<{ ok: true }>(`/api/changes/${enc(id)}/restatement/confirm`, body),
+  decideAssumption: (id: string, aid: string, body: { role: Role; status: 'accepted' | 'rejected'; note?: string }) =>
+    post<{ ok: true }>(`/api/changes/${enc(id)}/assumptions/${enc(aid)}/decide`, body),
+  approve: (id: string, body: { role: Role; target: 'spec' | 'design'; note?: string }) => post<{ hash: string }>(`/api/changes/${enc(id)}/approve`, body),
+  signoff: (id: string, body: { role: Role; verdict: 'pass' | 'fail'; note?: string; findings?: ReviewFinding[] }) =>
+    post<{ review: ReviewRecord; change: Change }>(`/api/changes/${enc(id)}/signoff`, body),
+  advance: (id: string, body: { role: Role }) => post<{ from: Stage; to: Stage }>(`/api/changes/${enc(id)}/advance`, body),
 };

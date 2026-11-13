@@ -112,8 +112,8 @@ describe('Web 登录（T4.1）', () => {
     const { get, login, cookieOf, index } = setup(store);
     const cookie = cookieOf(await login('lily', 'tok-lily'));
     writeFileSync(store.path('users.json'), JSON.stringify({ ...emptyRegistry(), users: [] }));
-    expect((await get('/api/changes', cookie)).status).toBe(400);
-    expect((await login('lily', 'tok-lily')).status).toBe(400);
+    expect((await get('/api/changes', cookie)).status).toBe(409);
+    expect((await login('lily', 'tok-lily')).status).toBe(409);
     index.close();
   });
 

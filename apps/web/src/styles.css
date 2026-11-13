@@ -760,3 +760,100 @@ button.link {
   font: inherit;
   margin-left: 6px;
 }
+
+/* 写操作（T3.4） */
+.btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn.danger {
+  color: var(--fail);
+}
+.btn.primary.danger {
+  background: var(--fail);
+  border-color: var(--fail);
+  color: #fff;
+}
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.error.inline {
+  display: inline-block;
+  padding: 2px 8px;
+  margin: 0;
+  font-size: 12px;
+}
+.inline-actions,
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 8px 0;
+}
+.action-bar {
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.action-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+  min-width: 300px;
+  flex: 1 1 100%;
+  font-size: 13px;
+}
+.action-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.action-form input,
+.action-form textarea,
+.action-form select,
+.role-picker {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+}
+.action-buttons {
+  display: flex;
+  gap: 6px;
+}
+.role-picker {
+  margin-left: 6px;
+  font-size: 12px;
+  padding: 1px 4px;
+}

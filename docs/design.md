@@ -452,6 +452,16 @@ specforge/
 - **需求分析视图**（T3.3）：change 详情的「需求分析」标签页，`#/changes/:id/analysis[/:qid]` 可深链接到问题。内容：需求复述及确认状态（确认后被改动会标出）；分解树（目标 → 功能 → 场景，问题徽标挂在节点上，阻塞数向上累加；没有节点的问题单列）；问题卡片（严重程度、分类、状态、为什么问、依据、选项与推荐/默认/已选、需要的角色与当前版本还缺的角色、依赖、关联任务、暂停的任务）；完整核对历史（提出、各版本答案与修改原因、每次确认含代录人与渠道、驳回、推迟/作废）；假设；维度覆盖表。
 - 「还缺哪些角色确认」「哪些任务被暂停」「复述是否仍有效」由 server 用 core 的规则计算后返回（`questionProgress`、`pausedTasks`、`restatementConfirmed`），前端不重复实现。
 
+### 9.5 控制台写操作（T3.4）
+
+- **前提**：项目启用了用户名册并已登录。没有名册时控制台只读（写接口返回 403），避免匿名修改。
+- **身份**：登录用户 + 请求中选择的角色（顶栏切换，必须已授予），服务端用名册重新校验。所有写操作都调用 `@specforge/store` 的操作函数（`questionAction`、`confirmRestatement`、`decideAssumption`、`approve`、`signOff`、`advance`、`recordReview`），与 CLI 共用同一份代码与事件格式，最终走 `Store.mutate` 写入哈希链。
+- **接口**：`POST /api/changes/:id/questions/:qid/{answer|confirm|reject|defer|invalidate}`（代录：`onBehalfName` + `onBehalfRole` + `via`，对象必须在名册中且有该角色）、`/restatement/confirm`、`/assumptions/:aid/decide`、`/approve`（dev）、`/signoff`（dev；不通过即打回，必须写原因，可附锚定的阻塞问题，收尾阶段会打回实现或升级）、`/advance`（门禁把关，不通过返回 409 并记录拒绝事件）。
+- **防 CSRF**：所有 POST 只接受 `application/json`（跨站表单发不出），会话 Cookie 为 SameSite=Strict。
+- **错误码**：角色或权限问题 403，门禁拦截与状态冲突（带外修改）409，参数问题 400。
+- **端到端测试**：`npm run web:e2e`（需要本机 Chrome 与 `npm run web:build`）：真实浏览器中走完回答 → 产品确认 → 推进 → 审批 → 推进 → 被门禁拦截，最后校验事件身份与哈希链。不属于 `npm test`。
+- 尚未实现：「接管」（设计文档第 10 节审批收件箱中的一项，含义待定）；新建 change、编辑复述 / 假设 / 维度、提问等仍用 CLI。
+
 ---
 
 ## 10. 开发者控制台（第二期）

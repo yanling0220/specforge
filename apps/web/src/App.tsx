@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { api, UNAUTHORIZED_EVENT, type SessionUser } from './api.ts';
+import type { Role } from '@specforge/shared';
+import { api, UNAUTHORIZED_EVENT } from './api.ts';
+import { MeProvider, useMe } from './me.tsx';
 import { useData, useLive, type LiveStatus } from './live.ts';
 import { href, parseRoute, type Route } from './model.ts';
 import { Board } from './views/Board.tsx';
@@ -31,10 +33,15 @@ export function App() {
   if (!me.data) return <div className="app"><main>{me.error ? <div className="error">无法连接 server：{me.error.message}</div> : null}</main></div>;
   if (me.data.required && !me.data.user) return <div className="app"><main><Login onLogin={() => setAuthVersion((v) => v + 1)} /></main></div>;
   const logout = me.data.user ? () => void api.logout().then(() => setAuthVersion((v) => v + 1)) : undefined;
-  return <Console user={me.data.user} onLogout={logout} />;
+  return (
+    <MeProvider user={me.data.user}>
+      <Console onLogout={logout} />
+    </MeProvider>
+  );
 }
 
-function Console({ user, onLogout }: { user: SessionUser | null; onLogout?: () => void }) {
+function Console({ onLogout }: { onLogout?: () => void }) {
+  const { user, role, setRole } = useMe();
   const route = useRoute();
   const changeId = route.page === 'change' || route.page === 'evidence' ? route.id : undefined;
   const live = useLive(changeId);
@@ -64,13 +71,24 @@ function Console({ user, onLogout }: { user: SessionUser | null; onLogout?: () =
         {user ? (
           <span className="me">
             {user.name}
-            <span className="muted">（{user.roles.join(', ')}{user.admin ? '，管理员' : ''}）</span>
+            {user.roles.length > 1 ? (
+              <select className="role-picker" value={role} onChange={(e) => setRole(e.target.value as Role)} title="以哪个角色操作">
+                {user.roles.map((r) => (
+                  <option key={r} value={r}>
+                    以 {r} 身份
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="muted">（{role}）</span>
+            )}
+            {user.admin && <span className="muted">管理员</span>}
             <button className="link" onClick={onLogout}>
               退出
             </button>
           </span>
         ) : (
-          <span className="muted small" title="项目没有启用用户名册：sf user add 启用后需要登录">未启用登录</span>
+          <span className="muted small" title="项目没有启用用户名册：sf user add … --admin 启用后需要登录，并可在控制台操作">未启用登录 · 只读</span>
         )}
       </header>
       <main>
@@ -79,7 +97,7 @@ function Console({ user, onLogout }: { user: SessionUser | null; onLogout?: () =
         {route.page === 'change' && <ChangeView id={route.id} tab={route.tab} qid={route.qid} version={live.version} />}
         {route.page === 'evidence' && <EvidenceView id={route.id} eid={route.eid} />}
       </main>
-      <footer>只读控制台 · 所有修改仍通过 sf 命令完成</footer>
+      <footer>{user ? `以 ${user.name}（${role}）身份操作；所有修改写入哈希链` : '只读：启用用户名册并登录后可在控制台操作'}</footer>
     </div>
   );
 }
