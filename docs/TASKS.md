@@ -5,15 +5,17 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-13 · Claude Code（Opus 5.5） · T2.6v、T2.7、T2.10、T2.9、T2.11、T3.6、T2.8、T3.1、T3.2、T3.3、T4.1、T3.4、T3.5 完成
+最后更新：2026-11-13 · Claude Code（Opus 5.5） · 当日收工（节点 `checkpoint-2026-11-13`）
 
 ---
 
 ## 当前快照
 
-- 测试：198 个全部通过；浏览器端到端 `npm run web:e2e` 通过（`npm test`），类型检查无错误（`npm run typecheck`，含 `apps/web`）
+- 测试：198 个全部通过（`npm test`）；浏览器端到端 `npm run web:e2e` 通过；类型检查无错误（`npm run typecheck`，含 `apps/web`）
 - 已推送：https://github.com/yanling0220/specforge （`main`）
-- **下一个建议任务：`T4.4`**（哈希链头定期锚定，防止整条链被重写）；`T4.2`（产品方直接登录确认）已基本被 T4.1 + T3.4 覆盖，可复核后关闭；`T2.3c` 需要 Codex 登录。Web 控制台需先 `npm run web:build`，再在项目目录运行 server。注意：已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit
+- **下一个建议任务：`T4.4`**（哈希链头定期锚定）。可选：用 DeepSeek 在 `/tmp/sf-t35` 重跑修订模式，验证 spec-writer 会使用 `outOfScope`（约 2 万 token，需用户同意）；复核 `T4.2` 是否已被 T4.1 + T3.4 覆盖；`T2.3c` 需要 Codex 登录。
+- **使用提示**：Web 控制台需先 `npm run web:build`，再在项目目录运行 server；在控制台修改需要启用用户名册（`sf user add … --admin`）。已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit。浏览器端到端：`npm run web:e2e`（需本机 Chrome）。
+- **与用户的协作约定**：每完成一个任务就停下汇报并等待确认，推送前先问；给出多种改法时逐个写明优缺点。
 
 ---
 
@@ -155,4 +157,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.4 · 接管：任务由人接手实现（sf task、控制台任务面板），agent 跳过 · `4cc5c60`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 产物审阅器：行内评论、门禁、生成类 agent 按评论修订 · `2184e14`
 - 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · DeepSeek 实测修订模式；修复同文行导致的评论误定位（评论记录上下文） · `73fcc03`
-- 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 用户选定方案：spec-writer 可向 proposal「范围外」追加引用已确认问题的条目（只追加） · （本次提交）
+- 2026-11-13 · Claude Code (Opus 5.5) · T3.5 · 用户选定方案：spec-writer 可向 proposal「范围外」追加引用已确认问题的条目（只追加） · `9ece245`
+- 2026-11-13 · Claude Code (Opus 5.5) · — · 当日收工：更新快照，打节点 `checkpoint-2026-11-13` · （本次提交）
