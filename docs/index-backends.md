@@ -68,6 +68,6 @@ node /path/to/specforge/apps/server/src/main.ts --index /srv/specforge/index.jso
 npm run test:postgres
 ```
 
-该命令只读取 `SF_POSTGRES_TEST_URL`，不读取 `DATABASE_URL`；创建随机前缀的项目登记，结束后清理本轮登记与索引行，保留 schema。测试库必须允许创建 `specforge_index`，不得使用生产库。需要 Postgres 15 或更新版本（待 T4.3f 记录实际版本）。契约覆盖首次 / 增量 / 空同步、过滤与分页、同名数据隔离、日志截断 / 重写、重建回滚以及迁移前后源文件 / 哈希 / 锚定不变。
+该命令只读取 `SF_POSTGRES_TEST_URL`，不读取 `DATABASE_URL`；创建随机前缀的项目登记，结束后清理本轮登记与索引行，保留 schema。测试库必须允许创建 `specforge_index`，不得使用生产库。需要 Postgres 15 或更新版本；当前实测 PostgreSQL 17.4。契约覆盖首次 / 增量 / 空同步、过滤与分页、同名数据隔离、日志截断 / 重写、重建回滚以及迁移前后源文件 / 哈希 / 锚定不变。
 
-本轮尚未运行真实 Postgres；T4.3e 只能标为 `verify`，T4.3f 还需真实数据库、断库 / schema 权限故障、迁移回退及 Postgres 多项目浏览器全量验收。
+2026-11-16 已在用户授权的独立临时容器上完成 PostgreSQL 17.4 真实契约 5/5（Docker 27.3.1，Debian x86_64 Linux）。T4.3e 已完成；T4.3f 继续断库 / schema 权限故障、完整服务迁移回退及 Postgres 多项目浏览器验收，整体尚未标记完成。

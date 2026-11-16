@@ -5,16 +5,16 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 代码已完成、待实测确认
 
-最后更新：2026-11-16 · Codex（GPT-6） · T4.3e 代码与本地回归完成，待真实 Postgres 验收
+最后更新：2026-11-16 · Codex（GPT-6） · T4.3e 真实 Postgres 契约验收通过，下一步 T4.3f 综合验收
 
 ---
 
 ## 当前快照
 
-- 测试：278 个全部通过（`npm test -- --maxWorkers=1`，30 个文件，182.20 秒；原有 261 个 + e 新增 17 个），`npm run typecheck`（含 Web 与真实库测试代码）、`npm run web:build`、`npm run web:e2e`、`npm run web:e2e:projects` 与 `git diff --check` 通过。单项目真实 Chrome 最终 29 条事件；双项目 A 8 条、B 5 条，链 / 状态 / 名册一致。默认测试不连接 Postgres，真实数据库未验收；共锁夹具争用诊断与修正见实测。
-- 远程：https://github.com/yanling0220/specforge （`main`）；a～d 与规则提交 `95f4b45` 已同步。本轮 T4.3e 按任务归属单独提交并推送；结束前检查工作区干净、当前分支与远程同步。
-- **整体状态**：T4.3a～d 已完成；e 的异步索引接口、可选 Postgres、schema v1 与迁移 / 回退代码已实现，真实数据库尚未验收；f 未开始，T4.3 整体仍 doing。SQLite 的多项目及本人确认已验证，不能以注入 SQL 传输宣称 Postgres 已交付。进程中断需显式核对恢复，不承诺多文件事务或断电持久性。
-- **下一个建议任务：完成 `T4.3e` 的真实 Postgres 验收**，再进入 f 的断库 / schema 权限故障、迁移回退与 Postgres 多项目浏览器综合验收。本机无 Postgres 命令、Docker 服务未运行；按范围方案等待用户授权临时测试库或提供专用测试库，不自动启动数据库。
+- 测试：开工 install、typecheck、全量 278/278（30 文件，单 worker，167.16 秒）通过，与上轮快照一致；真实 PostgreSQL 17.4 契约 5/5 通过（4.98 秒）。上轮 Web 构建与单 / 双项目 Chrome 通过；本轮综合浏览器与故障验证留给 f。
+- 远程：https://github.com/yanling0220/specforge （`main`）；截至 `baa759b` 已同步。本轮按子任务提交并推送，结束前检查工作区与远程同步。
+- **整体状态**：T4.3a～e 已完成，f 尚待综合验收，整体仍 doing。文件、事件和 Git 锚定继续为准；Postgres 是可重建索引，不提供多文件事务或多实例写入。
+- **下一个建议任务：T4.3f 综合验收**。用户已授权启动临时数据库；独立容器 PostgreSQL 17.4 已运行，真实契约通过。继续断库 / schema 权限故障、服务启动迁移回退及 Postgres 多项目 Chrome 验收。
 - **使用提示**：先 `npm run web:build`；多项目用 `--projects <JSON>` 启动，浏览器 `/` 输入管理员给出的项目 ID，或打开 `/p/<id>/#/changes/<变更ID>/analysis/<Q-n>`，各项目独立登录。切换保留最后页面，但清空角色和未提交草稿，见 README。单项目仍在项目目录运行 server；控制台修改需启用名册。已有项目需配置 `tdd.command`；首次 `sf verify` 会额外验证一次基线 commit。浏览器端到端：`npm run web:e2e` 与 `npm run web:e2e:projects`（需本机 Chrome）。
 - **与用户的协作约定**：每次结束当前任务或收工前，检查并提交未提交改动、推送已提交未同步内容，无需再次询问；确认工作区与远程同步后，汇报整体状态、验证结果和遗留项，给出下一步计划与选项，等待用户选择。需要用户参与或产生费用的验证先询问；给出多种改法时逐个写明优缺点。本规则替代历史记录中“推送前先问 / 不自动推送”的任务收尾约定；独立审计分支的备份仍另行安排。
 
@@ -68,12 +68,12 @@
 |---|---|---|---|
 | T4.1 | 身份与登录、角色权限（目前身份是自己声明的） | done | 用户名册 `.specforge/users.json`（`sf user add / list / set / token / disable`），修改写入哈希链，篡改即拒绝使用；CLI 身份（`whoami`、`--as`、`--on-behalf`）按名册校验角色；server 令牌登录（HttpOnly + SameSite=Strict 会话、12 小时过期、停用或重置令牌立即失效、失败 5 次锁定 10 分钟），启用名册后接口与 WebSocket 都需要登录，无名册时只能监听本机；Web 登录页与 401 自动回到登录。测试：`core/test/users.test.ts`、`cli/test/users.test.ts`、`server/test/auth.test.ts`。实测：`/tmp/sf-t33` 启用名册、角色与代录校验、curl 登录、登录页截图。依据见 design.md 9.3 |
 | T4.2 | 产品方直接登录或通过链接确认问题（替代代录） | done | T4.1 + T3.4 已覆盖本人登录确认；浏览器验证登录后保留问题深链接，确认身份来自会话且无代录人。复核发现旧页面可能确认 / 驳回新答案，已补必填 `rev` + `answerHash` 的 HTTP 契约与引擎原子校验（冲突 409、状态和事件不变），实时修订关闭旧表单。新增 6 个回归测试；全量 218/218、typecheck、Web 构建及浏览器端到端通过。普通链接仍需登录；免登录一次性确认链接未实现，属于另行定义的需求，见 design.md 9.7 |
-| T4.3 | Postgres、多项目 | doing | 2026-11-16 · Codex（GPT-6）；a～d 已完成，e 代码已实现、待真实数据库验收，f 未开始；SQLite 多项目后台、跨进程保护和 Web 切换已验证，整体尚未交付 |
+| T4.3 | Postgres、多项目 | doing | 2026-11-16 · Codex（GPT-6）；a～e 已完成，真实 Postgres 契约通过；f 综合验收待完成，整体尚未交付 |
 | T4.3a | 范围设计与验收拆分 | done | [范围方案](t4.3-plan.md) 提交 `8b9bb6a`；2026-11-13 用户选择接受首版范围并开始 T4.3b |
 | T4.3b | 服务端多项目上下文与独立会话（先只读） | done | `--projects` 登记本地 Git 仓库；项目独立 Auth / Store / 内存 SQLite / WebSocket / 定时锚定，业务写接口统一 403。新增 18 个测试覆盖同名数据、跨项目会话、路径与符号链接、损坏隔离、已连订阅撤销及 CLI 入口。定向 server 56/56，全量 236/236（27 个文件）、typecheck、Web 构建、单项目真实浏览器端到端通过；使用及恢复边界见 README、design.md 9.8 |
 | T4.3c | 仓库级跨进程写入保护与多项目写接口 | done | 2026-11-13 · Codex；Git common dir 仓库锁覆盖 CLI / HTTP / Store、复合与长操作；pending 前后快照、事件最后替换、显式一致性恢复，多项目业务写接口开放。新增 17 项：真实进程并发、kill / IO 异常、证据 / 产物 / Git 合入中断、别名 / worktree、过期异步租约、HTTP 争用 / 慢正文和隔离；全量 253/253（28 文件）、typecheck、Web 构建与单项目真实浏览器回归通过。边界与离线步骤见 [恢复说明](write-recovery.md) |
 | T4.3d | Web 多项目入口、切换及本人确认 | done | 2026-11-13 · Codex；`/p/<id>/` 入口、独立登录、问题深链接、权限复核后的标签页访问记录；完整文档切换重置角色 / 表单 / 请求 / 订阅游标，撤销与损坏失败关闭。新增 8 项，全量 261/261（29 文件）、typecheck、Web 构建、单 / 双项目真实 Chrome 验收通过；双项目最终 A 8 / B 5 条事件，B 状态和链未被 A 修改污染；旧共锁用例偶发超时另列已知问题 |
-| T4.3e | 可选 Postgres 索引与迁移 / 回退 | verify | 2026-11-16 · Codex（GPT-6）；异步 QueryIndex、`--index` 可选 Postgres、schema v1 / 项目绑定 / 项目事务与独立游标、鉴权索引状态、迁移回退文档与真实库命令。新增 17 项，全量 278/278（30 文件）、typecheck、Web 构建、单 / 双项目真实 Chrome 通过；默认测试使用 SQLite 和注入 SQL 传输，尚无真实 Postgres 环境，不能标记 done。需用户授权测试库后完成真实契约验收 |
+| T4.3e | 可选 Postgres 索引与迁移 / 回退 | done | 2026-11-16 · Codex（GPT-6）；实现见 `baa759b`。用户授权独立临时数据库后，PostgreSQL 17.4（Debian，x86_64，Docker 27.3.1）真实契约 5/5 通过，覆盖增量、过滤分页、同名项目隔离、截断重写、事务回滚、源文件 / 哈希 / 锚定不变；开工全量 278/278、typecheck 通过 |
 | T4.3f | 真实 Postgres 与多项目全量验收 | todo | 依赖 T4.3e；真实测试库、浏览器、迁移 / 回退、故障和兼容性验证；需要环境时先询问，不以假客户端代替真实验证 |
 | T4.4 | 哈希链头定期锚定（git 提交或服务端），防止整条链被重写 | done | `sf log anchor` 保存到独立 `specforge-audit` 分支；`audit.anchorIntervalMs` 启用 server 定期锚定；CLI / REST 对比全部历史锚定；`sf log verify --anchor <可信 commit>` 检测本地分支整体重建；控制台展示锚定状态与异常原因。新增 14 个测试（`core/test/events-policy.test.ts`、`store/test/audit.test.ts`、`server/test/server.test.ts`），覆盖整链重算、截断/清空、并发冲突、受损审计历史、暂存区不变和独立 Git 仓库保存。全量 212/212、typecheck、Web 构建及浏览器端到端通过；信任边界见 design.md 7.1 |
 | T4.5 | IM 通知（待确认问题、待签字） | todo | |
@@ -87,7 +87,7 @@
 | 未启用用户名册的项目仍是自行声明身份 | 兼容旧项目；server 此时只能监听本机 | 在项目中 `sf user add … --admin` 启用 |
 | CLI 身份基于本地文件信任 | 名册只能防误用与冒名记录；有文件写权限的人仍可篡改 | T4.4 已实现：需将审计分支 / commit SHA 保存在独立可信位置，以发现日志与本地审计分支整体改写；不自动推送 |
 | server 不提供 HTTPS；会话只在内存中 | 非本机访问需放在 HTTPS 反向代理之后；server 重启后需重新登录 | — |
-| Postgres 代码已实现，尚无真实数据库验收 | 注入 SQL 传输不验证 Postgres 网络、锁与 SQL 兼容性；不能据此宣称 T4.3 完成 | e 标记 verify；授权专用测试库后运行 `npm run test:postgres`，再进入 f 的综合验收 |
+| Postgres 综合验收尚未完成 | PostgreSQL 17.4 真实契约已通过，断库 / 权限 / 服务迁移 / 浏览器仍待 f | 用户已授权临时测试库，继续 T4.3f |
 | 旧 CLI / HTTP 共锁用例偶发 20 秒超时 | 本轮捕获持锁夹具在初始争用时 write_busy 提前退出；异步轮询增加碰撞机会 | 已为测试夹具获取初始锁增加 10 秒有界等待，断言仍在 locked 之后执行；不改变生产锁协议或放宽测试时限。历史超时不宣称全部归因于此 |
 | 长任务期间同仓库的查询和写入可能返回忙 | 首版仓库锁立即拒绝争用，不排队；中断文件不自动回滚 | 按 [恢复说明](write-recovery.md) 核对；本地单服务器协议，不提供多文件事务、断电持久性或多节点协调 |
 | 兼容接口（DeepSeek 等）不返回费用，`--budget` 不生效 | 只能看 token 数 | 可加按 token 的上限 |
@@ -106,6 +106,13 @@
 ---
 
 ## 实测记录
+
+### 2026-11-16 · Codex（GPT-6）· T4.3e 真实数据库验收
+
+- 用户明确授权启动临时数据库继续验收。开工工作区干净，main 与 origin/main 同为 `baa759b`，无未记录提交；install、typecheck、278/278（30 文件，单 worker，167.16 秒）全部通过，依赖锁文件未变。本机仍无 rtk，沿用已记录的原生命令回退。
+- 启动 Docker Desktop，使用已有 postgres 镜像创建独立临时容器 `sf-t43-postgres-20261116`，仅绑定 127.0.0.1 的随机端口，PGDATA 为 tmpfs；未连接或修改现有用户数据库。环境：Docker 27.3.1，PostgreSQL 17.4（Debian 17.4-1.pgdg120+2，x86_64 Linux），Node v22.22.3。
+- `npm run test:postgres` 在真实数据库通过 5/5（4.98 秒，退出 0）；SQLite / 注入传输 / 真实 Postgres 共用同一行为契约。覆盖初次、增量、空同步、过滤分页、同名数据隔离、截断与重写、项目级重建事务回滚及后端切换时源文件 / 事件哈希 / Git 锚定不变。测试清理随机前缀项目行，保留 schema。
+- e 改为 done，f 将继续真实连接故障、schema / 权限故障、完整服务迁移回退及双项目 Chrome 验收；整体 T4.3 暂不标完成。没有调用真实模型。
 
 ### 2026-11-16 · Codex（GPT-6）· T4.3e 可选索引与本地回归
 
@@ -255,4 +262,6 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-13 · Codex（GPT-6） · T4.3c · 仓库级跨进程锁、写入 pending 与显式恢复、多项目业务写接口、真实进程 / 中断测试及恢复文档；新增 17 项，全量 253/253、typecheck、Web 构建与单项目浏览器回归通过；Web 切换 / Postgres 仍待后续 · `2afc50e`
 - 2026-11-13 · Codex（GPT-6） · T4.3d · Web 多项目入口、权限复核的访问记录、完整文档切换隔离与独立本人确认；新增 8 项，最终全量 261/261、typecheck、Web 构建及单 / 双项目真实 Chrome 通过；旧共锁用例偶发超时保留已知问题，Postgres 待 e/f · `577c574`
 - 2026-11-13 · Codex（GPT-6） · 协作规则 · 用户要求任务结束或收工前必须提交并推送；更新 AGENTS.md、当前快照与范围方案，替代此前推送需再询问的约定；今日停在 T4.3d，下一步待用户选择 · `95f4b45`
-- 2026-11-16 · Codex（GPT-6） · T4.3e · 异步查询索引、可选 Postgres / schema v1 / 项目隔离与事务、故障状态、迁移回退和真实库测试命令；新增 17 项，278/278、typecheck、Web 构建、单 / 双项目 Chrome 通过；真实数据库待验收，状态 verify · （本次提交）
+- 2026-11-16 · Codex（GPT-6） · T4.3e · 异步查询索引、可选 Postgres / schema v1 / 项目隔离与事务、故障状态、迁移回退和真实库测试命令；新增 17 项，278/278、typecheck、Web 构建、单 / 双项目 Chrome 通过；真实数据库待验收，状态 verify · `baa759b`
+
+- 2026-11-16 · Codex（GPT-6） · T4.3e · 用户授权临时 Postgres，真实 PostgreSQL 17.4 契约 5/5，开工 278/278 与 typecheck 通过；e 完成、整体待 f · （本次提交）
