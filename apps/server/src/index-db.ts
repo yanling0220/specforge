@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { isResolved } from '@specforge/core';
 import type { Store } from '@specforge/store';
 import type { ForgeEvent } from '@specforge/shared';
+import type { IndexStatus, QueryIndex } from './query-index.ts';
 
 // SQLite 只是 .specforge/ 的索引（文件为准）：用于列表、过滤与分页查询。
 // 详情与门禁评估一律直接读文件、实时计算。索引可随时丢弃重建。
@@ -75,9 +76,10 @@ export interface EventQuery {
   limit?: number;
 }
 
-export class ForgeIndex {
+export class ForgeIndex implements QueryIndex {
   private db: DatabaseSync;
   private store: Store;
+  private current: IndexStatus = { backend: 'sqlite', state: 'unavailable', lastSyncedSeq: 0 };
 
   constructor(store: Store, path = ':memory:') {
     this.store = store;
@@ -88,6 +90,8 @@ export class ForgeIndex {
   close(): void {
     this.db.close();
   }
+
+  status(): IndexStatus { return { ...this.current }; }
 
   private lastSeq(): number {
     return (this.db.prepare('SELECT MAX(seq) AS seq FROM events').get() as { seq: number | null }).seq ?? 0;
@@ -101,29 +105,33 @@ export class ForgeIndex {
    * 与文件同步：追加新事件，重新索引受影响的 change。
    * 若已索引的最后一条事件与文件不一致（日志被改写或截断），丢弃索引全量重建。
    */
-  sync(): SyncResult {
-    return this.store.exclusive(() => {
+  sync(options: { rebuild?: boolean } = {}): SyncResult {
+    try { return this.store.exclusive(() => {
       const all = this.store.events();
       const last = this.lastSeq();
       const known = last ? all.find((e) => e.seq === last) : undefined;
-      const rebuilt = last > 0 && known?.hash !== this.hashAt(last);
-      if (rebuilt) this.db.exec('DELETE FROM events; DELETE FROM changes; DELETE FROM questions;');
+      const rebuilt = !!options.rebuild || (last > 0 && known?.hash !== this.hashAt(last));
       const fresh = rebuilt ? all : all.filter((e) => e.seq > last);
 
       const insert = this.db.prepare('INSERT INTO events (seq, type, change_id, actor_name, actor_role, at, hash, json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
       this.db.exec('BEGIN');
       try {
+        if (rebuilt) this.db.exec('DELETE FROM events; DELETE FROM changes; DELETE FROM questions;');
         for (const e of fresh) insert.run(e.seq, e.type, e.changeId ?? null, e.actor.name, e.actor.role, e.at, e.hash, JSON.stringify(e));
         // 首次同步或重建时索引全部 change（也包括没有事件的目录）；之后只索引有新事件的 change
         const ids = last === 0 || rebuilt ? this.store.listChanges() : [...new Set(fresh.flatMap((e) => (e.changeId ? [e.changeId] : [])))];
         for (const id of ids) this.indexChange(id);
         this.db.exec('COMMIT');
+        this.current = { backend: 'sqlite', state: 'ready', lastSyncedSeq: all.at(-1)?.seq ?? 0 };
         return { events: fresh, changes: ids, rebuilt };
       } catch (e) {
         this.db.exec('ROLLBACK');
         throw e;
       }
-    });
+    }); } catch (error) {
+      this.current.state = this.current.state === 'unavailable' ? 'unavailable' : 'stale';
+      throw error;
+    }
   }
 
   private indexChange(id: string): void {

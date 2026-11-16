@@ -14,10 +14,21 @@ process.send!({ type: 'ready' });
 await once(process, 'message');
 
 if (mode === 'hold') {
-  await store.exclusive(async () => {
-    process.send!({ type: 'locked' });
-    await once(process, 'message');
-  });
+  // HTTP 的后台索引轮询也参与共锁。只为夹具获取初始持锁点做有界等待，
+  // 避免尚未发出 locked 就因一次正常争用退出；生产入口仍立即拒绝争用。
+  const deadline = Date.now() + 10_000;
+  while (true) {
+    try {
+      await store.exclusive(async () => {
+        process.send!({ type: 'locked' });
+        await once(process, 'message');
+      });
+      break;
+    } catch (error) {
+      if (!(error instanceof ForgeError && error.code === 'write_busy') || Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
 } else {
   if (mode.startsWith('crash') || mode === 'io-error') {
     const rename = filesystem.renameSync;

@@ -7,7 +7,8 @@ import { ForgeError } from '@specforge/core';
 import type { Store } from '@specforge/store';
 import { createProjectRuntime, type ProjectRuntime } from './project-runtime.ts';
 import type { AuthEnv } from './auth.ts';
-import type { ForgeIndex } from './index-db.ts';
+import type { QueryIndex } from './query-index.ts';
+import { parseIndexConfig, type IndexConfig } from './index-config.ts';
 import { registerProjects, type ProjectRegistration } from './projects.ts';
 import { webResponse } from './web.ts';
 
@@ -20,14 +21,15 @@ export interface ServerOptions {
   dbPath?: string;
   pollMs?: number;
   webDir?: string;
+  indexConfig?: IndexConfig;
 }
 
 export const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../web/dist', import.meta.url));
 
 export interface RunningServer {
   url: string;
-  index: ForgeIndex;
-  tick(): void;
+  index: QueryIndex;
+  tick(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -37,11 +39,12 @@ export interface MultiProjectOptions {
   port?: number;
   pollMs?: number;
   webDir?: string;
+  indexConfig?: IndexConfig;
 }
 
 export interface RunningMultiProjectServer {
   url: string;
-  tick(): void;
+  tick(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -56,7 +59,7 @@ async function listen(app: Hono<AuthEnv>, sockets: ReturnType<typeof createNodeW
       listening.once('error', reject);
     });
   } catch (error) {
-    for (const runtime of runtimes) runtime.close();
+    await Promise.all(runtimes.map((runtime) => runtime.close()));
     throw error;
   }
   sockets.injectWebSocket(server);
@@ -64,11 +67,11 @@ async function listen(app: Hono<AuthEnv>, sockets: ReturnType<typeof createNodeW
   const host = address.family === 'IPv6' ? `[${address.address}]` : address.address;
   return {
     url: `http://${host}:${address.port}`,
-    tick: () => { for (const runtime of runtimes) runtime.tick(); },
-    close: () => new Promise((resolve, reject) => {
-      for (const runtime of runtimes) runtime.close();
-      server.close((error) => error ? reject(error) : resolve());
-    }),
+    tick: async () => { await Promise.all(runtimes.map((runtime) => runtime.tick())); },
+    close: async () => {
+      await Promise.all(runtimes.map((runtime) => runtime.close()));
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    },
   };
 }
 
@@ -78,7 +81,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   }
   const app = new Hono<AuthEnv>();
   const sockets = createNodeWebSocket({ app });
-  const runtime = createProjectRuntime({ ...opts, webDir: opts.webDir ?? DEFAULT_WEB_DIR }, sockets.upgradeWebSocket);
+  const runtime = await createProjectRuntime({ ...opts, webDir: opts.webDir ?? DEFAULT_WEB_DIR }, sockets.upgradeWebSocket);
   app.route('/', runtime.app);
   app.notFound((context) => runtime.app.fetch(context.req.raw));
   const server = await listen(app, sockets, opts, [runtime]);
@@ -86,6 +89,10 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
 }
 
 export async function startMultiProjectServer(opts: MultiProjectOptions): Promise<RunningMultiProjectServer> {
+  const indexConfig = parseIndexConfig(opts.indexConfig ?? { backend: 'sqlite' });
+  if (indexConfig.backend === 'postgres' && (indexConfig.projectId || !process.env[indexConfig.connectionStringEnv])) {
+    throw new ForgeError('bad_arg', '多项目 Postgres 使用登记 ID；必须设置连接环境变量且不能另设 projectId');
+  }
   const projects = registerProjects(opts.projects);
   const app = new Hono<AuthEnv>();
   const sockets = createNodeWebSocket({ app });
@@ -113,7 +120,7 @@ export async function startMultiProjectServer(opts: MultiProjectOptions): Promis
   for (const project of projects) {
     const basePath = `/p/${project.id}`;
     try {
-      const runtime = createProjectRuntime({ store: project.store, project, basePath, pollMs: opts.pollMs }, sockets.upgradeWebSocket);
+      const runtime = await createProjectRuntime({ store: project.store, project, basePath, pollMs: opts.pollMs, indexConfig }, sockets.upgradeWebSocket);
       runtimes.push(runtime);
       app.route(basePath, runtime.app);
     } catch {
@@ -123,5 +130,5 @@ export async function startMultiProjectServer(opts: MultiProjectOptions): Promis
     }
   }
   const server = await listen(app, sockets, opts, runtimes);
-  return { ...server, tick: () => { for (const runtime of runtimes) runtime.poll(); } };
+  return { ...server, tick: async () => { await Promise.all(runtimes.map((runtime) => runtime.poll())); } };
 }

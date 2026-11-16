@@ -193,15 +193,15 @@ describe('server 定期锚定（T4.4）', () => {
     servers.push(server);
     expect(readLogAnchors(store.root)).toHaveLength(1);
     raise(store, 'c1', 'Q-1');
-    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(1000);
     const anchors = readLogAnchors(store.root);
     expect(anchors).toHaveLength(2);
     expect(anchors[1]!.seq).toBe(3);
-    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(readLogAnchors(store.root)).toEqual(anchors);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     writeFileSync(store.path('events.jsonl'), '');
-    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(error).toHaveBeenCalledWith('日志锚定失败：', expect.objectContaining({ code: 'log_invalid' }));
     expect(readLogAnchors(store.root)).toEqual(anchors);
     await server.close();
@@ -271,11 +271,28 @@ describe('WebSocket 推送', () => {
     await onlyC2.waitFor((m) => m[0]?.type === 'hello');
     raise(store, 'c1', 'Q-1');
     raise(store, 'c2', 'Q-1');
-    server.tick();
+    await server.tick();
     await onlyC2.waitFor((m) => m.some((x) => x.type === 'changes'));
     expect(events(onlyC2.messages)).toEqual([4]);
     expect(onlyC2.messages.filter((m) => m.type === 'changes')).toEqual([{ type: 'changes', ids: ['c2'] }]);
     onlyC2.ws.close();
+  });
+
+  it('REST 先同步截断后的日志时，WebSocket 仍通知重建并重置自身游标', async () => {
+    const store = project();
+    const original = readFileSync(store.path('events.jsonl'), 'utf8');
+    raise(store, 'c1', 'Q-1');
+    const server = await startServer({ store, port: 0, pollMs: 60_000 });
+    servers.push(server);
+    const client = connect(`${server.url.replace('http', 'ws')}/ws`);
+    await client.waitFor((messages) => messages[0]?.type === 'hello');
+    writeFileSync(store.path('events.jsonl'), original);
+    expect((await fetch(`${server.url}/api/events`)).status).toBe(200);
+    await server.tick();
+    await client.waitFor((messages) => messages.some((message) => message.type === 'rebuilt'));
+    await client.waitFor((messages) => events(messages).length === 2);
+    expect(events(client.messages)).toEqual([1, 2]);
+    client.ws.close();
   });
 
   it('重连时用 after 补发错过的事件', async () => {

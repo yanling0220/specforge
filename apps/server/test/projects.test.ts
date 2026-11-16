@@ -226,13 +226,13 @@ describe('多项目 REST 与会话（T4.3b）', () => {
     expect((await blocked.json()).error.code).toBe('write_busy');
     const main = fileURLToPath(new URL('../../cli/src/main.ts', import.meta.url));
     expect(() => execFileSync(process.execPath, [main, 'q', 'answer', 'same', 'Q-1', '--text', 'blocked', '--as', 'same:dev'], { cwd: first.root, stdio: ['ignore', 'pipe', 'pipe'] })).toThrow();
-    server.tick();
+    await server.tick();
     expect((await fetchProject('b', '/api/changes', secondSession)).status).toBe(200);
     second.append({ type: 'healthy.b', actor: admin, payload: {} });
     const closed = once(connection.socket, 'close');
     child.kill('SIGKILL'); await exited;
     expect((await post()).status).toBe(503);
-    server.tick(); await closed;
+    await server.tick(); await closed;
     first.recover('确认临时测试进程未写入文件');
     expect(first.events()).toHaveLength(before);
     expect((await post()).status).toBe(200);
@@ -280,7 +280,7 @@ describe('多项目 REST 与会话（T4.3b）', () => {
     const config = readFileSync(first.path('config.json'), 'utf8');
     writeFileSync(first.path('config.json'), 'invalid');
     expect((await fetchProject('a', '/api/changes', firstCookie)).status).toBe(503);
-    server.tick();
+    await server.tick();
     expect((await fetchProject('b', '/api/changes', secondCookie)).status).toBe(200);
     writeFileSync(first.path('config.json'), config);
     expect((await fetchProject('a', '/api/changes', firstCookie)).status).toBe(200);
@@ -335,7 +335,7 @@ describe('多项目 WebSocket（T4.3b）', () => {
     await secondConnection.waitFor(() => secondConnection.messages.filter((message) => message.type === 'event').length === 2);
     first.append({ type: 'only.a', actor: admin, changeId: 'same', payload: {} });
     second.append({ type: 'only.b', actor: admin, changeId: 'same', payload: {} });
-    server.tick();
+    await server.tick();
     await firstConnection.waitFor(() => firstConnection.messages.some((message) => message.event?.type === 'only.a'));
     await secondConnection.waitFor(() => secondConnection.messages.some((message) => message.event?.type === 'only.b'));
     expect(firstConnection.messages.some((message) => message.event?.type === 'only.b')).toBe(false);
@@ -358,12 +358,12 @@ describe('多项目 WebSocket（T4.3b）', () => {
     if (action === 'rotate') first.mutateUsers(admin, 'user.token_rotated', (registry) => rotateToken(registry, 'same', sha256('new-token'), admin, 'T'), {});
     if (action === 'logout') await fetchProject('a', '/api/auth/logout', firstCookie, { method: 'POST' });
     first.append({ type: 'secret.after.revoke', actor: admin, payload: {} });
-    server.tick();
+    await server.tick();
     await closed;
     expect(firstConnection.messages).toHaveLength(1);
     expect((await fetchProject('a', '/api/changes', firstCookie)).status).toBe(401);
     second.append({ type: 'still.b', actor: admin, payload: {} });
-    server.tick();
+    await server.tick();
     await secondConnection.waitFor(() => secondConnection.messages.some((message) => message.event?.type === 'still.b'));
     expect((await fetchProject('b', '/api/changes', secondCookie)).status).toBe(200);
   });
@@ -381,7 +381,7 @@ describe('多项目 WebSocket（T4.3b）', () => {
     expect(response.status).toBe(503);
     expect(await response.text()).not.toMatch(/secret|sf-projects-|SyntaxError/);
     expect((await fetchProject('a', '/api/auth/me')).status).toBe(503);
-    server.tick();
+    await server.tick();
     expect((await closed)[0]).toBe(1008);
     expect(connection.messages).toHaveLength(1);
     expect((await fetchProject('b', '/api/changes', secondCookie)).status).toBe(200);

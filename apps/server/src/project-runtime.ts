@@ -8,7 +8,8 @@ import { anchorLog, type Store } from '@specforge/store';
 import type { ForgeEvent } from '@specforge/shared';
 import { createApp } from './app.ts';
 import { Auth } from './auth.ts';
-import { ForgeIndex } from './index-db.ts';
+import { createIndex, type IndexConfig } from './index-config.ts';
+import type { QueryIndex } from './query-index.ts';
 import type { RegisteredProject } from './projects.ts';
 
 export type PushMessage =
@@ -30,19 +31,20 @@ interface RuntimeOptions {
   webDir?: string;
   basePath?: string;
   project?: RegisteredProject;
+  indexConfig?: IndexConfig;
 }
 
 export interface ProjectRuntime {
   app: ReturnType<typeof createApp>;
-  index: ForgeIndex;
-  tick(): void;
-  poll(): void;
-  close(): void;
+  index: QueryIndex;
+  tick(): Promise<void>;
+  poll(): Promise<void>;
+  close(): Promise<void>;
 }
 
 const PAGE = 1000;
 
-export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<typeof createNodeWebSocket>['upgradeWebSocket']): ProjectRuntime {
+export async function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<typeof createNodeWebSocket>['upgradeWebSocket']): Promise<ProjectRuntime> {
   const { store, project } = opts;
   const auth = new Auth(store, Date.now, project ? { cookieName: `sf_session_${project.id}`, cookiePath: opts.basePath, requireRegistry: true } : {});
   const check = () => {
@@ -65,11 +67,11 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
     }
   };
   if (audit) anchor();
-  const index = new ForgeIndex(store, opts.dbPath);
+  const index = await createIndex(store, { ...opts, projectId: project?.id });
   try {
-    index.sync();
+    await index.sync({ rebuild: true });
   } catch (error) {
-    index.close();
+    await index.close();
     throw error;
   }
   const app = createApp(store, index, { auth, webDir: opts.webDir, basePath: opts.basePath, projectId: project?.id, check });
@@ -97,32 +99,58 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
     client.ws.send(JSON.stringify(message));
   };
   const lastSeq = () => store.events().at(-1)?.seq ?? 0;
-  const eventsAfter = (after: number, changeId?: string): ForgeEvent[] => {
+  const eventsAfter = async (after: number, changeId?: string): Promise<ForgeEvent[]> => {
     const events: ForgeEvent[] = [];
-    for (let page = index.events({ after, changeId, limit: PAGE }); page.length; page = index.events({ after: page.at(-1)!.seq, changeId, limit: PAGE })) {
+    for (let page = await index.events({ after, changeId, limit: PAGE }); page.length; page = await index.events({ after: page.at(-1)!.seq, changeId, limit: PAGE })) {
       events.push(...page);
       if (page.length < PAGE) break;
     }
     return events;
   };
   let pushedSeq = lastSeq();
-  const tick = () => store.exclusive(() => {
-    check();
-    for (const client of clients) if (!allowed(client)) revoke(client);
-    const { rebuilt } = index.sync();
-    if (rebuilt) {
-      pushedSeq = 0;
-      for (const client of clients) send(client, { type: 'rebuilt' });
-    }
-    const fresh = eventsAfter(pushedSeq);
-    if (!fresh.length) return;
-    pushedSeq = fresh.at(-1)!.seq;
-    const ids = [...new Set(fresh.flatMap((event) => event.changeId ? [event.changeId] : []))];
-    for (const client of clients) {
-      for (const event of fresh) send(client, { type: 'event', event });
-      if (ids.length) send(client, { type: 'changes', ids });
-    }
-  });
+  let pushedHash = store.events().at(-1)?.hash;
+  let stopped = false;
+  let pending: Promise<void> | undefined;
+  let syncFailed = false;
+  const signature = () => {
+    try {
+      const stat = statSync(store.path('events.jsonl'));
+      return `${stat.size}:${stat.mtimeMs}`;
+    } catch { return 'missing'; }
+  };
+  let seen = signature();
+  const update = (force: boolean): Promise<void> => {
+    if (stopped) return Promise.resolve();
+    if (pending) return pending;
+    pending = (async () => store.exclusive(async () => {
+      check();
+      for (const client of clients) if (!allowed(client)) revoke(client);
+      const current = signature();
+      if (!force && !syncFailed && index.status().backend === 'sqlite' && index.status().state === 'ready' && current === seen) return;
+      const { rebuilt } = await index.sync();
+      // REST 可能先消费 sync 的 rebuilt 结果；推送自己的游标仍要识别截断 / 重写。
+      const rewritten = pushedSeq > 0 && store.events().find((event) => event.seq === pushedSeq)?.hash !== pushedHash;
+      if (rebuilt || rewritten) {
+        pushedSeq = 0;
+        pushedHash = undefined;
+        for (const client of clients) send(client, { type: 'rebuilt' });
+      }
+      const fresh = await eventsAfter(pushedSeq);
+      seen = current;
+      syncFailed = false;
+      if (stopped) return;
+      if (!fresh.length) return;
+      pushedSeq = fresh.at(-1)!.seq;
+      pushedHash = fresh.at(-1)!.hash;
+      const ids = [...new Set(fresh.flatMap((event) => event.changeId ? [event.changeId] : []))];
+      for (const client of clients) {
+        for (const event of fresh) send(client, { type: 'event', event });
+        if (ids.length) send(client, { type: 'changes', ids });
+      }
+    }))().finally(() => { pending = undefined; });
+    return pending;
+  };
+  const tick = () => update(true);
   const validQuery = (context: Context) => {
     const changeId = context.req.query('changeId') || undefined;
     const after = context.req.query('after');
@@ -134,14 +162,16 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
     const { changeId, after } = validQuery(context);
     const client: Client = { ws: undefined as unknown as WSContext, changeId, sid: getCookie(context, auth.cookieName) };
     return {
-      onOpen(_, ws) {
+      async onOpen(_, ws) {
         client.ws = ws;
         clients.add(client);
         try {
-          store.exclusive(() => {
+          await store.exclusive(async () => {
             if (!allowed(client)) { revoke(client); return; }
+            await index.sync();
+            if (stopped || !allowed(client)) { revoke(client); return; }
             send(client, { type: 'hello', lastSeq: lastSeq() });
-            if (after !== undefined) for (const event of eventsAfter(after, changeId).filter((event) => event.seq <= pushedSeq)) send(client, { type: 'event', event });
+            if (after !== undefined) for (const event of (await eventsAfter(after, changeId)).filter((event) => event.seq <= pushedSeq)) send(client, { type: 'event', event });
           });
         } catch (error) {
           if (error instanceof ForgeError && error.code === 'write_busy') { clients.delete(client); client.ws.close(1013, '仓库忙，请重连'); }
@@ -151,34 +181,17 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
       onClose() { clients.delete(client); },
     };
   }));
-  const signature = () => {
+  const poll = async () => {
     try {
-      const stat = statSync(store.path('events.jsonl'));
-      return `${stat.size}:${stat.mtimeMs}`;
-    } catch {
-      return 'missing';
-    }
-  };
-  let seen = signature();
-  let syncFailed = false;
-  const poll = () => {
-    try {
-      store.exclusive(() => {
-        check();
-        for (const client of clients) if (!allowed(client)) revoke(client);
-        const current = signature();
-        if (current !== seen) { tick(); seen = current; }
-        syncFailed = false;
-      });
+      await update(false);
     } catch (error) {
       if (error instanceof ForgeError && error.code === 'write_busy') return;
       for (const client of clients) revoke(client);
-      if (!project) console.error('同步索引失败：', error);
-      else if (!syncFailed) console.error(`项目 ${project.id} 同步索引失败，请检查项目文件`);
+      if (!syncFailed) console.error(project ? `项目 ${project.id} 同步索引失败，请检查项目文件与索引后端` : '同步索引失败，请检查项目文件与索引后端');
       syncFailed = true;
     }
   };
-  const timer = setInterval(poll, opts.pollMs ?? 300);
+  const timer = setInterval(() => { void poll(); }, opts.pollMs ?? 300);
   const anchorTimer = audit ? setInterval(() => {
     try { anchor(); } catch (error) {
       if (error instanceof ForgeError && error.code === 'write_busy') return;
@@ -188,12 +201,14 @@ export function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<t
   }, audit.anchorIntervalMs) : undefined;
   return {
     app, index, tick, poll,
-    close() {
+    async close() {
+      stopped = true;
       clearInterval(timer);
       clearInterval(anchorTimer);
       for (const client of clients) client.ws.close();
       clients.clear();
-      index.close();
+      await pending?.catch(() => undefined);
+      await index.close();
     },
   };
 }

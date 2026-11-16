@@ -23,7 +23,7 @@ import {
 } from '@specforge/store';
 import type { Actor, AnswerReference, ReviewFinding, Role } from '@specforge/shared';
 import { Auth, mountAuthRoutes, type AuthEnv } from './auth.ts';
-import type { ForgeIndex } from './index-db.ts';
+import type { QueryIndex } from './query-index.ts';
 import { webResponse } from './web.ts';
 
 // 只读 REST 接口（T3.1）。写操作在 T3.4 加入，届时仍然只能走 Store.mutate。
@@ -76,12 +76,15 @@ const STATUS_OF: Record<string, 400 | 403 | 404 | 409 | 503> = {
   stale_answer: 409,
   write_busy: 409,
   recovery_required: 503,
+  index_unavailable: 503,
+  index_schema: 503,
+  index_identity: 503,
 };
 
 /** 不需要登录的接口 */
 const PUBLIC_API = new Set(['/api/health', '/api/auth/me', '/api/auth/login', '/api/auth/logout']);
 
-export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}): Hono<AuthEnv> {
+export function createApp(store: Store, index: QueryIndex, opts: AppOptions = {}): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   const auth = opts.auth ?? new Auth(store);
   const localPath = (c: Context) => c.req.path.slice(opts.basePath?.length ?? 0);
@@ -110,9 +113,18 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
   });
   mountAuthRoutes(app, auth);
 
+  // 只有经过本项目鉴权才能查看索引游标；故障时不返回陈旧业务列表。
+  app.get('/api/index', async (c) => {
+    try { await index.sync(); } catch (error) {
+      if (!(error instanceof ForgeError) || !error.code.startsWith('index_')) throw error;
+      return c.json({ index: index.status() }, 503);
+    }
+    return c.json({ index: index.status() });
+  });
+
   // 每次请求前与文件同步，保证列表不落后于文件
   app.use('/api/*', async (_, next) => {
-    index.sync();
+    await index.sync();
     await next();
   });
 
@@ -145,7 +157,7 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
     return c.json({ users: reg ? publicUsers(reg).map(({ name, roles, admin, disabled }) => ({ name, roles, admin, disabled: !!disabled })) : [] });
   });
 
-  app.get('/api/changes', (c) => c.json({ changes: index.changes({ stage: c.req.query('stage') }) }));
+  app.get('/api/changes', async (c) => c.json({ changes: await index.changes({ stage: c.req.query('stage') }) }));
 
   app.get('/api/changes/:id', (c) => {
     const id = c.req.param('id');
@@ -181,10 +193,10 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
     });
   });
 
-  app.get('/api/changes/:id/questions', (c) => {
+  app.get('/api/changes/:id/questions', async (c) => {
     const id = c.req.param('id');
     store.load(id);
-    return c.json({ questions: index.questions(id, { status: c.req.query('status'), severity: c.req.query('severity') }) });
+    return c.json({ questions: await index.questions(id, { status: c.req.query('status'), severity: c.req.query('severity') }) });
   });
 
   app.get('/api/changes/:id/questions/:qid', (c) => {
@@ -194,14 +206,14 @@ export function createApp(store: Store, index: ForgeIndex, opts: AppOptions = {}
     return c.json(q);
   });
 
-  app.get('/api/changes/:id/events', (c) => {
+  app.get('/api/changes/:id/events', async (c) => {
     const id = c.req.param('id');
     store.load(id);
-    return c.json({ events: index.events({ changeId: id, type: c.req.query('type'), after: intParam(c.req.query('after')), limit: intParam(c.req.query('limit')) }) });
+    return c.json({ events: await index.events({ changeId: id, type: c.req.query('type'), after: intParam(c.req.query('after')), limit: intParam(c.req.query('limit')) }) });
   });
 
-  app.get('/api/events', (c) =>
-    c.json({ events: index.events({ changeId: c.req.query('changeId'), type: c.req.query('type'), after: intParam(c.req.query('after')), limit: intParam(c.req.query('limit')) }) }),
+  app.get('/api/events', async (c) =>
+    c.json({ events: await index.events({ changeId: c.req.query('changeId'), type: c.req.query('type'), after: intParam(c.req.query('after')), limit: intParam(c.req.query('limit')) }) }),
   );
 
   app.get('/api/changes/:id/artifacts', (c) => {
