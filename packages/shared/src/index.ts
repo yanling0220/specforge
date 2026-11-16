@@ -1,5 +1,7 @@
 // 共享类型定义。字段含义见 docs/design.md。
 
+export type * from './notifications.ts';
+
 export type Role = 'dev' | 'product' | 'agent';
 
 export interface Actor {

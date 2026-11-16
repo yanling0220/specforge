@@ -1,6 +1,7 @@
 import { readFileSync, rmSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { addUser, sha256 } from '@specforge/core';
+import { NotificationLedger, questionAction } from '@specforge/store';
 import { ForgeIndex } from '../src/index-db.ts';
 import { createIndex, parseIndexConfig } from '../src/index-config.ts';
 import { PostgresIndex } from '../src/index-postgres.ts';
@@ -129,5 +130,34 @@ describe('Postgres 故障与配置', () => {
     expect(result.status).toBe(200);
     expect(await result.json()).toMatchObject({ events: [{ seq: 1 }] });
     expect(readFileSync(store.path('events.jsonl'), 'utf8').trim().split('\n')).toHaveLength(2);
+  });
+
+  it('通知受理记录独立于查询索引：SQLite → Postgres → SQLite 重建不重复排队或改写发送结果', async () => {
+    const store = indexProject(); roots.push(store.root);
+    store.mutateUsers(indexActor, 'user.added', (registry) => addUser(registry, { name: 'dev', roles: ['dev'], admin: true }, sha256('dev-token'), undefined, 'T'), {});
+    store.mutateUsers(indexActor, 'user.added', (registry) => addUser(registry, { name: 'pm', roles: ['product'] }, sha256('pm-token'), indexActor, 'T'), {});
+    indexQuestion(store);
+    questionAction(store, 'same', indexActor, 'Q-1', { kind: 'answer', text: 'private-answer' });
+    const ledger = new NotificationLedger(store, {
+      projectId: 'a', enabled: true,
+      route: { id: 'team', provider: 'feishu', revision: 'v1', members: [{ name: 'pm', memberId: 'ou_pm' }] },
+    });
+    const key = ledger.reconcile()[0]!.key;
+    ledger.prepare(key); ledger.finish(key, 1, { kind: 'accepted' });
+    const records = ledger.list();
+    const before = readFileSync(store.path('events.jsonl'), 'utf8');
+    const sqlites = [new ForgeIndex(store), new ForgeIndex(store)];
+    const pg = new PostgresIndex(store, 'a', new TestPgPool()); indexes.push(pg);
+    try {
+      await sqlites[0]!.sync({ rebuild: true });
+      await pg.initialize(); await pg.sync({ rebuild: true });
+      await sqlites[1]!.sync({ rebuild: true });
+      for (const index of [sqlites[0]!, pg, sqlites[1]!]) {
+        expect((await index.events({ changeId: 'same', limit: 100 })).filter((event) => event.type.startsWith('notification.'))).toHaveLength(3);
+        expect(ledger.reconcile()).toEqual(records);
+        expect(ledger.prepare(key)).toBeUndefined();
+        expect(readFileSync(store.path('events.jsonl'), 'utf8')).toBe(before);
+      }
+    } finally { await Promise.all(sqlites.map((index) => index.close())); }
   });
 });
