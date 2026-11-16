@@ -17,6 +17,7 @@ export class TestPgPool implements PgPool {
         await this.delay?.();
         if (this.fail?.(query)) throw new Error('secret-password query failure');
         if (query.startsWith('SELECT pg_advisory')) return { rows: [] };
+        if (query.startsWith('SELECT to_regclass')) return { rows: this.db.prepare("SELECT name AS relation FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'").all() };
         const sql = query.replace(/CREATE SCHEMA IF NOT EXISTS specforge_index;/g, '').replaceAll('specforge_index.', '').replaceAll(' FOR UPDATE', '').replaceAll(' COLLATE "C"', ' COLLATE BINARY');
         if (!args.length && !sql.trimStart().startsWith('SELECT')) { this.db.exec(sql); return { rows: [] }; }
         const values: (string | number | null)[] = [];

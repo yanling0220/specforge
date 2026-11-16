@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,10 +16,15 @@ const work = mkdtempSync(join(tmpdir(), 'sf-projects-e2e-'));
 const processes = [];
 const admin = { name: 'same', role: 'dev' };
 const deepLink = '#/changes/same/analysis/Q-1';
+const postgres = process.argv.includes('--postgres');
+const backend = postgres ? 'Postgres' : 'SQLite';
 const sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration));
 const step = (message) => console.log(`▶ ${message}`);
 const sf = (root, ...args) => available(() => execFileSync(process.execPath, [join(repository, 'apps/cli/src/main.ts'), ...args], { cwd: root, encoding: 'utf8', stdio: 'pipe' }));
 let browser;
+let databaseAdmin;
+let databasePool;
+let databaseName;
 
 async function available(operation) {
   for (let attempt = 0; ; attempt++) {
@@ -70,10 +76,12 @@ async function connectBrowser() {
   const pending = new Map();
   const sockets = [];
   const requests = [];
+  const responses = [];
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(event.data);
     if (message.method === 'Network.webSocketCreated') sockets.push(message.params.url);
     if (message.method === 'Network.requestWillBeSent') requests.push({ url: message.params.request.url, method: message.params.request.method });
+    if (message.method === 'Network.responseReceived') responses.push({ path: new URL(message.params.response.url).pathname, status: message.params.response.status });
     if (pending.has(message.id)) {
       pending.get(message.id)(message);
       pending.delete(message.id);
@@ -94,6 +102,14 @@ async function connectBrowser() {
   await send('Network.enable');
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `
     window.__documentId = crypto.randomUUID();
+    window.__read = async (url) => {
+      for (let attempt = 0; ; attempt++) {
+        const response = await fetch(url);
+        const body = await response.json();
+        if (response.status !== 409 || body.error?.code !== 'write_busy' || attempt >= 20) return { status: response.status, body };
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    };
     window.__sockets = [];
     const NativeSocket = window.WebSocket;
     window.WebSocket = class extends NativeSocket {
@@ -106,10 +122,26 @@ async function connectBrowser() {
       element.dispatchEvent(new Event(element.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
     };
   ` });
-  return { send, evaluate, sockets, requests, close: () => socket.close() };
+  return { send, evaluate, sockets, requests, responses, close: () => socket.close() };
 }
 
 async function main() {
+  const indexArgs = [];
+  const serverEnvironment = { ...process.env };
+  if (postgres) {
+    if (!process.env.SF_POSTGRES_TEST_URL) throw new Error('Postgres 浏览器验收需显式设置 SF_POSTGRES_TEST_URL（专用测试服务，需 CREATEDB）');
+    const { Pool } = await import('pg');
+    databaseAdmin = new Pool({ connectionString: process.env.SF_POSTGRES_TEST_URL, connectionTimeoutMillis: 5000 });
+    const name = `sf_browser_${randomUUID().replaceAll('-', '')}`;
+    await databaseAdmin.query(`CREATE DATABASE "${name}"`);
+    databaseName = name;
+    const url = new URL(process.env.SF_POSTGRES_TEST_URL); url.pathname = `/${name}`;
+    serverEnvironment.SF_E2E_INDEX_URL = url.href;
+    databasePool = new Pool({ connectionString: url.href, connectionTimeoutMillis: 5000, statement_timeout: 5000 });
+    const file = join(work, 'index.json');
+    writeFileSync(file, JSON.stringify({ backend: 'postgres', connectionStringEnv: 'SF_E2E_INDEX_URL' }));
+    indexArgs.push('--index', file);
+  }
   step('准备两个同名用户 / change / Q / 证据 / 事件序号的真实 Git 项目');
   const first = project('a');
   const second = project('b');
@@ -117,7 +149,7 @@ async function main() {
   assert.equal(first.events().length, second.events().length);
   const registry = join(work, 'projects.json');
   writeFileSync(registry, JSON.stringify({ version: 1, projects: [{ id: 'a', root: first.root }, { id: 'b', root: second.root }] }));
-  const server = spawn(process.execPath, [join(repository, 'apps/server/src/main.ts'), '--projects', registry, '--port', '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn(process.execPath, [join(repository, 'apps/server/src/main.ts'), '--projects', registry, '--port', '0', ...indexArgs], { env: serverEnvironment, stdio: ['ignore', 'pipe', 'pipe'] });
   processes.push(server);
   const base = await new Promise((resolve, reject) => {
     let output = '';
@@ -132,7 +164,7 @@ async function main() {
     for (const started = Date.now(); Date.now() - started < duration; await sleep(100)) {
       try { if (await evaluate(expression)) return; } catch (error) { if (!/context|navigat/i.test(error.message)) throw error; }
     }
-    throw new Error(`等待超时：${description}\n${await evaluate('document.body.innerText.slice(0, 1000)')}`);
+    throw new Error(`等待超时：${description}\n${await evaluate('document.body.innerText.slice(0, 1000)')}\n最近响应：${JSON.stringify(browser.responses.slice(-20))}\n订阅：${await evaluate(`JSON.stringify(__sockets.map((socket) => ({ state: socket.readyState, messages: socket.messages.map((message) => ({ type: message.type, lastSeq: message.lastSeq, seq: message.event?.seq, ids: message.ids })) })))`)}`);
   };
   const go = async (path) => { await send('Page.navigate', { url: `${base}${path}` }); await waitFor(`location.href === ${JSON.stringify(`${base}${path}`)} && !!window.__btn`, '页面导航'); };
   const noOtherData = async (id) => {
@@ -168,6 +200,10 @@ async function main() {
   await noOtherData('a'); await noOtherData('b');
   await go(`/p/a/${deepLink}`);
   await login('a');
+  const indexStatus = await evaluate(`__read('/p/a/api/index')`);
+  assert.equal(indexStatus.status, 200);
+  assert.equal(indexStatus.body.index.backend, postgres ? 'postgres' : 'sqlite');
+  assert.equal(indexStatus.body.index.state, 'ready');
   assert.equal(await evaluate(`document.querySelector('.role-picker').value`), 'dev');
   const denied = await evaluate(`Promise.all([fetch('/p/b/api/changes'), fetch('/p/b/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'same', token: 'token-a' }) })]).then((responses) => responses.map((response) => response.status))`);
   assert.deepEqual(denied, [401, 401]);
@@ -206,8 +242,9 @@ async function main() {
   await waitFor(`document.querySelectorAll('.gate-card').length > 0 && document.querySelector('h1')?.textContent.includes('b-private-title')`, 'B 门禁');
   await go('/p/b/#/events');
   await waitFor(`!!document.querySelector('.timeline .ev-head')`, 'B 时间线');
-  const timeline = await evaluate(`fetch('/p/b/api/events').then((response) => response.json())`);
-  assert.equal(timeline.events.length, (await available(() => second.events())).length);
+  const timeline = await evaluate(`__read('/p/b/api/events')`);
+  assert.equal(timeline.status, 200);
+  assert.equal(timeline.body.events.length, (await available(() => second.events())).length);
   await noOtherData('a');
   await go(`/p/b/${deepLink}`);
   await waitFor(`!!document.querySelector('#q-Q-1')`, 'B 问题');
@@ -290,6 +327,21 @@ async function main() {
   await recent('b');
   await waitFor(`document.querySelector('#q-Q-1 .qtext')?.textContent === 'b-private-question'`, 'B 会话仍有效');
   await noOtherData('a');
+  if (postgres) {
+    step('真实 Postgres 同步故障显示错误，恢复后查询与源事件一致');
+    const before = await available(() => second.exclusive(() => ({ state: second.load('same'), events: second.events() })));
+    await databasePool.query(`CREATE FUNCTION specforge_index.browser_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.project_id = 'b' THEN RAISE EXCEPTION 'private-browser-db-error'; END IF; RETURN NEW; END $$; CREATE TRIGGER browser_fail BEFORE UPDATE ON specforge_index.projects FOR EACH ROW EXECUTE FUNCTION specforge_index.browser_fail()`);
+    try {
+      assert.equal(await evaluate(`__read('/p/b/api/changes').then((response) => response.status)`), 503);
+      await waitFor(`!!document.querySelector('.error') && !document.querySelector('#q-Q-1')`, '索引失败显示错误且不显示旧问题');
+      assert.equal(await evaluate(`document.body.innerText.includes('private-browser-db-error')`), false);
+      assert.equal(await evaluate(`document.querySelectorAll('form.action-form').length`), 0);
+    } finally { await databasePool.query('DROP TRIGGER browser_fail ON specforge_index.projects; DROP FUNCTION specforge_index.browser_fail()'); }
+    await waitFor(`!!__btn('重试')`, '索引失败后的重试入口');
+    await evaluate(`__btn('重试').click(), true`);
+    await waitFor(`document.querySelector('#q-Q-1 .qtext')?.textContent === 'b-private-question'`, '索引恢复');
+    assert.deepEqual(await available(() => second.exclusive(() => ({ state: second.load('same'), events: second.events() }))), before);
+  }
   assert.deepEqual(await available(() => second.exclusive(() => ({ state: second.load('same'), events: second.events() }))), secondBefore);
   for (const store of [first, second]) {
     const checked = await sf(store.root, 'log', 'verify');
@@ -297,7 +349,7 @@ async function main() {
     console.log(`${store === first ? 'a' : 'b'}: ${checked.trim()}`);
   }
   assert.ok(sockets.every((url) => ['/p/a/ws', '/p/b/ws'].includes(new URL(url).pathname)));
-  console.log('✅ SQLite 多项目真实浏览器端到端测试通过');
+  console.log(`✅ ${backend} 多项目真实浏览器端到端测试通过`);
 }
 
 main().catch((error) => { console.error('❌', error.stack); process.exitCode = 1; }).finally(async () => {
@@ -310,5 +362,8 @@ main().catch((error) => { console.error('❌', error.stack); process.exitCode = 
     await exited;
     clearTimeout(timeout);
   }));
+  await databasePool?.end();
+  try { if (databaseName) await databaseAdmin.query(`DROP DATABASE "${databaseName}" WITH (FORCE)`); }
+  finally { await databaseAdmin?.end(); }
   rmSync(work, { recursive: true, force: true });
 });

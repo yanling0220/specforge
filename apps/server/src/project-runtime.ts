@@ -122,32 +122,46 @@ export async function createProjectRuntime(opts: RuntimeOptions, upgrade: Return
   const update = (force: boolean): Promise<void> => {
     if (stopped) return Promise.resolve();
     if (pending) return pending;
-    pending = (async () => store.exclusive(async () => {
-      check();
-      for (const client of clients) if (!allowed(client)) revoke(client);
-      const current = signature();
-      if (!force && !syncFailed && index.status().backend === 'sqlite' && index.status().state === 'ready' && current === seen) return;
-      const { rebuilt } = await index.sync();
-      // REST 可能先消费 sync 的 rebuilt 结果；推送自己的游标仍要识别截断 / 重写。
-      const rewritten = pushedSeq > 0 && store.events().find((event) => event.seq === pushedSeq)?.hash !== pushedHash;
-      if (rebuilt || rewritten) {
-        pushedSeq = 0;
-        pushedHash = undefined;
-        for (const client of clients) send(client, { type: 'rebuilt' });
+    pending = (async () => {
+      if (!force && !syncFailed && index.status().state === 'ready') {
+        const unchanged = store.exclusive(() => {
+          check();
+          for (const client of clients) if (!allowed(client)) revoke(client);
+          return signature() === seen;
+        });
+        if (unchanged) {
+          // 无文件变化时只检查数据库连接；网络心跳无需持有仓库写租约。
+          if (index.status().backend === 'postgres') await index.events({ after: pushedSeq, limit: 1 });
+          return;
+        }
       }
-      const fresh = await eventsAfter(pushedSeq);
-      seen = current;
-      syncFailed = false;
-      if (stopped) return;
-      if (!fresh.length) return;
-      pushedSeq = fresh.at(-1)!.seq;
-      pushedHash = fresh.at(-1)!.hash;
-      const ids = [...new Set(fresh.flatMap((event) => event.changeId ? [event.changeId] : []))];
-      for (const client of clients) {
-        for (const event of fresh) send(client, { type: 'event', event });
-        if (ids.length) send(client, { type: 'changes', ids });
-      }
-    }))().finally(() => { pending = undefined; });
+      await store.exclusive(async () => {
+        check();
+        for (const client of clients) if (!allowed(client)) revoke(client);
+        const current = signature();
+        if (!force && !syncFailed && index.status().backend === 'sqlite' && index.status().state === 'ready' && current === seen) return;
+        const { rebuilt } = await index.sync();
+        // REST 可能先消费 sync 的 rebuilt 结果；推送自己的游标仍要识别截断 / 重写。
+        const rewritten = pushedSeq > 0 && store.events().find((event) => event.seq === pushedSeq)?.hash !== pushedHash;
+        if (rebuilt || rewritten) {
+          pushedSeq = 0;
+          pushedHash = undefined;
+          for (const client of clients) send(client, { type: 'rebuilt' });
+        }
+        const fresh = await eventsAfter(pushedSeq);
+        seen = current;
+        syncFailed = false;
+        if (stopped) return;
+        if (!fresh.length) return;
+        pushedSeq = fresh.at(-1)!.seq;
+        pushedHash = fresh.at(-1)!.hash;
+        const ids = [...new Set(fresh.flatMap((event) => event.changeId ? [event.changeId] : []))];
+        for (const client of clients) {
+          for (const event of fresh) send(client, { type: 'event', event });
+          if (ids.length) send(client, { type: 'changes', ids });
+        }
+      });
+    })().finally(() => { pending = undefined; });
     return pending;
   };
   const tick = () => update(true);

@@ -30,8 +30,8 @@ export function useLive(changeId?: string): { version: number; status: LiveStatu
         if (stopped) return;
         const msg = JSON.parse(String(e.data)) as { type: string; lastSeq?: number; event?: { seq: number } };
         if (msg.type === 'hello') {
-          // 断线期间可能有变化：重连后刷新一次
-          if (lastSeq.current !== undefined && msg.lastSeq !== lastSeq.current) setVersion((v) => v + 1);
+          // 首次 REST 读取与订阅建立之间也可能发生修改，首次 hello 同样要刷新。
+          if (lastSeq.current === undefined || msg.lastSeq !== lastSeq.current) setVersion((v) => v + 1);
           lastSeq.current ??= msg.lastSeq;
           return;
         }
@@ -60,7 +60,7 @@ export function useLive(changeId?: string): { version: number; status: LiveStatu
   return { version, status };
 }
 
-/** 依赖 deps 拉取数据；失败时保留错误，重新拉取时不清空旧数据（避免闪烁） */
+/** 重新拉取期间保留数据；失败后清空，避免把旧门禁或旧表单作为当前结果。 */
 export function useData<T>(load: () => Promise<T>, deps: unknown[]): { data?: T; error?: Error; loading: boolean } {
   const [state, setState] = useState<{ data?: T; error?: Error; loading: boolean }>({ loading: true });
   useEffect(() => {
@@ -68,7 +68,7 @@ export function useData<T>(load: () => Promise<T>, deps: unknown[]): { data?: T;
     setState((s) => ({ ...s, loading: true }));
     load().then(
       (data) => !cancelled && setState({ data, loading: false }),
-      (error: Error) => !cancelled && setState((s) => ({ ...s, error, loading: false })),
+      (error: Error) => !cancelled && setState({ error, loading: false }),
     );
     return () => {
       cancelled = true;

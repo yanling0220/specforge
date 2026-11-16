@@ -1,4 +1,5 @@
 import { href, parseRoute } from './model.ts';
+import { fetchWithBusyRetry } from './http.ts';
 
 export const VISITED_PROJECTS_KEY = 'specforge.visited-projects';
 export const PROJECT_ROUTE_KEY = 'specforge.project-route.';
@@ -44,7 +45,7 @@ export function socketUrl(base: string, origin: string, changeId?: string, after
 export async function accessibleProjects(candidates: string[], request: typeof fetch = fetch): Promise<string[]> {
   const checked = await Promise.all(candidates.filter(validProjectId).slice(-20).map(async (projectId) => {
     try {
-      const response = await request(`${projectBase(projectId)}/api/project`, { credentials: 'same-origin', cache: 'no-store' });
+      const response = await fetchWithBusyRetry(`${projectBase(projectId)}/api/project`, { credentials: 'same-origin', cache: 'no-store' }, request);
       if (!response.ok) return undefined;
       const project = await response.json() as { id?: unknown };
       return project.id === projectId ? projectId : undefined;

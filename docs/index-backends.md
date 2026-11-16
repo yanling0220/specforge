@@ -32,9 +32,9 @@ node /path/to/specforge/apps/server/src/main.ts --index /srv/specforge/index.jso
 
 ## Schema 与事务
 
-- 当前仅支持 `specforge_index` schema v1。首次连接在事务中取得专用 advisory lock、创建 schema 和表并检查版本；需要该专用数据库的连接、schema 创建及表读写权限。新版本服务遇到未知版本会失败，不猜测升级或自动降级。
+- 当前仅支持 `specforge_index` schema v1。连接时在事务中取得专用 advisory lock，已有 schema 先检查版本；仅首次初始化创建 schema、表和索引。初始化账号需要 schema 创建权限，已有 schema 的运行账号只需 schema USAGE 和表 SELECT / INSERT / UPDATE / DELETE 权限，无需表所有权。新版本服务遇到未知版本会失败，不猜测升级或自动降级。
 - 表 `projects` 保存仓库绑定、项目游标与初始化标记；`changes` 主键 `(project_id,id)`，`questions` 主键 `(project_id,change_id,id)`，`events` 主键 `(project_id,seq)`。所有查询都包含项目 ID；已有事件 JSON 与哈希保持原样，不向哈希内容追加字段。
-- `projects` 的行锁和项目事务覆盖事件追加、change / question 更新及游标提交；重建只删除本项目的索引行，不删除项目登记或其他项目。源文件读取仍在仓库租约内，SQL 等待期间保持仓库锁；请求可能返回 `409 write_busy`，不自动排队或重放写入。
+- `projects` 的行锁和项目事务覆盖事件追加、change / question 更新及游标提交；重建只删除本项目的索引行，不删除项目登记或其他项目。同步时源文件读取仍在仓库租约内，SQL 等待期间保持仓库锁；无文件变化的数据库心跳只查询索引，网络等待不持有仓库写锁；请求可能返回 `409 write_busy`，不自动排队或重放写入。
 - 项目 ID 绑定真实目录和 Git 元数据身份，避免改配置后将旧 ID 悄悄换绑另一仓库。同一服务器进程重启会验证绑定并全量重建；切换机器、恢复仓库或有意换绑时，停服务并核对源仓库及可信锚定后，由管理员在专用索引库中清理对应项目的索引行与登记，再重新接入，或使用全新的空索引库。不要通过改业务事件绕过绑定。
 - 启动时总是从文件重建。运行时按序号追加，仅更新受影响的 change；日志尾哈希不符或截断时项目级重建。索引重建不代表审计校验通过；`sf log verify --anchor <可信SHA>` 与独立备份继续必需。
 
@@ -54,6 +54,10 @@ node /path/to/specforge/apps/server/src/main.ts --index /srv/specforge/index.jso
 
 显式选择 Postgres 后，连接 / schema / 同步失败不会回退 SQLite，也不会返回空列表冒充成功或继续展示旧列表。运行中的 API 失败为 `503 index_unavailable`（schema / 绑定错误有独立错误码）；定时同步失败会关闭项目订阅，其他健康项目继续运行。数据库恢复后轮询或下一次请求重新同步索引，浏览器需重新连接订阅。仅重试可重建的索引同步，不重试业务写操作。
 
+连接池为空闲连接监听错误，租用中的连接也接收 TCP 错误并在释放时销毁失效连接，避免断库变成未处理进程异常。
+
+Web 同一文档内串行发送 API 请求，GET / HEAD 遇到明确的 `409 write_busy` 时最多重试 6 次（累计等待约 1.89 秒）；POST、网络异常、503 和其他冲突不自动重试。重新读取失败时清空旧业务数据，避免旧门禁或表单继续显示为当前状态。
+
 业务请求在执行文件操作前同步索引。文件写入成功即返回该操作结果；其后索引暂时落后，由下一次同步补齐。客户端若遇网络中断，应核对源事件，不能仅凭索引失败重新提交同一操作。没有文件 / 数据库的分布式事务承诺。
 
 启动时失败的项目仅挂载通用 `503 project_unavailable`，不泄露路径；修复后需重启。单项目启动失败直接退出。schema 创建、连接获取和语句设置了超时，关闭服务会等待已有轮询结束再关闭连接池。
@@ -70,4 +74,16 @@ npm run test:postgres
 
 该命令只读取 `SF_POSTGRES_TEST_URL`，不读取 `DATABASE_URL`；创建随机前缀的项目登记，结束后清理本轮登记与索引行，保留 schema。测试库必须允许创建 `specforge_index`，不得使用生产库。需要 Postgres 15 或更新版本；当前实测 PostgreSQL 17.4。契约覆盖首次 / 增量 / 空同步、过滤与分页、同名数据隔离、日志截断 / 重写、重建回滚以及迁移前后源文件 / 哈希 / 锚定不变。
 
-2026-11-16 已在用户授权的独立临时容器上完成 PostgreSQL 17.4 真实契约 5/5（Docker 27.3.1，Debian x86_64 Linux）。T4.3e 已完成；T4.3f 继续断库 / schema 权限故障、完整服务迁移回退及 Postgres 多项目浏览器验收，整体尚未标记完成。
+2026-11-16 已在用户授权的独立临时容器上完成 PostgreSQL 17.4 真实契约 5/5（Docker 27.3.1，Debian x86_64 Linux）。同日 T4.3f 服务综合 5/5 与 Postgres 双项目 Chrome 通过，包括断连、schema / 权限、SQL 回滚和完整服务迁移回退；默认 282/282、typecheck、Web 构建及原单 / 双项目 Chrome 通过。T4.3 整体已完成首版验收，其他 Postgres 主版本、TLS 与多实例部署不在本轮实测范围。
+
+
+服务综合验收和 Postgres 浏览器命令同样只读取 `SF_POSTGRES_TEST_URL`：
+
+```bash
+npm run test:postgres:acceptance
+npm run web:e2e:projects:postgres
+```
+
+这两个命令会在已授权的专用测试服务上创建随机名称的空数据库；服务综合测试另建临时受限角色，故分别需要 CREATEDB / CREATEROLE 权限。它们不改传入数据库的 schema，结束后删除自己创建的数据库和角色；不要指向生产服务。普通 `test:postgres` 仍只需要专用库中的 schema 初始化与表读写权限。默认 `npm test` 与 SQLite 浏览器命令不读取此变量、不连接数据库。
+
+综合测试通过真实 TCP 代理断开 pg 连接，使用真实 trigger / schema 版本 / GRANT 与 REVOKE 注入 SQL 故障；验证 HTTP 503、订阅关闭、事务回滚、健康项目隔离及恢复不重放业务操作。完整服务 SQLite → Postgres → SQLite 比较列表、问题、门禁（排除实时评估时间戳）、事件与链校验，并逐字节比较源文件、事件哈希、Git HEAD 和可信锚定。浏览器复用相同双项目流程，额外验证索引失败的错误显示和恢复。

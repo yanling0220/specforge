@@ -21,6 +21,7 @@
     "apps/*/test",
     "apps/server/integration",
     "apps/server/vitest.postgres.config.ts",
+    "apps/server/vitest.postgres-acceptance.config.ts",
     "vitest.config.ts"
   ],
   "exclude": [

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accessibleProjects, projectBase, projectFromPath, projectHref, socketUrl, visitedProjects } from '../src/project.ts';
 
-afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetModules(); });
 
 describe('Web 项目上下文（T4.3d）', () => {
   it('从路径而不是 hash / 请求体选择项目，旧单项目入口不变', () => {
@@ -76,5 +76,52 @@ describe('Web 项目上下文（T4.3d）', () => {
     expect(PROJECT_ERROR).toContain('无效');
     await expect(api.me()).rejects.toMatchObject({ code: 'bad_project' });
     expect(fake).not.toHaveBeenCalled();
+  });
+
+  it('异步索引造成只读争用时有界重试，项目切换不改变重试上下文', async () => {
+    vi.useFakeTimers(); vi.stubGlobal('location', { pathname: '/p/a/' });
+    const fake = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ error: { code: 'write_busy' } }, { status: 409 }))
+      .mockResolvedValueOnce(Response.json({ changes: [{ id: 'same' }] }));
+    vi.stubGlobal('fetch', fake);
+    const { api } = await import('../src/api.ts');
+    const pending = api.changes();
+    vi.stubGlobal('location', { pathname: '/p/b/' });
+    await vi.runAllTimersAsync();
+    expect(await pending).toEqual([{ id: 'same' }]);
+    expect(fake.mock.calls.map(([path]) => path)).toEqual(['/p/a/api/changes', '/p/a/api/changes']);
+  });
+
+  it('只读重试到达上限时保留 write_busy 错误，不无限请求', async () => {
+    vi.useFakeTimers();
+    const fake = vi.fn<typeof fetch>(async () => Response.json({ error: { code: 'write_busy' } }, { status: 409 }));
+    vi.stubGlobal('fetch', fake);
+    const { api } = await import('../src/api.ts');
+    const checked = expect(api.changes()).rejects.toMatchObject({ code: 'write_busy' });
+    await vi.runAllTimersAsync(); await checked;
+    expect(fake).toHaveBeenCalledTimes(7);
+  });
+
+  it('业务提交与登录遇到争用也只发送一次', async () => {
+    const fake = vi.fn<typeof fetch>(async () => Response.json({ error: { code: 'write_busy' } }, { status: 409 }));
+    vi.stubGlobal('fetch', fake);
+    const { api } = await import('../src/api.ts');
+    await expect(api.questionAction('same', 'Q-1', 'answer', { role: 'dev', text: '一次提交' })).rejects.toMatchObject({ code: 'write_busy' });
+    await expect(api.login('same', 'token')).rejects.toMatchObject({ code: 'write_busy' });
+    expect(fake).toHaveBeenCalledTimes(2);
+    expect(fake.mock.calls.every(([, init]) => init?.method === 'POST')).toBe(true);
+  });
+
+  it('断库、版本冲突与网络异常均不自动重试读取', async () => {
+    const fake = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ error: { code: 'index_unavailable' } }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ error: { code: 'stale_answer' } }, { status: 409 }))
+      .mockRejectedValueOnce(new Error('offline'));
+    vi.stubGlobal('fetch', fake);
+    const { api } = await import('../src/api.ts');
+    await expect(api.changes()).rejects.toMatchObject({ code: 'index_unavailable' });
+    await expect(api.changes()).rejects.toMatchObject({ code: 'stale_answer' });
+    await expect(api.changes()).rejects.toThrow('offline');
+    expect(fake).toHaveBeenCalledTimes(3);
   });
 });

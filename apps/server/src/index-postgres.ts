@@ -36,6 +36,8 @@ CREATE INDEX IF NOT EXISTS events_type ON specforge_index.events (project_id, ty
 export interface PgClient {
   query(sql: string, args?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
   release(destroy?: boolean): void;
+  on?(event: 'error', listener: () => void): unknown;
+  off?(event: 'error', listener: () => void): unknown;
 }
 export interface PgPool {
   connect(): Promise<PgClient>;
@@ -71,11 +73,15 @@ export class PostgresIndex implements QueryIndex {
     let client: PgClient | undefined;
     let began = false;
     let destroy = false;
+    // pg-pool 只为闲置连接安装 error 监听；租用期间的 TCP 错误也必须被接收。
+    const onClientError = () => { destroy = true; this.failed(); };
     try {
       if (this.closed) throw new Error('closed');
       client = await this.pool.connect();
+      client.on?.('error', onClientError);
       if (transaction) { await client.query('BEGIN'); began = true; }
       const value = await operation(client);
+      if (destroy) throw new Error('connection lost');
       if (transaction) await client.query('COMMIT');
       return value;
     } catch (error) {
@@ -86,13 +92,18 @@ export class PostgresIndex implements QueryIndex {
       if (error instanceof ForgeError) throw error;
       // 驱动异常可能包含用户、SQL、主机或连接串，禁止向 HTTP / 日志透传。
       throw new ForgeError('index_unavailable', 'Postgres 索引不可用，请联系管理员；业务操作不会自动重试');
-    } finally { client?.release(destroy); }
+    } finally {
+      client?.release(destroy);
+      client?.off?.('error', onClientError);
+    }
   }
 
   async initialize(): Promise<void> {
     await this.database(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(734621009)');
-      await client.query(POSTGRES_SCHEMA);
+      const existing = (await client.query("SELECT to_regclass('specforge_index.schema_version') AS relation")).rows[0]?.relation;
+      // 已有 schema 仅校验版本，普通读写角色无需再次拥有建表 / 建索引权限。
+      if (!existing) await client.query(POSTGRES_SCHEMA);
       const version = (await client.query('SELECT version FROM specforge_index.schema_version WHERE singleton = 1')).rows[0]?.version;
       if (version !== 1) throw new ForgeError('index_schema', '不支持此 Postgres 索引 schema 版本，请核对升级说明');
       await client.query('INSERT INTO specforge_index.projects (project_id, identity) VALUES ($1, $2) ON CONFLICT (project_id) DO NOTHING', [this.projectId, indexIdentity(this.store)]);

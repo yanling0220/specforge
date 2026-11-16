@@ -18,6 +18,7 @@ import type {
   VerificationEvidence,
 } from '@specforge/shared';
 import { projectBase, projectFromPath } from './project.ts';
+import { fetchWithBusyRetry } from './http.ts';
 
 // server（apps/server）只读接口的类型与请求函数
 
@@ -134,7 +135,7 @@ async function get<T>(path: string): Promise<T> {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (PROJECT_ERROR) throw new ApiError(400, 'bad_project', PROJECT_ERROR);
-  const res = await fetch(`${API_BASE}${path}`, { ...init, credentials: 'same-origin', cache: 'no-store' });
+  const res = await fetchWithBusyRetry(`${API_BASE}${path}`, { ...init, credentials: 'same-origin', cache: 'no-store' });
   const body = (await res.json().catch(() => ({}))) as { error?: { code: string; message: string } };
   if (!res.ok) {
     // 会话过期、用户被停用或令牌被重置：通知界面回到登录页

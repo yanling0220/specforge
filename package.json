@@ -12,10 +12,12 @@
     "sf": "node apps/cli/src/main.ts",
     "server": "node apps/server/src/main.ts",
     "test:postgres": "vitest run --config apps/server/vitest.postgres.config.ts",
+    "test:postgres:acceptance": "vitest run --config apps/server/vitest.postgres-acceptance.config.ts",
     "web:build": "npm run build -w @specforge/web",
     "web:dev": "npm run dev -w @specforge/web",
     "web:e2e": "node apps/web/e2e/console.e2e.mjs",
-    "web:e2e:projects": "node apps/web/e2e/projects.e2e.mjs"
+    "web:e2e:projects": "node apps/web/e2e/projects.e2e.mjs",
+    "web:e2e:projects:postgres": "node apps/web/e2e/projects.e2e.mjs --postgres"
   },
   "engines": {
     "node": ">=22.18"

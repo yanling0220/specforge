@@ -18,10 +18,21 @@ const work = mkdtempSync(join(tmpdir(), 'sf-e2e-'));
 const proj = join(work, 'proj');
 const procs = [];
 
-const sf = (...args) => execFileSync('node', [join(REPO, 'apps/cli/src/main.ts'), ...args], { cwd: proj, encoding: 'utf8' });
+const sf = (...args) => execFileSync('node', [join(REPO, 'apps/cli/src/main.ts'), ...args], { cwd: proj, encoding: 'utf8', stdio: 'pipe' });
 const git = (...args) => execFileSync('git', args, { cwd: proj, encoding: 'utf8' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const step = (msg) => console.log(`▶ ${msg}`);
+
+// 浏览器成功后的刷新可能仍持租约；只为夹具的只读 CLI 核对等待明确的忙错误。
+async function sfRead(...args) {
+  for (let attempt = 0; ; attempt++) {
+    try { return sf(...args); }
+    catch (error) {
+      if (attempt >= 30 || !String(error.stderr).includes('仓库正在执行其他操作')) throw error;
+      await sleep(100);
+    }
+  }
+}
 
 function setupProject() {
   mkdirSync(proj);
@@ -234,13 +245,13 @@ async function main() {
 
   close();
   step('校验事件与哈希链');
-  if (!/T-1\s+👤 devon 接手/.test(sf('task', 'list', 'demo'))) throw new Error('sf task list 中 T-1 应为 devon 接手');
-  const log = sf('log', 'demo');
+  if (!/T-1\s+👤 devon 接手/.test(await sfRead('task', 'list', 'demo'))) throw new Error('sf task list 中 T-1 应为 devon 接手');
+  const log = await sfRead('log', 'demo');
   for (const want of ['question.answered', 'question.confirmed', 'comment.added', 'comment.resolved', 'spec.approved', 'stage.advanced', 'stage.advance_rejected', 'task.claimed']) {
     if (!log.includes(want)) throw new Error(`事件日志中缺少 ${want}`);
   }
   if (!/devon\(dev\) question\.answered/.test(log) || !/pam\(product\) question\.confirmed/.test(log)) throw new Error('事件中的身份不对');
-  console.log(sf('log', 'verify').trim());
+  console.log((await sfRead('log', 'verify')).trim());
   console.log('✅ Web 控制台端到端测试通过');
 }
 
