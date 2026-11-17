@@ -44,6 +44,8 @@ export interface NotificationRecord {
   source: { seq: number; hash: string };
   status: NotificationStatus;
   attempts: number;
+  /** 管理员申请新预算的起点；attempts 始终累计，旧轮次仍保留在事件链中。 */
+  retry?: { round: number; afterAttempts: number };
   updatedAt: string;
   reason?: NotificationReason;
   nextAttemptAt?: string;

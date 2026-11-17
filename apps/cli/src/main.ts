@@ -36,6 +36,7 @@ import type {
 import { cmdUserAdd, cmdUserDisable, cmdUserList, cmdUserSet, cmdUserToken } from './users.ts';
 import { cmdAgentAnalyze, cmdAgentGenerate, cmdAgentImplement, cmdAgentReview } from './agent-cmds.ts';
 import { checkTdd } from './tdd.ts';
+import { cmdNotify } from './notifications.ts';
 import {
   addComment,
   anchorLog,
@@ -137,6 +138,16 @@ AI agent
                [--backend claude|deepseek|codex|openai-compatible] [--provider deepseek|ollama]
                [--model <模型>] [--effort low|medium|high|xhigh|max] [--budget <美元上限>] [--verbose]
 
+通知（仅本地管理，不直接发送消息）
+  sf notify preview [change] --notifications JSON --project ID [--multi-project]
+                                                  只读预览当前待办与脱敏消息，首次启用前核对数量及接收人
+  sf notify status [change] --notifications JSON --project ID
+                                                  只读查看结果、累计次数与当前轮次
+  sf notify retry 编号 --notifications JSON --project ID --reason 原因
+               [--accept-duplicate-risk] [--as 管理员:角色]
+                                                  管理员申请新一轮五次预算，unknown 另需接受重复风险
+  编号为 n-加12位以上哈希或完整 key；可用 --change ID 限定变更，已受理不能重发。
+
 审计
   sf log [<id>]                                   事件时间线
   sf log verify [--anchor <commit>]                校验哈希链、Git 锚定与带外修改（可指定可信锚定 commit）
@@ -150,6 +161,11 @@ const { values: opts, positionals: args } = parseArgs({
   allowPositionals: true,
   options: {
     as: { type: 'string' },
+    notifications: { type: 'string' },
+    project: { type: 'string' },
+    change: { type: 'string' },
+    'multi-project': { type: 'boolean' },
+    'accept-duplicate-risk': { type: 'boolean' },
     set: { type: 'string' },
     title: { type: 'string' },
     tier: { type: 'string' },
@@ -489,6 +505,18 @@ async function main(): Promise<void> {
 
   return store.exclusive(async () => {
     switch (cmd) {
+      case 'notify': {
+        const action = need(sub, 'preview|status|retry');
+        const result = cmdNotify(store, action, {
+          file: need(opts.notifications, '--notifications'),
+          projectId: need(opts.project, '--project'),
+          changeId: opts.change ?? (action === 'retry' ? undefined : a1),
+          multiProject: opts['multi-project'], as: opts.as,
+          reason: opts.reason, acceptDuplicateRisk: opts['accept-duplicate-risk'],
+        }, action === 'retry' ? a1 : undefined);
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
       case 'user': {
         const name = a1;
         const roles = opts.role ? list(opts.role) : undefined;

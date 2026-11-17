@@ -143,7 +143,9 @@ describe('Postgres 故障与配置', () => {
       route: { id: 'team', provider: 'feishu', revision: 'v1', members: [{ name: 'pm', memberId: 'ou_pm' }] },
     });
     const key = ledger.reconcile()[0]!.key;
-    ledger.prepare(key); ledger.finish(key, 1, { kind: 'accepted' });
+    ledger.prepare(key); ledger.finish(key, 1, { kind: 'unknown' });
+    ledger.retry(key, indexActor, { reason: '已核对并接受重复风险', acceptDuplicateRisk: true });
+    ledger.prepare(key); ledger.finish(key, 2, { kind: 'accepted' });
     const records = ledger.list();
     const before = readFileSync(store.path('events.jsonl'), 'utf8');
     const sqlites = [new ForgeIndex(store), new ForgeIndex(store)];
@@ -153,7 +155,7 @@ describe('Postgres 故障与配置', () => {
       await pg.initialize(); await pg.sync({ rebuild: true });
       await sqlites[1]!.sync({ rebuild: true });
       for (const index of [sqlites[0]!, pg, sqlites[1]!]) {
-        expect((await index.events({ changeId: 'same', limit: 100 })).filter((event) => event.type.startsWith('notification.'))).toHaveLength(3);
+        expect((await index.events({ changeId: 'same', limit: 100 })).filter((event) => event.type.startsWith('notification.'))).toHaveLength(6);
         expect(ledger.reconcile()).toEqual(records);
         expect(ledger.prepare(key)).toBeUndefined();
         expect(readFileSync(store.path('events.jsonl'), 'utf8')).toBe(before);

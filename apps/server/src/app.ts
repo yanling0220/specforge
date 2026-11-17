@@ -42,6 +42,7 @@ export interface AppOptions {
   /** 登录与会话；默认按项目的用户名册新建 */
   auth?: Auth;
   basePath?: string;
+  deploymentPath?: string;
   projectId?: string;
   readOnly?: boolean;
   check?: () => void;
@@ -143,7 +144,7 @@ export function createApp(store: Store, index: QueryIndex, opts: AppOptions = {}
   app.notFound((c) => {
     const path = localPath(c);
     const isApi = path === '/api' || path.startsWith('/api/') || path === '/ws';
-    const page = c.req.method === 'GET' && !isApi ? webResponse(opts.webDir, decodeURIComponent(path)) : undefined;
+    const page = c.req.method === 'GET' && !isApi ? webResponse(opts.webDir, decodeURIComponent(path), opts.deploymentPath) : undefined;
     if (page) return page;
     return c.json({ error: { code: 'not_found', message: `没有这个接口：${c.req.method} ${c.req.path}` } }, 404);
   });

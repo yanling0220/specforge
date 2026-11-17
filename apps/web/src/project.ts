@@ -1,30 +1,39 @@
 import { href, parseRoute } from './model.ts';
 import { fetchWithBusyRetry } from './http.ts';
+import { deploymentPath } from '../../../packages/core/src/deployment.ts';
 
-export const VISITED_PROJECTS_KEY = 'specforge.visited-projects';
-export const PROJECT_ROUTE_KEY = 'specforge.project-route.';
+export const DEPLOYMENT_BASE = typeof document === 'undefined' ? ''
+  : deploymentPath(document.querySelector('meta[name="specforge-base-path"]')?.getAttribute('content') ?? '');
+export const VISITED_PROJECTS_KEY = 'specforge.visited-projects' + (DEPLOYMENT_BASE ? '.' + DEPLOYMENT_BASE : '');
+export const PROJECT_ROUTE_KEY = 'specforge.project-route.' + (DEPLOYMENT_BASE ? DEPLOYMENT_BASE + '.' : '');
 
 export function validProjectId(value: unknown): value is string {
   return typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value);
 }
 
-export function projectFromPath(pathname: string): string | undefined {
-  if (!pathname.startsWith('/p/')) return undefined;
-  const match = /^\/p\/([a-z0-9][a-z0-9_-]{0,63})\/?$/.exec(pathname);
+export function projectFromPath(pathname: string, base = DEPLOYMENT_BASE): string | undefined {
+  const prefix = deploymentPath(base);
+  if (prefix && pathname !== prefix && !pathname.startsWith(prefix + '/')) {
+    throw new Error('无效的部署入口，当前页面不属于配置的前缀');
+  }
+  const localPath = pathname.slice(prefix.length);
+  if (!localPath.startsWith('/p/')) return undefined;
+  const match = /^\/p\/([a-z0-9][a-z0-9_-]{0,63})\/?$/.exec(localPath);
   if (!match) throw new Error('无效的项目入口，请使用管理员提供的 /p/<项目ID>/ 链接');
   return match[1];
 }
 
-export function projectBase(projectId?: string): string {
-  if (projectId === undefined) return '';
+export function projectBase(projectId?: string, base = DEPLOYMENT_BASE): string {
+  const prefix = deploymentPath(base);
+  if (projectId === undefined) return prefix;
   if (!validProjectId(projectId)) throw new Error('无效的项目 ID');
-  return `/p/${projectId}`;
+  return prefix + '/p/' + projectId;
 }
 
-export function projectHref(projectId: string, hash = '#/'): string {
+export function projectHref(projectId: string, hash = '#/', base = DEPLOYMENT_BASE): string {
   let route = '#/';
   try { route = href(parseRoute(hash)); } catch {}
-  return `${projectBase(projectId)}/${route}`;
+  return projectBase(projectId, base) + '/' + route;
 }
 
 export function visitedProjects(serialized: string | null): string[] {

@@ -2,11 +2,11 @@ import { realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   chainEvent, finishNotification, ForgeError, hashOf, notificationDemands, notificationKey, notificationRecipients,
-  projectNotifications, queueNotification, reconcileNotification, startNotification,
+  projectNotifications, queueNotification, reconcileNotification, resolveIdentity, retryNotification, startNotification,
 } from '@specforge/core';
 import { headSha } from '@specforge/runner';
 import type {
-  ForgeEvent, NotificationDemand, NotificationRecipients, NotificationRecord, NotificationResult, NotificationRoute, NotificationScope, UserRegistry,
+  Actor, ForgeEvent, NotificationDemand, NotificationRecipients, NotificationRecord, NotificationResult, NotificationRoute, NotificationScope, UserRegistry,
 } from '@specforge/shared';
 import { verifyLog } from './audit.ts';
 import { evaluateAll } from './engine.ts';
@@ -78,19 +78,62 @@ export class NotificationLedger {
     });
   }
 
-  private persist(record: NotificationRecord, events: ForgeEvent[]): void {
+  private persist(record: NotificationRecord, events: ForgeEvent[], retry?: { by: Actor; reason: string; acceptDuplicateRisk: boolean }): void {
     const input = {
-      actor, type: `notification.${record.status}`, changeId: record.demand.changeId,
-      payload: { version: 1, record },
+      actor: retry?.by ?? actor, type: retry ? 'notification.retried' : `notification.${record.status}`, changeId: record.demand.changeId,
+      payload: { version: 1, record, ...(retry ? { reason: retry.reason, acceptDuplicateRisk: retry.acceptDuplicateRisk } : {}) },
     };
     // 同一解析器用于写前约束和重建；未知字段不能将原始响应意外带入链中。
     projectNotifications([...events, chainEvent(events.at(-1), input, this.now())], this.scope);
-    this.store.mutate(record.demand.changeId, actor, input.type, (state) => state, () => input.payload);
+    this.store.mutate(record.demand.changeId, input.actor, input.type, (state) => state, () => input.payload);
   }
 
   /** 只读投影，不写“已读”状态，也不触发发送。 */
   list(): NotificationRecord[] {
     return this.store.exclusive(() => this.snapshot().records);
+  }
+
+  /** 只读计算当前候选及发送资格；关闭时也可预览，不登记意图或恢复发送。 */
+  preview(): { record: NotificationRecord; recipients: NotificationRecipients; existing: boolean }[] {
+    return this.store.exclusive(() => {
+      const { registry, events, records } = this.snapshot();
+      const now = this.now();
+      return this.demands(now).map((demand) => {
+        const recipients = this.recipients(demand.role, registry);
+        const previous = records.find((record) => record.key === notificationKey(demand));
+        const last = events.at(-1)!;
+        const record = previous ? reconcileNotification(previous, recipients, now)
+          : queueNotification(demand, recipients, { seq: last.seq, hash: last.hash }, now);
+        return { record, recipients, existing: !!previous };
+      });
+    });
+  }
+
+  /** 只排队；发送仍由独占 worker 在锁外执行，不提供已受理通知的重发入口。 */
+  retry(key: string, by: Actor, options: { reason: string; acceptDuplicateRisk?: boolean }): NotificationRecord {
+    return this.store.exclusive(() => {
+      const { registry, events, records } = this.snapshot();
+      const caller = resolveIdentity(registry, by);
+      const user = registry.users.find((entry) => entry.name === caller.name);
+      if (!user?.admin || !['dev', 'product'].includes(caller.role)) throw new ForgeError('forbidden', '只有本项目有效管理员可以重试通知');
+      if (!this.enabled) throw new ForgeError('notification_disabled', '通知已关闭，不能申请重试');
+      if (typeof options.reason !== 'string' || !options.reason.trim() || options.reason.length > 500
+        || /[\x00-\x1f]/.test(options.reason)
+        || (options.acceptDuplicateRisk !== undefined && typeof options.acceptDuplicateRisk !== 'boolean')) {
+        throw new ForgeError('bad_arg', '重试需要 1–500 字的原因，重复风险确认必须为布尔值');
+      }
+      const record = records.find((entry) => entry.key === key);
+      if (!record) throw new ForgeError('not_found', '没有这个项目的通知记录');
+      if (record.status === 'unknown' && options.acceptDuplicateRisk !== true) {
+        throw new ForgeError('notification_duplicate_risk', '未知结果可能已经送达，重试必须明确接受重复消息风险');
+      }
+      const now = this.now();
+      const demand = this.demands(now).find((entry) => notificationKey(entry) === key);
+      if (!demand) throw new ForgeError('notification_conflict', '当前版本或待办已经失效，不能重试旧通知');
+      const next = retryNotification(record, this.recipients(demand.role, registry), { seq: events.at(-1)!.seq, hash: events.at(-1)!.hash }, now);
+      this.persist(next, events, { by: caller, reason: options.reason.trim(), acceptDuplicateRisk: options.acceptDuplicateRisk === true });
+      return next;
+    });
   }
 
   /** 默认未启用时完全无通知写入；首次启用只补当前仍然存在的需求。 */

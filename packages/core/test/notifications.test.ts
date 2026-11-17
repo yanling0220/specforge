@@ -3,7 +3,7 @@ import type { Change, GateEvaluation, GateId, NotificationDemand, NotificationRo
 import {
   addUser, chainEvent, confirmAnswer, createQuestion, deferQuestion, emptyRegistry, finishNotification, invalidateQuestion,
   notificationDemands, notificationKey, notificationRecipients, projectNotifications, proposeAnswer, queueNotification,
-  reconcileNotification, rejectAnswer, requireRole, startNotification, upstreamGates,
+  reconcileNotification, rejectAnswer, requireRole, retryNotification, notificationAttemptLimit, startNotification, upstreamGates,
 } from '../src/index.ts';
 
 const now = '2026-11-16T00:00:00.000Z';
@@ -127,6 +127,45 @@ describe('通知投影和有界尝试', () => {
   const demand = notificationDemands(input())[0]!;
   const source = chainEvent(undefined, { type: 'change.created', actor: dev, changeId: change.id, payload: {} }, now);
   const queued = () => queueNotification(demand, notificationRecipients('product', registry(), route), { seq: source.seq, hash: source.hash }, now);
+
+  it('显式重试申请一轮五次预算并保留累计次数，已受理不能重发', () => {
+    const selection = notificationRecipients('product', registry(), route);
+    const failed = { ...queued(), status: 'failed' as const, attempts: 4, reason: 'delivery_failed' as const };
+    const retried = retryNotification(failed, selection, failed.source, later);
+    expect(retried).toMatchObject({ status: 'queued', attempts: 4, retry: { round: 1, afterAttempts: 4 } });
+    expect(notificationAttemptLimit(retried)).toBe(9);
+    expect(startNotification(retried, later)!.attempts).toBe(5);
+    const exhausted = finishNotification({ ...retried, status: 'started', attempts: 9 }, { kind: 'retry', retryAt: '2026-11-16T00:01:00.000Z' }, later);
+    expect(exhausted).toMatchObject({ status: 'failed', reason: 'retry_exhausted', attempts: 9 });
+    expect(startNotification(exhausted, later)).toBeUndefined();
+    expect(() => retryNotification({ ...failed, status: 'accepted' }, selection, failed.source, later)).toThrow(/已受理/);
+  });
+
+  it('重建严格校验管理员重试事件、重复风险确认及预算起点，不能借普通事件重置预算', () => {
+    const events = [source];
+    const append = (record: ReturnType<typeof queued>) => {
+      const event = chainEvent(events.at(-1), { type: 'notification.' + record.status, actor: dev, changeId: change.id, payload: { version: 1, record } }, now);
+      events.push(event);
+      return event;
+    };
+    const record = queued();
+    append(record);
+    const started = startNotification(record, now)!; append(started);
+    const unknown = finishNotification(started, { kind: 'unknown' }, now); const last = append(unknown);
+    const retried = retryNotification(unknown, notificationRecipients('product', registry(), route), { seq: last.seq, hash: last.hash }, later);
+    const event = chainEvent(last, {
+      type: 'notification.retried', actor: dev, changeId: change.id,
+      payload: { version: 1, record: retried, reason: '已核对外部结果', acceptDuplicateRisk: true },
+    }, later);
+    expect(projectNotifications([...events, event], scope)).toEqual([retried]);
+    for (const bad of [
+      { ...event, payload: { ...event.payload, acceptDuplicateRisk: false } },
+      { ...event, payload: { version: 1, record: retried, acceptDuplicateRisk: true } },
+      { ...event, actor: { name: 'engine', role: 'agent' as const } },
+      { ...event, payload: { ...event.payload, record: { ...retried, retry: { round: 1, afterAttempts: 0 } } } },
+      { ...event, type: 'notification.queued', payload: { version: 1, record: retried } },
+    ]) expect(() => projectNotifications([...events, bad], scope)).toThrow(/账本/);
+  });
 
   it('取消后同键恢复保留安全重试预算；成功、未知、配置失败不能自动复活', () => {
     const selection = notificationRecipients('product', registry(), route);

@@ -10,6 +10,7 @@ export interface NotificationWorkerOptions {
   projectId: string;
   settings: unknown;
   multiProject: boolean;
+  deploymentPath?: string;
   check(): void;
   transport?: FeishuTransport;
   now?: () => number;
@@ -77,6 +78,7 @@ export class NotificationWorker {
     try {
       settings = parseNotificationSettings(raw);
       if (settings.projectId !== projectId) throw new Error();
+      if (new URL(settings.publicBaseUrl).pathname !== (this.options.deploymentPath || '/')) throw new Error();
       credentials = feishuCredentials(settings);
     } catch { this.state = { state: 'blocked', reason: 'configuration' }; }
     const ledger = store.exclusive(() => {
@@ -104,7 +106,7 @@ export class NotificationWorker {
       this.lastAttemptAt = this.now();
       // prepare 返回后不跨 await 再读取业务数据；只用刚刚确认过的最小快照。
       const message = notificationMessage(prepared.record, prepared.members, { alias: settings.alias, publicBaseUrl: settings.publicBaseUrl, multiProject });
-      const result = await sendFeishu({ ...credentials, message, attempt: prepared.record.attempts, transport: this.options.transport, now: this.now, random: this.options.random });
+      const result = await sendFeishu({ ...credentials, message, attempt: prepared.record.attempts - (prepared.record.retry?.afterAttempts ?? 0), transport: this.options.transport, now: this.now, random: this.options.random });
       this.unrecorded = { ledger, record: prepared.record, result };
       await this.flush();
       return;

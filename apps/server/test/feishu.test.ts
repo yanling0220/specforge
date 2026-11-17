@@ -15,10 +15,13 @@ describe('飞书配置与最小消息', () => {
   it('逐项目严格解析；拒绝直接凭据、任意目的地、重复映射、广播和非 Open ID', () => {
     const settings = notificationSettings();
     expect(parseNotificationSettings(settings)).toEqual(settings);
+    expect(parseNotificationSettings({ ...settings, publicBaseUrl: 'https://example.invalid/console/team/' }).publicBaseUrl).toBe('https://example.invalid/console/team');
     for (const value of [
       { ...settings, webhook: 'private-value' }, { ...settings, provider: 'other' }, { ...settings, enabled: 'true' },
       { ...settings, publicBaseUrl: 'http://example.invalid' }, { ...settings, publicBaseUrl: 'https://user:secret@example.invalid' },
-      { ...settings, publicBaseUrl: 'https://example.invalid/prefix' },
+      { ...settings, publicBaseUrl: 'https://example.invalid/prefix//' },
+      { ...settings, publicBaseUrl: 'https://example.invalid/prefix/..' },
+      { ...settings, publicBaseUrl: 'https://example.invalid/%70refix' },
       { ...settings, publicBaseUrl: 'https://example.invalid/?token=secret' }, { ...settings, alias: '<at user_id="all">' },
       { ...settings, route: { ...settings.route, members: [{ name: 'pm', memberId: 'all' }] } },
       { ...settings, route: { ...settings.route, members: [{ name: 'pm', memberId: 'user_id' }] } },

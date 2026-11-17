@@ -23,6 +23,7 @@ const HELP = `SpecForge server + Web 控制台
   Postgres 索引配置：{"backend":"postgres","connectionStringEnv":"SPECFORGE_INDEX_URL"}
   单项目 Postgres 还需在索引配置中指定稳定 projectId；--index 与 --db 互斥。
   飞书通知：--notifications <通知配置.json>（默认关闭，逐项目配置，凭据只从环境读取）。
+  部署前缀：--base-path /console（默认根路径；反向代理保留前缀，API、资源和 Cookie 同时挂载）。
 
 REST
   GET /api/health
@@ -51,6 +52,7 @@ const { values: opts } = parseArgs({
     projects: { type: 'string' },
     index: { type: 'string' },
     notifications: { type: 'string' },
+    'base-path': { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -67,7 +69,7 @@ async function main(): Promise<void> {
   const notifications = opts.notifications ? readNotificationConfig(opts.notifications) : undefined;
   if (opts.projects) {
     if (opts.db) throw new ForgeError('bad_arg', '--projects 不能与 --db 同时使用');
-    const server = await startMultiProjectServer({ projects: readProjects(opts.projects), port, host: opts.host, indexConfig, notifications });
+    const server = await startMultiProjectServer({ projects: readProjects(opts.projects), basePath: opts['base-path'], port, host: opts.host, indexConfig, notifications });
     console.log(`SpecForge 多项目服务：${server.url}（项目独立登录，接口前缀 /p/<项目ID>）`);
     console.log(existsSync(join(DEFAULT_WEB_DIR, 'index.html')) ? `Web 控制台：${server.url}/（使用管理员提供的项目 ID 或 /p/<项目ID>/ 链接）` : 'Web 控制台未构建：npm run web:build');
     if (opts.host && !isLoopback(opts.host)) console.log('非本机访问请放在 HTTPS 反向代理之后使用');
@@ -77,7 +79,7 @@ async function main(): Promise<void> {
     return;
   }
   const store = Store.find(process.cwd());
-  const server = await startServer({ store, port, host: opts.host, dbPath: opts.db, indexConfig, notifications });
+  const server = await startServer({ store, basePath: opts['base-path'], port, host: opts.host, dbPath: opts.db, indexConfig, notifications });
   if (opts.host && !isLoopback(opts.host)) {
     console.log('⚠️  正在监听非本机地址：登录令牌与会话 Cookie 以明文 HTTP 传输，请放在 HTTPS 反向代理之后使用');
   }

@@ -90,9 +90,30 @@ export function reconcileNotification(record: NotificationRecord, recipients: No
 
 export function startNotification(record: NotificationRecord, now: string): NotificationRecord | undefined {
   if (!['queued', 'retry_wait'].includes(record.status) || (record.nextAttemptAt && Date.parse(now) < Date.parse(record.nextAttemptAt))) return undefined;
-  if (record.attempts >= 5) return undefined;
+  if (record.attempts >= notificationAttemptLimit(record)) return undefined;
   const { reason, nextAttemptAt, ...rest } = record;
   return { ...rest, status: 'started', attempts: record.attempts + 1, updatedAt: now };
+}
+
+export function notificationAttemptLimit(record: NotificationRecord): number {
+  return (record.retry?.afterAttempts ?? 0) + 5;
+}
+
+/** 调用者须先校验管理员和当前需求；纯转换保留累计次数，不发送消息。 */
+export function retryNotification(record: NotificationRecord, recipients: NotificationRecipients, source: NotificationRecord['source'], now: string): NotificationRecord {
+  if (!['blocked', 'failed', 'unknown'].includes(record.status)
+    && !(record.status === 'cancelled' && ['blocked', 'failed'].includes(record.cancelledFrom!))) {
+    throw new ForgeError('notification_conflict', '只有暂停、失败或未知结果的通知可以显式重试，已受理通知不能重发');
+  }
+  if (!recipients.ok) throw new ForgeError('notification_blocked', '当前通知配置或接收映射不可用');
+  if (record.attempts > Number.MAX_SAFE_INTEGER - 5 || (record.retry?.round ?? 0) >= Number.MAX_SAFE_INTEGER) {
+    throw new ForgeError('notification_conflict', '通知累计预算已达到上限');
+  }
+  const { reason, nextAttemptAt, cancelledFrom, ...rest } = record;
+  return {
+    ...rest, routeId: recipients.routeId, recipientsHash: recipients.fingerprint, source,
+    status: 'queued', updatedAt: now, retry: { round: (record.retry?.round ?? 0) + 1, afterAttempts: record.attempts },
+  };
 }
 
 export function finishNotification(record: NotificationRecord, result: NotificationResult, now: string): NotificationRecord {
@@ -100,7 +121,7 @@ export function finishNotification(record: NotificationRecord, result: Notificat
   if (result.kind === 'retry' && (!Number.isFinite(Date.parse(result.retryAt)) || Date.parse(result.retryAt) <= Date.parse(now))) {
     throw new ForgeError('bad_arg', '重试时间必须晚于当前时间');
   }
-  const exhausted = result.kind === 'retry' && record.attempts >= 5;
+  const exhausted = result.kind === 'retry' && record.attempts >= notificationAttemptLimit(record);
   return {
     ...record, status: exhausted ? 'failed' : result.kind === 'retry' ? 'retry_wait' : result.kind, updatedAt: now,
     ...(result.kind === 'retry' && !exhausted ? { nextAttemptAt: result.retryAt } : {}),
@@ -120,7 +141,11 @@ const invalid = (): never => { throw new ForgeError('notification_invalid', '通
 function readRecord(value: unknown): NotificationRecord {
   const record = value as NotificationRecord | undefined;
   if (!record || record.version !== 1 || !hash(record.key) || !record.demand || !record.source
-    || !statuses.includes(record.status) || !Number.isSafeInteger(record.attempts) || record.attempts < 0 || record.attempts > 5
+    || !statuses.includes(record.status) || !Number.isSafeInteger(record.attempts) || record.attempts < 0
+    || (record.retry !== undefined && (!record.retry || !Number.isSafeInteger(record.retry.round) || record.retry.round < 1
+      || !Number.isSafeInteger(record.retry.afterAttempts) || record.retry.afterAttempts < 0
+      || record.retry.afterAttempts > Number.MAX_SAFE_INTEGER - 5 || record.retry.afterAttempts > record.attempts))
+    || record.attempts > notificationAttemptLimit(record)
     || !time(record.updatedAt) || !Number.isSafeInteger(record.source.seq) || record.source.seq < 1 || !hash(record.source.hash)
     || (record.routeId !== null && !id(record.routeId)) || (record.recipientsHash !== null && !hash(record.recipientsHash))
     || (record.reason !== undefined && !reasons.includes(record.reason))
@@ -140,6 +165,7 @@ function readRecord(value: unknown): NotificationRecord {
     version: 1, key: notificationKey(cleanDemand), demand: cleanDemand,
     routeId: record.routeId, recipientsHash: record.recipientsHash,
     source: { seq: record.source.seq, hash: record.source.hash }, status: record.status, attempts: record.attempts, updatedAt: record.updatedAt,
+    ...(record.retry !== undefined ? { retry: { round: record.retry.round, afterAttempts: record.retry.afterAttempts } } : {}),
     ...(record.reason !== undefined ? { reason: record.reason } : {}),
     ...(record.nextAttemptAt !== undefined ? { nextAttemptAt: record.nextAttemptAt } : {}),
     ...(record.cancelledFrom !== undefined ? { cancelledFrom: record.cancelledFrom } : {}),
@@ -147,7 +173,7 @@ function readRecord(value: unknown): NotificationRecord {
   if (hashOf(clean) !== hashOf(record)
     || (record.status === 'cancelled') !== (record.cancelledFrom !== undefined)
     || (['started', 'accepted', 'retry_wait', 'failed', 'unknown'].includes(record.status) && record.attempts < 1)
-    || (record.status === 'retry_wait' && (!record.nextAttemptAt || record.attempts >= 5))
+    || (record.status === 'retry_wait' && (!record.nextAttemptAt || record.attempts >= notificationAttemptLimit(record)))
     || (['queued', 'started', 'accepted', 'retry_wait', 'failed', 'unknown'].includes(record.status) && (!record.routeId || !record.recipientsHash))) return invalid();
   return clean;
 }
@@ -157,20 +183,35 @@ export function projectNotifications(events: ForgeEvent[], scope: NotificationSc
   for (const event of events) {
     if (!event.type.startsWith('notification.')) continue;
     const record = readRecord(event.payload.record);
-    if (event.payload.version !== 1 || Object.keys(event.payload).some((key) => !['version', 'record'].includes(key))
-      || event.type !== `notification.${record.status}` || event.changeId !== record.demand.changeId
+    const manualRetry = event.type === 'notification.retried';
+    const fields = manualRetry ? ['version', 'record', 'reason', 'acceptDuplicateRisk'] : ['version', 'record'];
+    if (event.payload.version !== 1 || Object.keys(event.payload).some((key) => !fields.includes(key))
+      || (!manualRetry && event.type !== `notification.${record.status}`) || event.changeId !== record.demand.changeId
       || record.source.seq >= event.seq || events[record.source.seq - 1]?.hash !== record.source.hash) return invalid();
     if (hashOf(record.demand.scope) !== hashOf(scope)) throw new ForgeError('notification_binding', '通知项目或仓库身份已改变，需要显式迁移');
     const previous = records.get(record.key);
+    if (manualRetry) {
+      if (!previous || !['dev', 'product'].includes(event.actor.role)
+        || typeof event.payload.reason !== 'string' || !event.payload.reason.trim() || event.payload.reason.length > 500
+        || typeof event.payload.acceptDuplicateRisk !== 'boolean'
+        || (previous.status === 'unknown' && event.payload.acceptDuplicateRisk !== true)) return invalid();
+      try {
+        const expected = retryNotification(previous, { ok: true, routeId: record.routeId!, fingerprint: record.recipientsHash!, members: [] }, record.source, record.updatedAt);
+        if (record.status !== 'queued' || hashOf(expected) !== hashOf(record)) return invalid();
+      } catch { return invalid(); }
+      records.set(record.key, record);
+      continue;
+    }
     const transitions: Record<NotificationStatus, NotificationStatus[]> = {
       queued: ['started', 'blocked', 'cancelled'], retry_wait: ['started', 'blocked', 'cancelled'],
       started: ['accepted', 'retry_wait', 'failed', 'unknown'], blocked: ['cancelled'], failed: ['cancelled'],
       cancelled: ['queued', 'retry_wait', 'blocked'], accepted: [], unknown: [],
     };
-    if ((!previous && (!['queued', 'blocked'].includes(record.status) || record.attempts !== 0))
+    if ((!previous && (!['queued', 'blocked'].includes(record.status) || record.attempts !== 0 || record.retry !== undefined))
       || (previous && (hashOf(previous.demand) !== hashOf(record.demand)
         || !transitions[previous.status].includes(record.status)
         || record.attempts !== previous.attempts + (record.status === 'started' ? 1 : 0)
+        || hashOf(record.retry ?? null) !== hashOf(previous.retry ?? null)
         || (record.status === 'cancelled' && record.cancelledFrom !== previous.status)
         || (previous.status === 'cancelled' && !['queued', 'retry_wait'].includes(previous.cancelledFrom!))
         || record.routeId !== previous.routeId || record.recipientsHash !== previous.recipientsHash

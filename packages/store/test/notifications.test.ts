@@ -255,6 +255,79 @@ describe('通知 Store 发送账本（T4.5b）', () => {
     expect(ledger.prepare(key)).toBeUndefined();
   });
 
+  it('关闭时只读预览当前待办，不登记、发送、修改业务文件或恢复历史结果', () => {
+    const store = project();
+    const ledger = new NotificationLedger(store, { ...options, enabled: false });
+    const before = { events: store.events(), files: files(store), sha: headSha(store.root) };
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    expect(ledger.preview()).toMatchObject([{ existing: false, record: { status: 'queued', attempts: 0 }, recipients: { ok: true } }]);
+    expect(ledger.list()).toEqual([]);
+    expect({ events: store.events(), files: files(store), sha: headSha(store.root) }).toEqual(before);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('管理员重试需原因；unknown 需重复风险确认；普通成员、agent、关闭及错误配置均不能重试', () => {
+    const store = project(); const ledger = new NotificationLedger(store, options);
+    const key = ledger.reconcile()[0]!.key;
+    ledger.prepare(key); ledger.finish(key, 1, { kind: 'unknown' });
+    const before = { events: store.events(), files: files(store) };
+    expect(() => ledger.retry(key, pm, { reason: '检查完成', acceptDuplicateRisk: true })).toThrow(/管理员/);
+    expect(() => ledger.retry(key, { name: dev.name, role: 'agent' }, { reason: '检查完成', acceptDuplicateRisk: true })).toThrow();
+    expect(() => ledger.retry(key, dev, { reason: ' ' })).toThrow(/原因/);
+    expect(() => ledger.retry(key, dev, { reason: '检查完成' })).toThrow(/重复消息风险/);
+    expect(() => new NotificationLedger(store, { ...options, enabled: false }).retry(key, dev, { reason: '检查完成', acceptDuplicateRisk: true })).toThrow(/已关闭/);
+    expect(() => new NotificationLedger(store, { ...options, available: false }).retry(key, dev, { reason: '检查完成', acceptDuplicateRisk: true })).toThrow(/配置或接收映射/);
+    expect({ events: store.events(), files: files(store) }).toEqual(before);
+    expect(ledger.retry(key, dev, { reason: '已核对并接受重复风险', acceptDuplicateRisk: true })).toMatchObject({ status: 'queued', attempts: 1, retry: { round: 1, afterAttempts: 1 } });
+    expect(store.events().at(-1)).toMatchObject({ type: 'notification.retried', actor: dev, payload: { reason: '已核对并接受重复风险', acceptDuplicateRisk: true } });
+    expect(files(store)).toEqual(before.files);
+    ledger.prepare(key); ledger.finish(key, 2, { kind: 'accepted' });
+    expect(() => ledger.retry(key, dev, { reason: '再次提醒' })).toThrow(/已受理/);
+    expect(verifyLog(store).ok).toBe(true);
+  });
+
+  it('显式重试每轮五次，重启保持累计次数与轮次，旧结果不能覆盖新尝试', () => {
+    const store = project(); let clock = Date.parse(now);
+    const currentOptions = { ...options, now: () => new Date(clock).toISOString() };
+    const ledger = new NotificationLedger(store, currentOptions);
+    const key = ledger.reconcile()[0]!.key;
+    ledger.prepare(key); ledger.finish(key, 1, { kind: 'failed' });
+    ledger.retry(key, dev, { reason: '已修复签名配置' });
+    for (let attempt = 2; attempt <= 6; attempt++) {
+      const restarted = new NotificationLedger(new Store(store.root), currentOptions);
+      expect(restarted.prepare(key)!.record.attempts).toBe(attempt);
+      const result = restarted.finish(key, attempt, { kind: 'retry', retryAt: new Date(clock + 10_000).toISOString() });
+      expect(result.status).toBe(attempt === 6 ? 'failed' : 'retry_wait');
+      clock += 10_000;
+    }
+    expect(ledger.list()).toMatchObject([{ attempts: 6, status: 'failed', reason: 'retry_exhausted', retry: { round: 1, afterAttempts: 1 } }]);
+    expect(ledger.prepare(key)).toBeUndefined();
+    expect(ledger.retry(key, dev, { reason: '已解除限流' })).toMatchObject({ attempts: 6, retry: { round: 2, afterAttempts: 6 } });
+    ledger.prepare(key);
+    expect(() => ledger.finish(key, 1, { kind: 'accepted' })).toThrow(/尝试已变化/);
+    ledger.finish(key, 7, { kind: 'accepted' });
+    expect(new NotificationLedger(new Store(store.root), currentOptions).list()).toMatchObject([{ status: 'accepted', attempts: 7 }]);
+    expect(store.events().filter((event) => event.type === 'notification.retried')).toHaveLength(2);
+    expect(verifyLog(store).ok).toBe(true);
+  });
+
+  it('管理员可显式重新绑定变更后的接收快照，旧版本结束后不能再重试', () => {
+    const store = project(); const ledger = new NotificationLedger(store, options);
+    const original = ledger.reconcile()[0]!;
+    const changed = new NotificationLedger(store, { ...options, route: { ...route, revision: 'v2' } });
+    expect(changed.reconcile()).toMatchObject([{ status: 'blocked', reason: 'recipient_changed' }]);
+    const rebound = changed.retry(original.key, dev, { reason: '已核对新群和接收成员' });
+    expect(rebound.key).toBe(original.key);
+    expect(rebound.recipientsHash).not.toBe(original.recipientsHash);
+    expect(rebound.source.seq).toBeGreaterThan(original.source.seq);
+    expect(changed.preview()).toMatchObject([{ existing: true, record: { status: 'queued' } }]);
+    questionAction(store, 'same', pm, 'Q-1', { kind: 'confirm' });
+    const before = store.events();
+    expect(() => changed.retry(original.key, dev, { reason: '旧消息' })).toThrow(/待办已经失效/);
+    expect(store.events()).toEqual(before);
+    expect(verifyLog(store).ok).toBe(true);
+  });
+
   it('两个真实进程同时登记同一需求，只有一条 queued、序号连续且状态一致', async () => {
     const store = project();
     const worker = join(import.meta.dirname, 'fixtures/notification-writer.ts');

@@ -17,6 +17,43 @@ describe('Web 项目上下文（T4.3d）', () => {
     for (const id of ['', '../a', 'a/b', 'a?token=secret', 'a'.repeat(65)]) expect(() => projectHref(id)).toThrow();
   });
 
+  it('部署前缀同时限定项目入口、根入口和项目链接，不接受前缀之外的路径', () => {
+    const base = '/console/team';
+    expect(projectFromPath(base + '/', base)).toBeUndefined();
+    expect(projectFromPath(base + '/p/a/', base)).toBe('a');
+    expect(projectBase(undefined, base)).toBe(base);
+    expect(projectBase('a', base)).toBe(base + '/p/a');
+    expect(projectHref('a', '#/changes/same/analysis/Q-1', base)).toBe(base + '/p/a/#/changes/same/analysis/Q-1');
+    for (const path of ['/p/a/', '/console/team-other/p/a/', '/console/team/p/A/']) {
+      expect(() => projectFromPath(path, base)).toThrow();
+    }
+  });
+
+  it('服务端元数据固定部署与项目上下文，页面位置变化不会把旧表单写入另一项目', async () => {
+    vi.stubGlobal('document', { querySelector: () => ({ getAttribute: () => '/console/team' }) });
+    vi.stubGlobal('location', { pathname: '/console/team/p/a/' });
+    const fake = vi.fn<typeof fetch>(async () => Response.json({ id: 'a', user: null }));
+    vi.stubGlobal('fetch', fake);
+    const { api, API_BASE } = await import('../src/api.ts');
+    expect(API_BASE).toBe('/console/team/p/a');
+    await api.me(); await api.login('same', 'secret'); await api.change('same');
+    vi.stubGlobal('location', { pathname: '/console/team/p/b/' });
+    await api.questionAction('same', 'Q-1', 'answer', { role: 'dev', text: 'draft A' });
+    expect(fake.mock.calls.every(([path]) => String(path).startsWith('/console/team/p/a/api/'))).toBe(true);
+    expect(socketUrl(API_BASE, 'https://example.invalid', 'same')).toBe('wss://example.invalid/console/team/p/a/ws?changeId=same');
+  });
+
+  it('部署元数据与页面路径不匹配时拒绝 API，不回退到根部署', async () => {
+    vi.stubGlobal('document', { querySelector: () => ({ getAttribute: () => '/console/team' }) });
+    vi.stubGlobal('location', { pathname: '/p/a/' });
+    const fake = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fake);
+    const { api, PROJECT_ERROR } = await import('../src/api.ts');
+    expect(PROJECT_ERROR).toContain('部署入口');
+    await expect(api.me()).rejects.toMatchObject({ code: 'bad_project' });
+    expect(fake).not.toHaveBeenCalled();
+  });
+
   it('订阅地址按项目构造，每个新页面从无游标开始，参数只在当前连接内使用', () => {
     expect(socketUrl('/p/a', 'https://example.test', 'same', 99)).toBe('wss://example.test/p/a/ws?changeId=same&after=99');
     expect(socketUrl('/p/b', 'http://example.test', 'same')).toBe('ws://example.test/p/b/ws?changeId=same');

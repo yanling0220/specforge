@@ -101,6 +101,27 @@ describe('逐项目通知 worker', () => {
     expect(verifyLog(store).ok).toBe(true);
   });
 
+  it('管理员申请新轮后 worker 从首档退避开始，保留累计次数且重启不重置本轮预算', async () => {
+    const store = project(); let now = Date.now();
+    const transport = vi.fn(async () => ({ status: 200, code: 11232, retryAfter: null }));
+    const { worker, ledger } = setup(store, transport, 'a', () => now);
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      await worker.tick();
+      now = Date.parse(ledger.list()[0]!.nextAttemptAt ?? new Date(now + 2000).toISOString());
+    }
+    const key = ledger.list()[0]!.key;
+    ledger.retry(key, { name: 'dev', role: 'dev' }, { reason: '已核对限流配置' });
+    await worker.tick();
+    expect(transport).toHaveBeenCalledTimes(6);
+    expect(ledger.list()[0]).toMatchObject({ status: 'retry_wait', attempts: 6, retry: { round: 1, afterAttempts: 5 }, nextAttemptAt: new Date(now + 10_000).toISOString() });
+    await worker.close();
+    const restarted = setup(store, transport, 'a', () => now).worker;
+    await restarted.tick(); expect(transport).toHaveBeenCalledTimes(6);
+    now += 10_000; await restarted.tick();
+    expect(ledger.list()[0]).toMatchObject({ attempts: 7, nextAttemptAt: new Date(now + 30_000).toISOString() });
+    expect(verifyLog(store).ok).toBe(true);
+  });
+
   it('至少间隔两秒；发送前取消过期版本，新的问题版本使用新键', async () => {
     const store = project(); let now = Date.now(); const transport = vi.fn(async () => accepted());
     const { worker, ledger } = setup(store, transport, 'a', () => now);

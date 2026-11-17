@@ -32,6 +32,7 @@ interface RuntimeOptions {
   pollMs?: number;
   webDir?: string;
   basePath?: string;
+  deploymentPath?: string;
   project?: RegisteredProject;
   indexConfig?: IndexConfig;
   notificationSettings?: { projectId: string; [key: string]: unknown };
@@ -51,7 +52,7 @@ const PAGE = 1000;
 
 export async function createProjectRuntime(opts: RuntimeOptions, upgrade: ReturnType<typeof createNodeWebSocket>['upgradeWebSocket']): Promise<ProjectRuntime> {
   const { store, project } = opts;
-  const auth = new Auth(store, Date.now, project ? { cookieName: `sf_session_${project.id}`, cookiePath: opts.basePath, requireRegistry: true } : {});
+  const auth = new Auth(store, Date.now, project ? { cookieName: `sf_session_${project.id}`, cookiePath: opts.basePath, requireRegistry: true } : { cookiePath: opts.basePath || '/' });
   const check = () => {
     if (!project) return;
     project.check();
@@ -79,11 +80,11 @@ export async function createProjectRuntime(opts: RuntimeOptions, upgrade: Return
     await index.close();
     throw error;
   }
-  const app = createApp(store, index, { auth, webDir: opts.webDir, basePath: opts.basePath, projectId: project?.id, check });
+  const app = createApp(store, index, { auth, webDir: opts.webDir, basePath: opts.basePath, deploymentPath: opts.deploymentPath, projectId: project?.id, check });
   let notificationProject = project;
   const notifications = opts.notificationSettings ? new NotificationWorker({
     store, projectId: project?.id ?? opts.notificationSettings.projectId, settings: opts.notificationSettings,
-    multiProject: !!project, transport: opts.notificationTransport,
+    multiProject: !!project, deploymentPath: opts.deploymentPath, transport: opts.notificationTransport,
     check() {
       // 单项目也固定真实仓库和无符号链接状态树；错误只暂停通知。
       notificationProject ??= registerProjects([{ id: opts.notificationSettings!.projectId, root: store.root }])[0]!;

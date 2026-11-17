@@ -10,7 +10,7 @@ import { EvidenceView } from './views/EvidenceView.tsx';
 import { Login } from './views/Login.tsx';
 import { Timeline } from './views/Timeline.tsx';
 import { ProjectPicker } from './views/ProjectPicker.tsx';
-import { rememberProject } from './project.ts';
+import { DEPLOYMENT_BASE, rememberProject } from './project.ts';
 
 function useRoute(): Route {
   const [route, setRoute] = useState(() => parseRoute(location.hash));
@@ -25,14 +25,14 @@ function useRoute(): Route {
 const LIVE_TEXT: Record<LiveStatus, string> = { connecting: '连接中', live: '实时', offline: '已断开，重连中' };
 
 export function App() {
-  if (PROJECT_ERROR) return <div className="app"><main><div className="error">{PROJECT_ERROR}</div><a href="/">返回项目入口</a></main></div>;
+  if (PROJECT_ERROR) return <div className="app"><main><div className="error">{PROJECT_ERROR}</div><a href={DEPLOYMENT_BASE + '/'}>返回项目入口</a></main></div>;
   return <ConnectedApp />;
 }
 
 function ConnectedApp() {
   const mode = useData(async () => {
     if (PROJECT_ID) return 'project';
-    const response = await fetch('/api/health', { cache: 'no-store' });
+    const response = await fetch(DEPLOYMENT_BASE + '/api/health', { cache: 'no-store' });
     if (!response.ok) throw new Error('无法读取服务模式');
     const health = await response.json() as { mode?: string };
     return health.mode === 'multi-project' ? 'picker' : 'single';
@@ -83,7 +83,7 @@ function ProjectConsole() {
 }
 
 function ProjectHeader() {
-  return <header className="topbar"><span className="brand">SpecForge</span>{PROJECT_ID && <><span className="project-current">项目：{PROJECT_ID}</span><a className="project-switch" href="/">切换项目</a></>}</header>;
+  return <header className="topbar"><span className="brand">SpecForge</span>{PROJECT_ID && <><span className="project-current">项目：{PROJECT_ID}</span><a className="project-switch" href={DEPLOYMENT_BASE + '/'}>切换项目</a></>}</header>;
 }
 
 function Console({ onLogout }: { onLogout?: () => void }) {
@@ -99,7 +99,7 @@ function Console({ onLogout }: { onLogout?: () => void }) {
         <a className="brand" href={href({ page: 'board' })}>
           SpecForge
         </a>
-        {PROJECT_ID && <><span className="project-current">项目：{PROJECT_ID}</span><a className="project-switch" href="/">切换项目</a></>}
+        {PROJECT_ID && <><span className="project-current">项目：{PROJECT_ID}</span><a className="project-switch" href={DEPLOYMENT_BASE + '/'}>切换项目</a></>}
         <nav>
           <a className={route.page === 'board' ? 'active' : ''} href={href({ page: 'board' })}>
             看板

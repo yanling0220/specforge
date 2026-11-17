@@ -8,7 +8,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { addUser, createQuestion, emptyAnalysis, proposeAnswer, sha256 } from '@specforge/core';
 import { headSha } from '@specforge/runner';
-import { defaultConfig, Store } from '@specforge/store';
+import { defaultConfig, NotificationLedger, Store } from '@specforge/store';
+import { notificationMessage, parseNotificationSettings } from '@specforge/core';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const chromePath = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -18,6 +19,7 @@ const admin = { name: 'same', role: 'dev' };
 const deepLink = '#/changes/same/analysis/Q-1';
 const postgres = process.argv.includes('--postgres');
 const backend = postgres ? 'Postgres' : 'SQLite';
+const mount = process.argv.includes('--prefix') ? '/console/team' : '';
 const sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration));
 const step = (message) => console.log(`▶ ${message}`);
 const sf = (root, ...args) => available(() => execFileSync(process.execPath, [join(repository, 'apps/cli/src/main.ts'), ...args], { cwd: root, encoding: 'utf8', stdio: 'pipe' }));
@@ -55,6 +57,38 @@ function project(id) {
   store.mutate('same', admin, 'question.answered', (state) => ({ ...state, questions: state.questions.map((question) => proposeAnswer(question, { text: `${id}-private-answer` }, admin, 'T')) }), () => ({ questionId: 'Q-1' }));
   store.saveEvidence('same', { id: 'ev-1', sha: headSha(root), startedAt: 'T', finishedAt: 'T', mainTreeDirty: false, steps: [{ name: 'test', command: 'test', exitCode: 0, timedOut: false, durationMs: 1, outputTail: `${id}-private-evidence`, outputHash: sha256(id) }], host: { node: process.version, platform: process.platform } }, admin);
   return store;
+}
+
+function notificationLink(store, id) {
+  const settings = parseNotificationSettings({
+    projectId: id, enabled: false, provider: 'feishu', alias: '项目 ' + id,
+    publicBaseUrl: 'https://console.example.invalid' + mount,
+    webhookEnv: 'SF_E2E_' + id.toUpperCase() + '_WEBHOOK',
+    signingSecretEnv: 'SF_E2E_' + id.toUpperCase() + '_SECRET',
+    route: {
+      id: id + '-team', provider: 'feishu', revision: 'v1',
+      members: [{ name: 'same', memberId: 'ou_' + id + '_same' }],
+    },
+  });
+  const before = store.events();
+  const candidates = new NotificationLedger(store, {
+    projectId: id, enabled: false, route: settings.route,
+  }).preview();
+  const candidate = candidates.find((entry) => entry.record.demand.kind === 'question-confirmation');
+  assert.ok(candidate?.recipients.ok, '当前问题应有有效的 product 接收人');
+  const message = notificationMessage(candidate.record, candidate.recipients.members, {
+    alias: settings.alias, publicBaseUrl: settings.publicBaseUrl, multiProject: true,
+  });
+  assert.ok(!JSON.stringify(message).includes('private-'));
+  const link = message.content.post.zh_cn.content.flat().find((node) => node.tag === 'a');
+  assert.ok(link);
+  const address = new URL(link.href);
+  assert.equal(address.protocol, 'https:');
+  assert.equal(address.pathname, mount + '/p/' + id + '/');
+  assert.equal(address.hash, deepLink);
+  assert.deepEqual(store.events(), before, '只读预览不得登记通知或修改业务');
+  // 浏览器使用本机测试 origin，保留实际消息的部署路径、项目及 hash。
+  return address.pathname.slice(mount.length) + address.hash;
 }
 
 async function connectBrowser() {
@@ -146,10 +180,12 @@ async function main() {
   const first = project('a');
   const second = project('b');
   const secondBefore = { state: second.load('same'), events: second.events() };
+  const firstBefore = { state: first.load('same'), events: first.events() };
+  const notificationLinks = { a: notificationLink(first, 'a'), b: notificationLink(second, 'b') };
   assert.equal(first.events().length, second.events().length);
   const registry = join(work, 'projects.json');
   writeFileSync(registry, JSON.stringify({ version: 1, projects: [{ id: 'a', root: first.root }, { id: 'b', root: second.root }] }));
-  const server = spawn(process.execPath, [join(repository, 'apps/server/src/main.ts'), '--projects', registry, '--port', '0', ...indexArgs], { env: serverEnvironment, stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn(process.execPath, [join(repository, 'apps/server/src/main.ts'), '--projects', registry, '--port', '0', ...indexArgs, ...(mount ? ['--base-path', mount] : [])], { env: serverEnvironment, stdio: ['ignore', 'pipe', 'pipe'] });
   processes.push(server);
   const base = await new Promise((resolve, reject) => {
     let output = '';
@@ -190,7 +226,7 @@ async function main() {
   const recent = async (id) => {
     await waitFor(`[...document.querySelectorAll('.project-link')].some((link) => link.textContent === ${JSON.stringify(id)})`, '权限复核后的访问记录');
     await evaluate(`[...document.querySelectorAll('.project-link')].find((link) => link.textContent === ${JSON.stringify(id)}).click(), true`);
-    await waitFor(`location.pathname === '/p/${id}/' && !!document.querySelector('.me')`, '切换项目');
+    await waitFor(`location.pathname === '${mount}/p/${id}/' && !!document.querySelector('.me')`, '切换项目');
   };
 
   step('根入口不枚举项目；A 深链接独立登录，A 的凭据不能访问 B');
@@ -198,14 +234,15 @@ async function main() {
   await waitFor(`!!document.querySelector('.project-entry')`, '通用入口');
   assert.equal(await evaluate(`document.querySelectorAll('.project-link').length`), 0);
   await noOtherData('a'); await noOtherData('b');
-  await go(`/p/a/${deepLink}`);
+  await go(notificationLinks.a);
   await login('a');
-  const indexStatus = await evaluate(`__read('/p/a/api/index')`);
+  assert.deepEqual(await available(() => first.exclusive(() => ({ state: first.load('same'), events: first.events() }))), firstBefore, '打开通知和登录不得修改业务或发送历史');
+  const indexStatus = await evaluate(`__read('${mount}/p/a/api/index')`);
   assert.equal(indexStatus.status, 200);
   assert.equal(indexStatus.body.index.backend, postgres ? 'postgres' : 'sqlite');
   assert.equal(indexStatus.body.index.state, 'ready');
   assert.equal(await evaluate(`document.querySelector('.role-picker').value`), 'dev');
-  const denied = await evaluate(`Promise.all([fetch('/p/b/api/changes'), fetch('/p/b/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'same', token: 'token-a' }) })]).then((responses) => responses.map((response) => response.status))`);
+  const denied = await evaluate(`Promise.all([fetch('${mount}/p/b/api/changes'), fetch('${mount}/p/b/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'same', token: 'token-a' }) })]).then((responses) => responses.map((response) => response.status))`);
   assert.deepEqual(denied, [401, 401]);
   await selectRole('product');
   await openConfirmation();
@@ -214,9 +251,9 @@ async function main() {
   const postCount = requests.filter((request) => request.method === 'POST' && /questions/.test(request.url)).length;
   await switchEntry();
   await evaluate(`__set(document.querySelector('.project-entry input'), 'b'); __btn('打开项目').click(); true`);
-  await waitFor(`location.pathname === '/p/b/' && !!document.querySelector('form.login')`, 'B 仍需独立登录');
+  await waitFor(`location.pathname === '${mount}/p/b/' && !!document.querySelector('form.login')`, 'B 仍需独立登录');
   await noOtherData('a');
-  await go(`/p/b/${deepLink}`);
+  await go(notificationLinks.b);
   await login('b');
   assert.notEqual(await evaluate('__documentId'), firstDocument);
   assert.equal(await evaluate(`document.querySelector('.role-picker').value`), 'dev');
@@ -227,7 +264,7 @@ async function main() {
   step('同名证据、门禁、事件和 WebSocket 均绑定 B；断线只用 B 游标');
   await waitFor(`__sockets.some((socket) => socket.messages.some((message) => message.type === 'hello'))`, 'B 订阅');
   const initialSocket = new URL(sockets.at(-1));
-  assert.equal(initialSocket.pathname, '/p/b/ws');
+  assert.equal(initialSocket.pathname, mount + '/p/b/ws');
   assert.equal(initialSocket.searchParams.has('after'), false);
   const lastSequence = await evaluate(`__sockets.at(-1).messages.find((message) => message.type === 'hello').lastSeq`);
   const socketCount = sockets.length;
@@ -242,7 +279,7 @@ async function main() {
   await waitFor(`document.querySelectorAll('.gate-card').length > 0 && document.querySelector('h1')?.textContent.includes('b-private-title')`, 'B 门禁');
   await go('/p/b/#/events');
   await waitFor(`!!document.querySelector('.timeline .ev-head')`, 'B 时间线');
-  const timeline = await evaluate(`__read('/p/b/api/events')`);
+  const timeline = await evaluate(`__read('${mount}/p/b/api/events')`);
   assert.equal(timeline.status, 200);
   assert.equal(timeline.body.events.length, (await available(() => second.events())).length);
   await noOtherData('a');
@@ -254,7 +291,7 @@ async function main() {
   assert.equal(await evaluate('location.hash'), deepLink);
   assert.equal(await evaluate(`document.querySelector('.role-picker').value`), 'dev');
   assert.equal(await evaluate(`document.querySelectorAll('form.action-form').length`), 0);
-  assert.equal(new URL(sockets.at(-1)).pathname, '/p/a/ws');
+  assert.equal(new URL(sockets.at(-1)).pathname, mount + '/p/a/ws');
   assert.equal(new URL(sockets.at(-1)).searchParams.has('after'), false);
 
   step('外部 CLI 修订关闭 A 旧表单，409 拒绝旧引用，本人只确认新版且 B 不变');
@@ -264,7 +301,7 @@ async function main() {
   await sf(first.root, 'q', 'answer', 'same', 'Q-1', '--text', 'a-private-answer-v2', '--as', 'same:dev');
   await waitFor(`document.querySelector('#q-Q-1 .history')?.textContent.includes('a-private-answer-v2') && !document.querySelector('#q-Q-1 form.action-form')`, '实时修订关闭旧确认表单');
   const beforeConflict = await available(() => first.events().length);
-  const stale = await evaluate(`fetch('/p/a/api/changes/same/questions/Q-1/confirm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(${JSON.stringify({ role: 'product', rev: oldAnswer.rev, answerHash: oldAnswer.hash })}) }).then(async (response) => ({ status: response.status, body: await response.json() }))`);
+  const stale = await evaluate(`fetch('${mount}/p/a/api/changes/same/questions/Q-1/confirm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(${JSON.stringify({ role: 'product', rev: oldAnswer.rev, answerHash: oldAnswer.hash })}) }).then(async (response) => ({ status: response.status, body: await response.json() }))`);
   assert.equal(stale.status, 409);
   assert.equal(stale.body.error.code, 'stale_answer');
   assert.equal(await available(() => first.events().length), beforeConflict);
@@ -280,7 +317,7 @@ async function main() {
 
   step('旧文档延迟响应与历史返回不恢复旧表单；未知 / 损坏项目不回退');
   await evaluate(`__btn('修改答案', document.querySelector('#q-Q-1')).click(), true`);
-  await evaluate(`__set(document.querySelector('#q-Q-1 textarea'), 'old-a-form'); window.__late = fetch('/p/a/api/changes/same').then((response) => response.json()).then((data) => new Promise((resolve) => setTimeout(() => resolve(data), 1500))).then(() => { document.body.dataset.late = 'a'; }); true`);
+  await evaluate(`__set(document.querySelector('#q-Q-1 textarea'), 'old-a-form'); window.__late = fetch('${mount}/p/a/api/changes/same').then((response) => response.json()).then((data) => new Promise((resolve) => setTimeout(() => resolve(data), 1500))).then(() => { document.body.dataset.late = 'a'; }); true`);
   await switchEntry();
   await recent('b');
   await sleep(1800);
@@ -290,7 +327,7 @@ async function main() {
   await evaluate('history.back(), true');
   await waitFor(`!!document.querySelector('.project-entry')`, '历史返回入口');
   await evaluate('history.back(), true');
-  await waitFor(`location.pathname === '/p/a/' && !!document.querySelector('.me')`, '历史返回 A');
+  await waitFor(`location.pathname === '${mount}/p/a/' && !!document.querySelector('.me')`, '历史返回 A');
   assert.equal(await evaluate(`document.querySelectorAll('form.action-form').length`), 0);
   assert.equal(await evaluate(`document.querySelector('.role-picker').value`), 'dev');
   await go('/p/missing/');
@@ -332,7 +369,7 @@ async function main() {
     const before = await available(() => second.exclusive(() => ({ state: second.load('same'), events: second.events() })));
     await databasePool.query(`CREATE FUNCTION specforge_index.browser_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.project_id = 'b' THEN RAISE EXCEPTION 'private-browser-db-error'; END IF; RETURN NEW; END $$; CREATE TRIGGER browser_fail BEFORE UPDATE ON specforge_index.projects FOR EACH ROW EXECUTE FUNCTION specforge_index.browser_fail()`);
     try {
-      assert.equal(await evaluate(`__read('/p/b/api/changes').then((response) => response.status)`), 503);
+      assert.equal(await evaluate(`__read('${mount}/p/b/api/changes').then((response) => response.status)`), 503);
       await waitFor(`!!document.querySelector('.error') && !document.querySelector('#q-Q-1')`, '索引失败显示错误且不显示旧问题');
       assert.equal(await evaluate(`document.body.innerText.includes('private-browser-db-error')`), false);
       assert.equal(await evaluate(`document.querySelectorAll('form.action-form').length`), 0);
@@ -348,7 +385,7 @@ async function main() {
     assert.match(checked, /完整/);
     console.log(`${store === first ? 'a' : 'b'}: ${checked.trim()}`);
   }
-  assert.ok(sockets.every((url) => ['/p/a/ws', '/p/b/ws'].includes(new URL(url).pathname)));
+  assert.ok(sockets.every((url) => [mount + '/p/a/ws', mount + '/p/b/ws'].includes(new URL(url).pathname)));
   console.log(`✅ ${backend} 多项目真实浏览器端到端测试通过`);
 }
 

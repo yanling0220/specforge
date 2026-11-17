@@ -15,3 +15,5 @@ export * from './users.ts';
 export * from './comments.ts';
 export * from './notifications.ts';
 export * from './notification-message.ts';
+export * from './notification-config.ts';
+export * from './deployment.ts';
