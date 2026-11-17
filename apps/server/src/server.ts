@@ -11,6 +11,9 @@ import type { QueryIndex } from './query-index.ts';
 import { parseIndexConfig, type IndexConfig } from './index-config.ts';
 import { registerProjects, type ProjectRegistration } from './projects.ts';
 import { webResponse } from './web.ts';
+import { parseNotificationConfig, type NotificationConfig } from './notification-config.ts';
+import type { FeishuTransport } from './feishu.ts';
+import type { NotificationWorker } from './notification-worker.ts';
 
 export type { PushMessage } from './project-runtime.ts';
 
@@ -22,6 +25,8 @@ export interface ServerOptions {
   pollMs?: number;
   webDir?: string;
   indexConfig?: IndexConfig;
+  notifications?: NotificationConfig;
+  notificationTransport?: FeishuTransport;
 }
 
 export const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../web/dist', import.meta.url));
@@ -29,6 +34,7 @@ export const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../web/dist', import.me
 export interface RunningServer {
   url: string;
   index: QueryIndex;
+  notifications?: NotificationWorker;
   tick(): Promise<void>;
   close(): Promise<void>;
 }
@@ -40,6 +46,8 @@ export interface MultiProjectOptions {
   pollMs?: number;
   webDir?: string;
   indexConfig?: IndexConfig;
+  notifications?: NotificationConfig;
+  notificationTransport?: FeishuTransport;
 }
 
 export interface RunningMultiProjectServer {
@@ -81,11 +89,15 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   }
   const app = new Hono<AuthEnv>();
   const sockets = createNodeWebSocket({ app });
-  const runtime = await createProjectRuntime({ ...opts, webDir: opts.webDir ?? DEFAULT_WEB_DIR }, sockets.upgradeWebSocket);
+  const notifications = opts.notifications && parseNotificationConfig(opts.notifications);
+  if (notifications && notifications.projects.length !== 1) throw new ForgeError('bad_arg', '单项目通知配置必须恰好包含一个稳定项目 ID');
+  const notificationSettings = notifications?.projects[0];
+  if (notificationSettings && opts.indexConfig?.backend === 'postgres' && opts.indexConfig.projectId && notificationSettings.projectId !== opts.indexConfig.projectId) throw new ForgeError('bad_arg', '通知与索引的项目 ID 必须一致');
+  const runtime = await createProjectRuntime({ ...opts, notificationSettings, webDir: opts.webDir ?? DEFAULT_WEB_DIR }, sockets.upgradeWebSocket);
   app.route('/', runtime.app);
   app.notFound((context) => runtime.app.fetch(context.req.raw));
   const server = await listen(app, sockets, opts, [runtime]);
-  return { ...server, index: runtime.index, tick: runtime.tick };
+  return { ...server, index: runtime.index, notifications: runtime.notifications, tick: runtime.tick };
 }
 
 export async function startMultiProjectServer(opts: MultiProjectOptions): Promise<RunningMultiProjectServer> {
@@ -94,6 +106,8 @@ export async function startMultiProjectServer(opts: MultiProjectOptions): Promis
     throw new ForgeError('bad_arg', '多项目 Postgres 使用登记 ID；必须设置连接环境变量且不能另设 projectId');
   }
   const projects = registerProjects(opts.projects);
+  const notifications = opts.notifications && parseNotificationConfig(opts.notifications);
+  if (notifications?.projects.some((entry) => !projects.some((project) => project.id === entry.projectId))) throw new ForgeError('bad_arg', '通知配置包含未登记的项目 ID');
   const app = new Hono<AuthEnv>();
   const sockets = createNodeWebSocket({ app });
   const runtimes: ProjectRuntime[] = [];
@@ -120,7 +134,9 @@ export async function startMultiProjectServer(opts: MultiProjectOptions): Promis
   for (const project of projects) {
     const basePath = `/p/${project.id}`;
     try {
-      const runtime = await createProjectRuntime({ store: project.store, project, basePath, pollMs: opts.pollMs, indexConfig }, sockets.upgradeWebSocket);
+      const runtime = await createProjectRuntime({ store: project.store, project, basePath, pollMs: opts.pollMs, indexConfig,
+        notificationSettings: notifications?.projects.find((entry) => entry.projectId === project.id), notificationTransport: opts.notificationTransport,
+      }, sockets.upgradeWebSocket);
       runtimes.push(runtime);
       app.route(basePath, runtime.app);
     } catch {

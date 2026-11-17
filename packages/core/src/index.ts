@@ -14,3 +14,4 @@ export * from './testcount.ts';
 export * from './users.ts';
 export * from './comments.ts';
 export * from './notifications.ts';
+export * from './notification-message.ts';

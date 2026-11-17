@@ -29,7 +29,7 @@ interface Snapshot {
 
 /**
  * 引擎内部的通知账本。没有定时器、凭据读取、网络 IO 或 agent 平台工具。
- * 调用者必须在发送结果分类后调用 finish；真实 worker 在 T4.5c 接入。
+ * 调用者必须在发送结果分类后调用 finish；server worker 持独立通知所有权调用。
  */
 export class NotificationLedger {
   readonly scope: NotificationScope;
@@ -37,16 +37,23 @@ export class NotificationLedger {
   private readonly route?: NotificationRoute;
   private readonly now: () => string;
   private readonly store: Store;
+  private readonly available: boolean;
 
   constructor(store: Store, options: {
-    projectId: string; enabled?: boolean; route?: NotificationRoute; now?: () => string;
+    projectId: string; enabled?: boolean; route?: NotificationRoute; now?: () => string; available?: boolean;
   }) {
     if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(options.projectId)) throw new ForgeError('bad_arg', '通知需要稳定的项目 ID');
     this.store = store;
     this.scope = Object.freeze({ projectId: options.projectId, repositoryId: repositoryIdentity(store) });
     this.enabled = options.enabled === true;
+    this.available = options.available !== false;
     this.route = options.route && structuredClone(options.route);
     this.now = options.now ?? (() => new Date().toISOString());
+  }
+
+  private recipients(role: 'dev' | 'product', registry: UserRegistry): NotificationRecipients {
+    return this.available ? notificationRecipients(role, registry, this.route)
+      : { ok: false, routeId: this.route?.id ?? null, reason: 'configuration' };
   }
 
   private snapshot(): Snapshot {
@@ -94,7 +101,7 @@ export class NotificationLedger {
       const now = this.now();
       const demands = new Map(this.demands(now).map((demand) => [notificationKey(demand), demand]));
       const selections = new Map<string, NotificationRecipients>();
-      for (const [key, demand] of demands) selections.set(key, notificationRecipients(demand.role, registry, this.route));
+      for (const [key, demand] of demands) selections.set(key, this.recipients(demand.role, registry));
       for (const record of records) {
         const next = reconcileNotification(record, selections.get(record.key), now);
         if (next !== record) this.persist(next, this.store.events());
@@ -117,7 +124,7 @@ export class NotificationLedger {
       if (records.some((record) => record.status === 'started')) return undefined;
       const record = records.find((entry) => entry.key === key);
       if (!record) return undefined;
-      const selection = notificationRecipients(record.demand.role, this.store.users()!, this.route);
+      const selection = this.recipients(record.demand.role, this.store.users()!);
       if (!selection.ok || selection.fingerprint !== record.recipientsHash || selection.routeId !== record.routeId) return undefined;
       const next = startNotification(record, this.now());
       if (!next) return undefined;

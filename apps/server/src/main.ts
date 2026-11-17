@@ -7,6 +7,7 @@ import { Store } from '@specforge/store';
 import { DEFAULT_WEB_DIR, isLoopback, startMultiProjectServer, startServer } from './server.ts';
 import { readProjects } from './projects.ts';
 import { readIndexConfig } from './index-config.ts';
+import { readNotificationConfig } from './notification-config.ts';
 
 const HELP = `SpecForge server + Web 控制台
 
@@ -21,6 +22,7 @@ const HELP = `SpecForge server + Web 控制台
   默认各项目使用独立内存 SQLite；不支持 --db，不公开项目目录。
   Postgres 索引配置：{"backend":"postgres","connectionStringEnv":"SPECFORGE_INDEX_URL"}
   单项目 Postgres 还需在索引配置中指定稳定 projectId；--index 与 --db 互斥。
+  飞书通知：--notifications <通知配置.json>（默认关闭，逐项目配置，凭据只从环境读取）。
 
 REST
   GET /api/health
@@ -48,6 +50,7 @@ const { values: opts } = parseArgs({
     db: { type: 'string' },
     projects: { type: 'string' },
     index: { type: 'string' },
+    notifications: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -61,9 +64,10 @@ async function main(): Promise<void> {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new ForgeError('bad_arg', '--port 必须是 0–65535 的整数');
   if (opts.index && opts.db) throw new ForgeError('bad_arg', '--index 不能与 --db 同时使用');
   const indexConfig = opts.index ? readIndexConfig(opts.index) : undefined;
+  const notifications = opts.notifications ? readNotificationConfig(opts.notifications) : undefined;
   if (opts.projects) {
     if (opts.db) throw new ForgeError('bad_arg', '--projects 不能与 --db 同时使用');
-    const server = await startMultiProjectServer({ projects: readProjects(opts.projects), port, host: opts.host, indexConfig });
+    const server = await startMultiProjectServer({ projects: readProjects(opts.projects), port, host: opts.host, indexConfig, notifications });
     console.log(`SpecForge 多项目服务：${server.url}（项目独立登录，接口前缀 /p/<项目ID>）`);
     console.log(existsSync(join(DEFAULT_WEB_DIR, 'index.html')) ? `Web 控制台：${server.url}/（使用管理员提供的项目 ID 或 /p/<项目ID>/ 链接）` : 'Web 控制台未构建：npm run web:build');
     if (opts.host && !isLoopback(opts.host)) console.log('非本机访问请放在 HTTPS 反向代理之后使用');
@@ -73,7 +77,7 @@ async function main(): Promise<void> {
     return;
   }
   const store = Store.find(process.cwd());
-  const server = await startServer({ store, port, host: opts.host, dbPath: opts.db, indexConfig });
+  const server = await startServer({ store, port, host: opts.host, dbPath: opts.db, indexConfig, notifications });
   if (opts.host && !isLoopback(opts.host)) {
     console.log('⚠️  正在监听非本机地址：登录令牌与会话 Cookie 以明文 HTTP 传输，请放在 HTTPS 反向代理之后使用');
   }

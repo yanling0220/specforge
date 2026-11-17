@@ -10,7 +10,9 @@ import { createApp } from './app.ts';
 import { Auth } from './auth.ts';
 import { createIndex, type IndexConfig } from './index-config.ts';
 import type { QueryIndex } from './query-index.ts';
-import type { RegisteredProject } from './projects.ts';
+import { registerProjects, type RegisteredProject } from './projects.ts';
+import { NotificationWorker } from './notification-worker.ts';
+import type { FeishuTransport } from './feishu.ts';
 
 export type PushMessage =
   | { type: 'hello'; lastSeq: number }
@@ -32,11 +34,14 @@ interface RuntimeOptions {
   basePath?: string;
   project?: RegisteredProject;
   indexConfig?: IndexConfig;
+  notificationSettings?: { projectId: string; [key: string]: unknown };
+  notificationTransport?: FeishuTransport;
 }
 
 export interface ProjectRuntime {
   app: ReturnType<typeof createApp>;
   index: QueryIndex;
+  notifications?: NotificationWorker;
   tick(): Promise<void>;
   poll(): Promise<void>;
   close(): Promise<void>;
@@ -75,6 +80,16 @@ export async function createProjectRuntime(opts: RuntimeOptions, upgrade: Return
     throw error;
   }
   const app = createApp(store, index, { auth, webDir: opts.webDir, basePath: opts.basePath, projectId: project?.id, check });
+  let notificationProject = project;
+  const notifications = opts.notificationSettings ? new NotificationWorker({
+    store, projectId: project?.id ?? opts.notificationSettings.projectId, settings: opts.notificationSettings,
+    multiProject: !!project, transport: opts.notificationTransport,
+    check() {
+      // 单项目也固定真实仓库和无符号链接状态树；错误只暂停通知。
+      notificationProject ??= registerProjects([{ id: opts.notificationSettings!.projectId, root: store.root }])[0]!;
+      notificationProject.check();
+    },
+  }) : undefined;
   const clients = new Set<Client>();
   const revoke = (client: Client) => {
     clients.delete(client);
@@ -153,6 +168,10 @@ export async function createProjectRuntime(opts: RuntimeOptions, upgrade: Return
         syncFailed = false;
         if (stopped) return;
         if (!fresh.length) return;
+        if (fresh.some((event) => !event.type.startsWith('notification.'))) {
+          // 排到当前仓库租约释放之后启动，业务轮询不等待网络。
+          setImmediate(() => { void notifications?.tick(); });
+        }
         pushedSeq = fresh.at(-1)!.seq;
         pushedHash = fresh.at(-1)!.hash;
         const ids = [...new Set(fresh.flatMap((event) => event.changeId ? [event.changeId] : []))];
@@ -206,6 +225,7 @@ export async function createProjectRuntime(opts: RuntimeOptions, upgrade: Return
     }
   };
   const timer = setInterval(() => { void poll(); }, opts.pollMs ?? 300);
+  notifications?.start();
   const anchorTimer = audit ? setInterval(() => {
     try { anchor(); } catch (error) {
       if (error instanceof ForgeError && error.code === 'write_busy') return;
@@ -214,13 +234,14 @@ export async function createProjectRuntime(opts: RuntimeOptions, upgrade: Return
     }
   }, audit.anchorIntervalMs) : undefined;
   return {
-    app, index, tick, poll,
+    app, index, notifications, tick, poll,
     async close() {
       stopped = true;
       clearInterval(timer);
       clearInterval(anchorTimer);
       for (const client of clients) client.ws.close();
       clients.clear();
+      await notifications?.close();
       await pending?.catch(() => undefined);
       await index.close();
     },

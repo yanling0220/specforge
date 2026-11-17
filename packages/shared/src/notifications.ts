@@ -28,10 +28,10 @@ export interface NotificationRoute {
 
 export type NotificationRecipients =
   | { ok: true; routeId: string; fingerprint: string; members: NotificationRoute['members'] }
-  | { ok: false; routeId: string | null; reason: 'no_route' | 'no_recipients' | 'invalid_mapping' };
+  | { ok: false; routeId: string | null; reason: 'no_route' | 'no_recipients' | 'invalid_mapping' | 'configuration' };
 
 export type NotificationStatus = 'queued' | 'started' | 'accepted' | 'retry_wait' | 'blocked' | 'failed' | 'unknown' | 'cancelled';
-export type NotificationReason = 'no_route' | 'no_recipients' | 'invalid_mapping' | 'recipient_changed'
+export type NotificationReason = 'no_route' | 'no_recipients' | 'invalid_mapping' | 'recipient_changed' | 'configuration'
   | 'demand_resolved' | 'interrupted' | 'delivery_failed' | 'retry_exhausted';
 
 /** 可由 notification.* 事件重建的、无业务正文及凭据的发送投影。 */

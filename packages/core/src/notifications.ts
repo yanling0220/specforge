@@ -109,7 +109,7 @@ export function finishNotification(record: NotificationRecord, result: Notificat
 }
 
 const statuses: NotificationStatus[] = ['queued', 'started', 'accepted', 'retry_wait', 'blocked', 'failed', 'unknown', 'cancelled'];
-const reasons = ['no_route', 'no_recipients', 'invalid_mapping', 'recipient_changed', 'demand_resolved', 'interrupted', 'delivery_failed', 'retry_exhausted'];
+const reasons = ['no_route', 'no_recipients', 'invalid_mapping', 'recipient_changed', 'configuration', 'demand_resolved', 'interrupted', 'delivery_failed', 'retry_exhausted'];
 const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
 const changeId = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\\/%\x00-\x1f]/.test(value) && !['.', '..'].includes(value);

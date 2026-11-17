@@ -110,6 +110,12 @@ node /opt/specforge/apps/server/src/main.ts --projects /srv/specforge/projects.j
 
 CLI、HTTP 与 Store 共用仓库级跨进程锁，覆盖复合操作和长任务；读请求也参与，忙时立即返回 `409 write_busy`，不同仓库不互相阻塞。Web 将同文档请求串行发送，只读请求对明确的忙错误有限重试；业务提交不会自动重放。中断不会自动抢锁或补成功事件，需用 `sf lock status` / `sf lock recover --reason` 核对；部分文件写入不能称为事务回滚。操作、恢复和本地文件系统限制见 [写入恢复说明](docs/write-recovery.md)。
 
+## 飞书群通知（T4.5c）
+
+服务端可通过 `--notifications <JSON>` 配置逐项目飞书专用群机器人，默认关闭，只提醒已有答案待角色确认、收尾就绪后待开发者签字。配置只保存凭据环境变量名，成员显式映射为 Open ID；发送在仓库写锁外执行，结果和去重账本保存在哈希链中。
+
+目前适配器和后台 worker 已通过假传输与真实进程中断验收，尚未向真实群发送。管理入口 / 预览 / 管理员重试待 T4.5d，测试群投递待 T4.5e。配置、结果语义、关闭和通知 owner 恢复见 [通知说明](docs/im-notifications.md)；`sf notify` 命令尚未交付。
+
 ## 日志锚定
 
 `sf log anchor`（dev）将当前事件序号和链头哈希保存到独立的 `specforge-audit` Git 分支。
