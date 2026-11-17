@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "projectId": "im-acceptance",
+      "enabled": false,
+      "provider": "feishu",
+      "alias": "IM 专用测试项目",
+      "publicBaseUrl": "https://console.example.invalid/console/test",
+      "webhookEnv": "SF_ACCEPTANCE_FEISHU_WEBHOOK",
+      "signingSecretEnv": "SF_ACCEPTANCE_FEISHU_SECRET",
+      "route": {
+        "id": "im-acceptance-team",
+        "provider": "feishu",
+        "revision": "v1",
+        "members": [
+          { "name": "acceptance-dev", "memberId": "ou_REPLACE_DEV" },
+          { "name": "acceptance-product", "memberId": "ou_REPLACE_PRODUCT" }
+        ]
+      }
+    }
+  ]
+}
