@@ -3,10 +3,8 @@ import type {
   NotificationResult, NotificationRoute, NotificationScope, NotificationStatus, Question, ReviewRecord, UserRegistry,
 } from '@specforge/shared';
 import { ForgeError } from './errors.ts';
-import { evaluateReview } from './gates.ts';
 import { hashOf } from './hash.ts';
-import { upstreamGates } from './pipeline.ts';
-import { currentRevision, isResolved, missingRoles } from './questions.ts';
+import { humanSignoffReady, pendingConfirmations } from './inbox.ts';
 
 export function notificationKey(demand: NotificationDemand): string {
   return hashOf(demand);
@@ -17,24 +15,11 @@ export function notificationDemands(input: {
   scope: NotificationScope; change: Change; questions: Question[]; reviews: ReviewRecord[];
   gates: Partial<Record<GateId, GateEvaluation>>; headSha: string; now: string;
 }): NotificationDemand[] {
-  const { scope, change, questions, reviews, gates, headSha, now } = input;
+  const { scope, change, questions, headSha } = input;
   if (change.stage === 'delivered') return [];
   const base = { scope, changeId: change.id, ruleVersion: 1 as const };
-  const demands: NotificationDemand[] = questions.flatMap((question) => {
-    const revision = currentRevision(question);
-    if (isResolved(question) || question.status !== 'drafted' || revision?.state !== 'pending') return [];
-    return missingRoles(question).flatMap((role) => role === 'agent' ? [] : [{
-      ...base, kind: 'question-confirmation' as const, questionId: question.id,
-      rev: revision.rev, answerHash: revision.hash, role,
-    }]);
-  });
-  const passed = (gate: GateEvaluation | undefined) => gate?.status === 'passed' && gate.checks.length > 0 && gate.checks.every((check) => check.passed);
-  const verification = gates.G6A;
-  if (change.stage === 'closing'
-    && upstreamGates('closing', change.tier).every((id) => passed(gates[id]))
-    && passed(verification) && verification?.boundTo.kind === 'commit' && verification.boundTo.value === headSha
-    && evaluateReview(headSha, reviews, now).checks.find((check) => check.id === 'agent-review')?.passed
-    && !reviews.some((review) => review.kind === 'human' && review.sha === headSha)) {
+  const demands: NotificationDemand[] = pendingConfirmations(questions).map((decision) => ({ ...base, ...decision }));
+  if (humanSignoffReady(input)) {
     demands.push({ ...base, kind: 'human-signoff', sha: headSha, role: 'dev' });
   }
   return demands;

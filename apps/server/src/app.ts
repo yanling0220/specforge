@@ -12,6 +12,7 @@ import {
   factsTree,
   questionAction,
   readTasksFacts,
+  readInbox,
   releaseTask,
   reopenComment,
   resolveComment,
@@ -80,6 +81,7 @@ const STATUS_OF: Record<string, 400 | 403 | 404 | 409 | 503> = {
   index_unavailable: 503,
   index_schema: 503,
   index_identity: 503,
+  inbox_unavailable: 503,
 };
 
 /** 不需要登录的接口 */
@@ -159,6 +161,14 @@ export function createApp(store: Store, index: QueryIndex, opts: AppOptions = {}
   });
 
   app.get('/api/changes', async (c) => c.json({ changes: await index.changes({ stage: c.req.query('stage') }) }));
+
+  app.get('/api/inbox', (c) => {
+    const user = c.get('user');
+    if (!user) throw new ForgeError('no_registry', '审批收件箱需要启用用户名册并登录');
+    const role = c.req.query('role');
+    if (role !== 'dev' && role !== 'product') throw new ForgeError('bad_arg', 'role 必须是 dev 或 product');
+    return c.json({ role, items: readInbox(store, { name: user.name, role }) });
+  });
 
   app.get('/api/changes/:id', (c) => {
     const id = c.req.param('id');

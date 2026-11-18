@@ -1,4 +1,4 @@
-import type { Actor, DimensionStatus, ForgeEvent, GateEvaluation, GateId, GateStatus, Question, QuestionStatus, RequirementNode, Severity, Stage } from '@specforge/shared';
+import type { Actor, DimensionStatus, ForgeEvent, GateEvaluation, GateId, GateStatus, InboxItem, Question, QuestionStatus, RequirementNode, Severity, Stage } from '@specforge/shared';
 import type { ChangeRow, EvidenceEntry, GatesResponse } from './api.ts';
 
 // 界面的视图模型：纯函数，不依赖 React，便于测试。
@@ -266,9 +266,10 @@ export function questionHistory(q: Question): HistoryEntry[] {
   return out.sort((a, b) => a.at.localeCompare(b.at));
 }
 
-/** hash 路由：#/、#/changes/:id[/timeline|/analysis[/:qid]]、#/changes/:id/evidence/:eid、#/events */
+/** hash 路由：#/、#/inbox、#/changes/:id[/timeline|/analysis[/:qid]]、#/changes/:id/evidence/:eid、#/events */
 export type Route =
   | { page: 'board' }
+  | { page: 'inbox' }
   | { page: 'events' }
   | { page: 'change'; id: string; tab: 'gates' | 'timeline' | 'analysis' | 'artifacts'; qid?: string }
   | { page: 'evidence'; id: string; eid: string };
@@ -276,6 +277,7 @@ export type Route =
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   if (parts[0] === 'events') return { page: 'events' };
+  if (parts[0] === 'inbox') return { page: 'inbox' };
   if (parts[0] === 'changes' && parts[1]) {
     if (parts[2] === 'evidence' && parts[3]) return { page: 'evidence', id: parts[1], eid: parts[3] };
     if (parts[2] === 'artifacts') return { page: 'change', id: parts[1], tab: 'artifacts' };
@@ -292,11 +294,23 @@ export function href(r: Route): string {
       return '#/';
     case 'events':
       return '#/events';
+    case 'inbox':
+      return '#/inbox';
     case 'change':
       return `#/changes/${e(r.id)}${r.tab === 'gates' ? '' : `/${r.tab}`}${r.tab === 'analysis' && r.qid ? `/${e(r.qid)}` : ''}`;
     case 'evidence':
       return `#/changes/${e(r.id)}/evidence/${e(r.eid)}`;
   }
+}
+
+export const INBOX_LABEL: Record<InboxItem['kind'], string> = {
+  'question-confirmation': '确认答案', 'spec-approval': '审批规格', 'design-approval': '审批方案', 'human-signoff': '开发者签字',
+};
+
+export function inboxHref(item: InboxItem): string {
+  return href(item.kind === 'question-confirmation'
+    ? { page: 'change', id: item.changeId, tab: 'analysis', qid: item.questionId }
+    : { page: 'change', id: item.changeId, tab: 'gates' });
 }
 
 // ---------------- 产物审阅（T3.5） ----------------

@@ -3,8 +3,8 @@
 AI 研发流程平台：把 AI 的开发工作纳入 **需求分析 → 规格 → 实现 → 收尾验证** 的流水线，
 由引擎强制执行门禁、亲自采集证据、全程哈希链留痕。设计见 [docs/design.md](docs/design.md)，进度与任务见 [docs/TASKS.md](docs/TASKS.md)（AI 工具接手请先读 [AGENTS.md](AGENTS.md)）。
 
-当前进度：第一期完成（`core` 门禁 / 问题节点 / 哈希链，`runner` worktree 验证，`cli`）；
-第二期进行中，`agents` 已接入 Claude Agent SDK（需求分析 agent、独立审查 agent）。
+当前进度：门禁、CLI、多个 agent 后端、Web 人工操作、身份登录、多项目与 Postgres 索引已交付。
+审批收件箱已交付；IM 通知实现已交付，真实飞书群验收按用户要求暂缓。详细状态见 [任务清单](docs/TASKS.md)。
 
 ## 运行
 
@@ -73,6 +73,12 @@ sf user add pam --role product --as devon:dev
 链接中不携带登录令牌，打开链接本身不会确认答案。
 其他人修订答案时，旧操作表单会关闭；需要核对新版本后重新确认。
 
+## 审批收件箱（T4.6）
+
+登录后点击顶栏「审批收件箱」（`#/inbox`），查看当前项目、当前角色需要处理的答案确认、规格 / 方案审批和开发者签字。多角色账号通过顶栏切换角色，可按事项类型筛选或手动刷新；业务变更自动刷新，每 15 秒补查 HEAD 或文件变动。
+
+点击「查看并处理」进入现有问题或门禁详情，核对最新内容后确认、审批、签字或打回。列表只显示已经就绪的审批 / 签字；同角色任一成员处理后，该项自动移除。读取失败会展示错误。收件箱不需要 IM 配置，查看和筛选不写业务状态；没有待审批不等于整个项目已经完成。首版按项目分别查看，任务接管仍在任务面板。
+
 ## 多项目服务（T4.3b～e）
 
 管理员先在每个独立 Git 仓库中执行 `sf init` 并启用用户名册，再编写服务端项目登记文件，例如 `/srv/specforge/projects.json`：
@@ -114,7 +120,7 @@ CLI、HTTP 与 Store 共用仓库级跨进程锁，覆盖复合操作和长任�
 
 服务端可通过 `--notifications <JSON>` 配置逐项目飞书专用群机器人，默认关闭，只提醒已有答案待角色确认、收尾就绪后待开发者签字。配置只保存凭据环境变量名，成员显式映射为 Open ID；发送在仓库写锁外执行，结果和去重账本保存在哈希链中。
 
-适配器、后台 worker、只读管理入口、管理员显式重试和部署前缀已通过注入传输、真实进程中断及 Chrome 回归验收，尚未向真实群发送。配置、结果语义、关闭、通知 owner 恢复、`sf notify preview / status / retry` 和前缀部署说明见 [通知说明](docs/im-notifications.md)。T4.5e 的[真实验收步骤与证据表](docs/t4.5-acceptance.md)、[关闭配置模板](docs/examples/notifications.acceptance.json)、[本地准备脚本](docs/prepare-im-acceptance.mjs)已交付；可从隔离项目开始，补真实群配置、核对实际预览并授权后投递。
+适配器、后台 worker、只读管理入口、管理员显式重试和部署前缀已通过注入传输、真实进程中断及 Chrome 回归验收，尚未向真实群发送。配置、结果语义、关闭、通知 owner 恢复、`sf notify preview / status / retry` 和前缀部署说明见 [通知说明](docs/im-notifications.md)。T4.5e 的[真实验收步骤与证据表](docs/t4.5-acceptance.md)、[关闭配置模板](docs/examples/notifications.acceptance.json)、[本地准备脚本](docs/prepare-im-acceptance.mjs)已交付；2026-11-18 用户要求暂缓真实验收，已列待办。选择恢复后可从隔离项目开始，补真实群配置、核对实际预览并授权后投递。
 
 ## 日志锚定
 

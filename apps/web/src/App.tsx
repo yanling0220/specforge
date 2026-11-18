@@ -10,6 +10,7 @@ import { EvidenceView } from './views/EvidenceView.tsx';
 import { Login } from './views/Login.tsx';
 import { Timeline } from './views/Timeline.tsx';
 import { ProjectPicker } from './views/ProjectPicker.tsx';
+import { Inbox } from './views/Inbox.tsx';
 import { DEPLOYMENT_BASE, rememberProject } from './project.ts';
 
 function useRoute(): Route {
@@ -104,6 +105,7 @@ function Console({ onLogout }: { onLogout?: () => void }) {
           <a className={route.page === 'board' ? 'active' : ''} href={href({ page: 'board' })}>
             看板
           </a>
+          {user && <a className={route.page === 'inbox' ? 'active' : ''} href={href({ page: 'inbox' })}>审批收件箱</a>}
           <a className={route.page === 'events' ? 'active' : ''} href={href({ page: 'events' })}>
             全部事件
           </a>
@@ -147,6 +149,9 @@ function Console({ onLogout }: { onLogout?: () => void }) {
       </header>
       <main>
         {route.page === 'board' && <Board version={live.version} />}
+        {route.page === 'inbox' && (role === 'dev' || role === 'product'
+          ? <Inbox key={`${user?.name}:${role}`} role={role} version={live.version} />
+          : <div className="muted">启用用户名册并登录后，可查看当前角色的审批收件箱。</div>)}
         {route.page === 'events' && <Timeline version={live.version} />}
         {route.page === 'change' && <ChangeView id={route.id} tab={route.tab} qid={route.qid} version={live.version} />}
         {route.page === 'evidence' && <EvidenceView id={route.id} eid={route.eid} />}

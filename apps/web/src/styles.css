@@ -77,6 +77,24 @@ h2 {
 .small {
   font-size: 12px;
 }
+.inbox-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 16px 0;
+}
+.inbox-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 16px;
+}
+.inbox-item h2 {
+  overflow-wrap: anywhere;
+}
+.inbox-item > a {
+  display: inline-block;
+  margin-top: 12px;
+}
 .pass {
   color: var(--pass);
 }

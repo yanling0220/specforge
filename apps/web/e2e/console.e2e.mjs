@@ -171,7 +171,23 @@ async function main() {
 
   step('产品登录，确认 Q-1');
   await logout();
-  await login('pam', tokens.pm, '#/changes/demo/analysis/Q-1');
+  await login('pam', tokens.pm, '#/inbox');
+  await waitFor(`!!document.querySelector('[data-inbox-kind="question-confirmation"] a')`, '产品收件箱显示待确认答案');
+  const inboxEvents = readFileSync(join(proj, '.specforge/events.jsonl'), 'utf8');
+  await evaluate(`__set(document.querySelector('.inbox-toolbar select'), 'spec-approval'), true`);
+  await waitFor(`document.body.innerText.includes('当前类型没有待处理事项')`, '收件箱类型过滤');
+  await evaluate(`__set(document.querySelector('.inbox-toolbar select'), ''), true`);
+  await waitFor(`!!document.querySelector('.inbox-item') && !!__btn('刷新')`, '收件箱恢复全部并完成核对');
+  step('收件箱刷新失败清空旧待办，恢复后重新读取；浏览和筛选不写状态');
+  await send('Network.enable');
+  await send('Network.setBlockedURLs', { urls: ['*/api/inbox*'] });
+  await evaluate(`__btn('刷新').click(), true`);
+  await waitFor(`!!document.querySelector('main .error') && !document.querySelector('.inbox-item')`, '失败时不展示旧待办或空列表');
+  await send('Network.setBlockedURLs', { urls: [] });
+  await evaluate(`__btn('刷新').click(), true`);
+  await waitFor(`!!document.querySelector('[data-inbox-kind="question-confirmation"] a')`, '刷新恢复待办');
+  if (readFileSync(join(proj, '.specforge/events.jsonl'), 'utf8') !== inboxEvents) throw new Error('浏览收件箱不得写入事件');
+  await evaluate(`document.querySelector('[data-inbox-kind="question-confirmation"] a').click(), true`);
   await waitFor(`location.hash === '#/changes/demo/analysis/Q-1' && !!document.querySelector('#q-Q-1.selected')`, '登录后保留问题深链接');
   const questionsFile = join(proj, '.specforge/changes/demo/questions.json');
   const seen = JSON.parse(readFileSync(questionsFile, 'utf8'))[0].revisions.at(-1);
@@ -189,6 +205,8 @@ async function main() {
   if (confirmed.revisions.at(-1).rev !== 2 || product?.actor.name !== 'pam' || product.recordedBy || confirmed.revisions[0].confirmations.some((confirmation) => confirmation.role === 'product')) {
     throw new Error('产品本人确认应只绑定所见的第 2 版，且不含代录人');
   }
+  await go('#/inbox');
+  await waitFor(`document.body.innerText.includes('当前角色暂无待审批事项') && !document.querySelector('.inbox-item')`, '确认后产品待办消失');
 
   step('开发者推进到规格阶段');
   await logout();
@@ -196,6 +214,8 @@ async function main() {
   await go('#/changes/demo');
   await act('.action-bar', '推进到「规格」');
   await waitFor(`document.querySelector('h1')?.textContent.includes('当前阶段：规格')`, '推进到 spec');
+  await go('#/inbox');
+  await waitFor(`!!document.querySelector('[data-inbox-kind="spec-approval"] a')`, '开发者收件箱显示就绪规格审批');
 
   step('产品不能审批 spec（按钮禁用）；开发者审批并推进');
   await logout();
@@ -219,12 +239,18 @@ async function main() {
   await logout();
   await login('devon', tokens.dev);
   await go('#/changes/demo/artifacts');
+  await waitFor(`[...document.querySelectorAll('.file-list button')].some((button) => button.textContent.includes('spec.md'))`, '产物列表载入 spec.md');
   await evaluate(`(() => { [...document.querySelectorAll('.file-list button')].find((b) => b.textContent.includes('spec.md')).click(); return true; })()`);
   await act('.comment', '确认解决', { '说明': '口头确认，后续修订' });
   await waitFor(`document.querySelector('.comment .badge.cst-resolved') !== null`, '评论已解决');
-  await go('#/changes/demo');
+  await go('#/inbox');
+  await waitFor(`!!document.querySelector('[data-inbox-kind="spec-approval"] a')`, '评论解决后规格审批重新就绪');
+  await evaluate(`document.querySelector('[data-inbox-kind="spec-approval"] a').click(), true`);
   await act('.action-bar', '审批当前 spec');
   await waitFor(`[...document.querySelectorAll('.gate-card')].some((g) => g.textContent.includes('G2 规格门') && g.classList.contains('passed'))`, 'G2 通过');
+  await go('#/inbox');
+  await waitFor(`document.body.innerText.includes('当前角色暂无待审批事项') && !document.querySelector('.inbox-item')`, '审批后开发者待办消失');
+  await go('#/changes/demo');
   await act('.action-bar', '推进到「方案」');
   await waitFor(`document.querySelector('h1')?.textContent.includes('当前阶段：方案')`, '推进到 design');
 
@@ -260,7 +286,14 @@ main()
     console.error('❌', e.message);
     process.exitCode = 1;
   })
-  .finally(() => {
-    for (const p of procs) p.kill();
-    setTimeout(() => rmSync(work, { recursive: true, force: true }), 300);
+  .finally(async () => {
+    await Promise.all(procs.map((p) => {
+      if (p.exitCode !== null || p.signalCode !== null) return;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => p.kill('SIGKILL'), 5000);
+        p.once('exit', () => { clearTimeout(timer); resolve(); });
+        p.kill();
+      });
+    }));
+    rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });

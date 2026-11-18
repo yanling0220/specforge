@@ -120,6 +120,7 @@ describe('路由', () => {
     for (const r of [
       { page: 'board' },
       { page: 'events' },
+      { page: 'inbox' },
       { page: 'change', id: 'bulk-import', tab: 'gates' },
       { page: 'change', id: 'bulk-import', tab: 'timeline' },
       { page: 'evidence', id: 'c1', eid: 'ev-2026-abc' },

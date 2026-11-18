@@ -11,6 +11,7 @@ describe('Web 项目上下文（T4.3d）', () => {
     expect(projectBase()).toBe('');
     expect(projectBase('alpha')).toBe('/p/alpha');
     expect(projectHref('alpha')).toBe('/p/alpha/#/');
+    expect(projectHref('alpha', '#/inbox')).toBe('/p/alpha/#/inbox');
     expect(projectHref('alpha', '#/changes/same/analysis/Q-1')).toBe('/p/alpha/#/changes/same/analysis/Q-1');
     expect(projectHref('alpha', '#/changes/%ZZ')).toBe('/p/alpha/#/');
     for (const path of ['/p/../', '/p/%61/', '/p/A/', '/p/alpha/changes/demo', '/p/alpha//']) expect(() => projectFromPath(path)).toThrow();
@@ -36,7 +37,7 @@ describe('Web 项目上下文（T4.3d）', () => {
     vi.stubGlobal('fetch', fake);
     const { api, API_BASE } = await import('../src/api.ts');
     expect(API_BASE).toBe('/console/team/p/a');
-    await api.me(); await api.login('same', 'secret'); await api.change('same');
+    await api.me(); await api.login('same', 'secret'); await api.change('same'); await api.inbox('product');
     vi.stubGlobal('location', { pathname: '/console/team/p/b/' });
     await api.questionAction('same', 'Q-1', 'answer', { role: 'dev', text: 'draft A' });
     expect(fake.mock.calls.every(([path]) => String(path).startsWith('/console/team/p/a/api/'))).toBe(true);

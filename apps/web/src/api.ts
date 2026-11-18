@@ -8,6 +8,8 @@ import type {
   ForgeEvent,
   GateEvaluation,
   GateId,
+  HumanRole,
+  InboxItem,
   Question,
   ReviewFinding,
   ReviewRecord,
@@ -157,6 +159,7 @@ const PAGE = 1000;
 export const api = {
   project: () => get<{ id: string; readOnly: boolean }>('/api/project'),
   changes: () => get<{ changes: ChangeRow[] }>('/api/changes').then((r) => r.changes),
+  inbox: (role: HumanRole) => get<{ role: HumanRole; items: InboxItem[] }>(`/api/inbox?role=${enc(role)}`),
   change: (id: string) => get<ChangeDetail>(`/api/changes/${enc(id)}`),
   gates: (id: string) => get<GatesResponse>(`/api/changes/${enc(id)}/gates`),
   /** 分页读取全部事件（升序） */
