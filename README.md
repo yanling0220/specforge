@@ -114,7 +114,7 @@ CLI、HTTP 与 Store 共用仓库级跨进程锁，覆盖复合操作和长任�
 
 服务端可通过 `--notifications <JSON>` 配置逐项目飞书专用群机器人，默认关闭，只提醒已有答案待角色确认、收尾就绪后待开发者签字。配置只保存凭据环境变量名，成员显式映射为 Open ID；发送在仓库写锁外执行，结果和去重账本保存在哈希链中。
 
-适配器、后台 worker、只读管理入口、管理员显式重试和部署前缀已通过注入传输、真实进程中断及 Chrome 回归验收，尚未向真实群发送。配置、结果语义、关闭、通知 owner 恢复、`sf notify preview / status / retry` 和前缀部署说明见 [通知说明](docs/im-notifications.md)。T4.5e 的[真实验收步骤与证据表](docs/t4.5-acceptance.md)、[关闭配置模板](docs/examples/notifications.acceptance.json)已准备，待指定目标、核对实际预览并授权后投递。
+适配器、后台 worker、只读管理入口、管理员显式重试和部署前缀已通过注入传输、真实进程中断及 Chrome 回归验收，尚未向真实群发送。配置、结果语义、关闭、通知 owner 恢复、`sf notify preview / status / retry` 和前缀部署说明见 [通知说明](docs/im-notifications.md)。T4.5e 的[真实验收步骤与证据表](docs/t4.5-acceptance.md)、[关闭配置模板](docs/examples/notifications.acceptance.json)、[本地准备脚本](docs/prepare-im-acceptance.mjs)已交付；可从隔离项目开始，补真实群配置、核对实际预览并授权后投递。
 
 ## 日志锚定
 

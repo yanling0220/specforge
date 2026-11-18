@@ -1,6 +1,6 @@
 # 飞书群通知（T4.5a～d 实现、e 验收准备）
 
-当前已交付飞书适配器、逐项目后台 worker、哈希链账本、本机管理命令及部署前缀支持，默认关闭。通知专项真实 Chrome 验收使用注入传输捕获两类消息，已覆盖单项目和多项目的登录、本人确认、签字权限与去重，没有向真实群发送。T4.5e 的[真实验收步骤与证据表](t4.5-acceptance.md)、[关闭配置模板](examples/notifications.acceptance.json)已准备，待指定项目 / 群 / 成员、HTTPS 地址及凭据环境变量，核对实际预览并授权后执行；范围和进度见 [方案](t4.5-plan.md) 与 [TASKS.md](TASKS.md)。
+当前已交付飞书适配器、逐项目后台 worker、哈希链账本、本机管理命令及部署前缀支持，默认关闭。通知专项真实 Chrome 验收使用注入传输捕获两类消息，已覆盖单项目和多项目的登录、本人确认、签字权限与去重，没有向真实群发送。T4.5e 的[真实验收步骤与证据表](t4.5-acceptance.md)、[关闭配置模板](examples/notifications.acceptance.json)、[本地项目准备脚本](prepare-im-acceptance.mjs)已交付，可使用隔离项目补充真实群 / 成员、HTTPS 地址及凭据环境变量，核对实际预览并授权后执行；范围和进度见 [方案](t4.5-plan.md) 与 [TASKS.md](TASKS.md)。
 
 ## 配置
 

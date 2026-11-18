@@ -5,18 +5,18 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 已交付、待实测或人工确认
 
-最后更新：2026-11-17 · Codex（GPT-6） · T4.5e 验收准备完成，待真实目标配置与发送授权
+最后更新：2026-11-18 · Codex（GPT-6） · T4.5e 隔离项目和两类离线预览完成，待真实群配置
 
 ---
 
 ## 当前快照
 
-- 测试：T4.5e 开工复核默认全量 356/356（38 文件，单 worker，257.83 秒，退出 0）、install 和 typecheck 通过，锁文件未变；本轮只新增验收文档和关闭模板，生产解析器核对配置有效、默认关闭、空凭据阻塞。T4.5d 的 Web 构建与新增 23 项证据沿用；覆盖管理员重试及跨轮预算、只读 CLI、部署前缀和 HTTP / Web 路由，SQLite → 注入 Postgres → SQLite 重建保留 unknown / retry / accepted 历史。
+- 测试：2026-11-18 复核默认全量 356/356（38 文件，单 worker，274.38 秒，退出 0）、install 和 typecheck 通过，锁文件未变。新增本地准备脚本两次执行成功，演示项目引擎验证当前及基线各 7/7，四次预览不写业务或发送账本。T4.5d 的 Web 构建、浏览器与新增 23 项证据沿用；本轮没有产品代码变更，不重复 Web / 数据库验收。
 - 浏览器：根路径单项目 29 条、SQLite 双项目 A 8 / B 5、带前缀双项目 A 8 / B 5 条事件，链 / 状态 / 名册一致。通知专项在单项目 /console/single、多项目 /console/team 使用注入 worker 传输验证两类消息、登录定位、本人确认、旧答案拒绝、签字权限与去重；最终单项目 A 18、多项目 A 18 / B 6 条事件。没有发送真实 IM 或调用真实模型。
 - 数据库：真实 PostgreSQL 17.4 契约 5/5（7.91 秒）、服务综合故障 / 迁移 5/5（16.79 秒）与 Postgres Chrome（A 8 / B 5）沿用 T4.3f 历史验收，独立运行，不计入默认 356 项；本轮未重跑、未启动数据库。
-- 远程：https://github.com/yanling0220/specforge （main）；T4.5d 为 `47b4efc`，e 验收准备见本次任务提交。按协作规则提交并推送，结束前核对工作区干净及 main 与 origin/main 同步。
-- **整体状态**：T4.3a～f 全部 done。用户确认 [T4.5 范围方案](t4.5-plan.md)，采用飞书专用项目群机器人，仅提醒已有答案待角色确认、就绪后待开发者签字。a～d done；e 的[执行步骤与证据表](t4.5-acceptance.md)、[关闭模板](examples/notifications.acceptance.json)已准备，e 与整体 verify，待指定目标配置、实际预览及真实发送授权；没有真实 IM 受理或成员 @ 证据。
-- **下一个建议任务：执行 T4.5e 真实验收**。用户已选择继续；当前等待提供项目仓库 / 稳定 ID、专用群及成员映射、凭据环境变量名和可访问的 HTTPS 地址。先用关闭配置生成全项目实际预览，限定两项新待办；针对指定目标和消息集合取得真实发送授权后，再按执行步骤验收正确 @、登录本人操作、待办仍有效时的扫描与重启去重。
+- 远程：https://github.com/yanling0220/specforge （main）；T4.5d 为 `47b4efc`，e 执行步骤与关闭模板为 `0d303bf`，本地项目准备脚本见本次提交。按协作规则提交并推送，结束前核对工作区干净及 main 与 origin/main 同步。
+- **整体状态**：T4.3a～f 全部 done。用户确认 [T4.5 范围方案](t4.5-plan.md)，采用飞书专用项目群机器人，仅提醒已有答案待角色确认、就绪后待开发者签字。a～d done；e 的[执行步骤与证据表](t4.5-acceptance.md)、[关闭模板](examples/notifications.acceptance.json)、[本地准备脚本](prepare-im-acceptance.mjs)及隔离项目两类离线预览已交付，e 与整体 verify；没有真实 IM 受理或成员 @ 证据。
+- **下一个建议任务：执行 T4.5e 真实验收**。可直接使用已准备的 im-acceptance 隔离项目，无需先提供业务仓库；仍待专用飞书群、两个账号的真实成员映射、凭据环境变量名和可访问的 HTTPS 地址。先确定仓库最终位置，再替换本机关闭配置并生成实际全项目预览；针对指定目标和消息集合授权后验收正确 @、登录本人操作、待办仍有效时的扫描与重启去重。临时项目路径见本轮实测，系统清理后可重建。
 - **使用提示**：先 npm run web:build；多项目用 --projects JSON，各项目独立登录。部署前缀用 --base-path，并与 publicBaseUrl 路径一致。sf notify preview / status / retry 必须显式传入 --notifications 和 --project；命令、预算和恢复见 [通知说明](im-notifications.md)。浏览器回归为 npm run web:e2e、npm run web:e2e:projects、npm run web:e2e:projects -- --prefix 和 npm run web:e2e:notifications，均需本机 Chrome。单项目仍在项目目录运行 server；修改需启用名册，既有项目需配置 tdd.command，首次 sf verify 会额外验证基线 commit。
 - **与用户的协作约定**：每次结束当前任务或收工前，检查并提交未提交改动、推送已提交未同步内容，无需再次询问；确认工作区与远程同步后，汇报整体状态、验证结果和遗留项，给出下一步计划与选项，等待用户选择。需要用户参与或产生费用的验证先询问；给出多种改法时逐个写明优缺点。本规则替代历史记录中推送前再问或不自动推送的收尾约定；独立审计分支备份另行安排。
 
@@ -83,7 +83,7 @@
 | T4.5b | 通知判定、去重键与 Store 发送账本 | done | 2026-11-16 · Codex（GPT-6）；纯需求 / 完整版本键、显式成员交集与指纹、严格事件投影；NotificationLedger 经 Store.mutate 排队 / 复核 / 登记尝试 / 记结果 / 中断归 unknown，锁外传输接口、重启预算和 accepted 去重。新增 25 项（core 11 / Store 13 / index 1），真实双进程登记、SQLite → 注入 Postgres → SQLite 重建不重排队，业务状态 / 门禁绑定 / 锚定保持；定向 41/41、全量 307/307、typecheck、Web 构建通过。b 交付内部库，服务端 worker 由 c 接入，管理命令由 d 交付 |
 | T4.5c | 单一 IM 渠道与逐项目后台发送 | done | 2026-11-16 · Codex（GPT-6）；飞书配置 / 签名 / 最小消息、逐项目 worker、独立 owner、锁外发送、限流 / unknown、记账争用及四个真实进程退出点；新增 26 项，全量 333/333、typecheck、Web 构建、单 / 双项目 Chrome 通过。T45-AC-05～08 的渠道 / 故障范围用注入传输交付，管理员重试留 d，真实发送留 e |
 | T4.5d | 管理入口、文档与集成回归 | done | 2026-11-17 · Codex（GPT-6）；只读 preview / status、管理员有原因及 unknown 风险确认的显式重试、累计历史与逐轮五次预算、部署前缀和两类通知深链接验收。新增 23 项，全量 356/356（38 文件）、typecheck、Web 构建、根路径单 / 双项目、前缀双项目和通知专项真实 Chrome 均通过；整体 verify，真实发送留 e |
-| T4.5e | 专用测试群 / 成员真实验收 | verify | 2026-11-17 · Codex（GPT-6）；用户选择继续，已交付[执行步骤与证据表](t4.5-acceptance.md)及[关闭模板](examples/notifications.acceptance.json)。基线 356/356、typecheck 通过，模板经生产解析器核对；待项目 / 专用群 / 成员、凭据环境变量及 HTTPS 地址，实际预览与指定目标授权后执行 AC-12，没有真实发送或成员确认 |
+| T4.5e | 专用测试群 / 成员真实验收 | verify | 2026-11-18 · Codex（GPT-6）；[执行步骤](t4.5-acceptance.md)、关闭模板及本地准备脚本已交付。隔离项目正常引擎推进、实际验证当前 / 基线各 7/7，当前 Codex 离线核对既有示例后登记报告、生成两类预览；四次预览后链 13 条 / 账本 0 条保持。全量 356/356、typecheck、脚本两次执行通过；待真实群配置、实际目标预览和发送授权，AC-12 未执行 |
 
 ---
 
@@ -114,6 +114,15 @@
 ---
 
 ## 实测记录
+
+### 2026-11-18 · Codex（GPT-6）· T4.5e 隔离项目与离线预览
+
+- 用户继续后补齐可独立执行的本地准备。开工 main 与 origin/main 同为 `0d303bf`、工作区干净、最近提交与记录一致；本机无 rtk，沿用原生命令。install（临时 npm 缓存）、typecheck、沙箱外默认全量 356/356（38 文件，单 worker，274.38 秒，退出 0）通过，锁文件未变，日志 `/tmp/specforge-t45e-local-baseline.log`。
+- 新增 `docs/prepare-im-acceptance.mjs`：每次新建临时仓库，不接受已有路径；复用 docs/demo-src/users.js，七项可执行测试；通过 CLI 初始化配置 / 名册 / 问题 / 复述，sf advance 经引擎写两条 stage.advanced 到 closing，sf verify 实际验证当前与基线，之后复核 G1 / G6A 与链。脚本不自动登记审查或签字、不启动服务、不发送 IM。演示令牌在仓库外 0600 文件，父目录 0700；失败不转储可能含令牌的子进程输出。
+- 第一份保留目录 `/var/folders/n0/_bh4k7bx4d91kpdrlz5q6lq00000gn/T/sf-im-acceptance-A7RnmI`，Git 项目为其 `project/`，稳定 ID `im-acceptance`，关闭配置为 `notifications.local.json`，演示账号 acceptance-dev / acceptance-product，令牌为 `login-tokens.local.json`（不提交、不输出）。HEAD `621b11dc8906d16134fe43e0167dd797a4bc1dea`；当前和基线各 7/7，G1 / G6A passed。临时目录可能被系统清理；若需迁移，须在首次启用前确定位置并重新预览，不能复用旧仓库绑定。
+- 脚本初次仅有问题提醒，签字因无审查保持不就绪。当前 Codex 实际读取 HEAD 中的既有 users.js、七项测试及 proposal 后，通过现有 sf review CLI 登记覆盖三文件、无阻塞发现的离线报告；没有调用另一个模型，不声称不同模型独立验收。状态仍无 human 签字。随后两类预览为 `n-0c3f64f63342`（product、Q-1 v1、834fdfa3）和 `n-9ef5bd5707b3`（dev、当前 SHA）；真实环境配置 blocked，仅在只读预览子进程使用占位凭据核对用户名和 .invalid 链接。
+- 四次预览 key 保持，业务状态、13 条事件逐项相同，发送账本 0 条；链 / 名册 / 状态一致，令牌文件权限核对 0600，演示源文件与本仓库既有文件哈希一致。脱敏本机结果 `offline-evidence.local.json`；没有启动通知 worker 或进行真实 IM / 模型 / 数据库调用。第二次运行最终脚本保留于 `sf-im-acceptance-YGNLzx`，独立完成且停在未审查状态，没有修改第一份项目；脚本语法检查通过。
+- 同步验收文档、通知说明、范围方案及 README。e 从 doing 回 verify，实际群、成员 Open ID、HTTPS 和凭据配置仍缺失，不能以本地预览完成 AC-12。后续可使用已准备项目，仅补真实目标信息，不再要求用户先提供业务仓库。
 
 ### 2026-11-17 · Codex（GPT-6）· T4.5e 真实验收准备
 
@@ -350,4 +359,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-16 · Codex（GPT-6） · T4.5b · 确认飞书项目群方案；纯通知判定 / 版本键 / 接收复核与 Store 哈希链账本、重启去重 / 有界预算 / unknown、真实并发和索引重建回归；新增 25 项，全量 307/307、typecheck、Web 构建通过，c～e 待开始 · `5cc474c`
 - 2026-11-16 · Codex（GPT-6） · T4.5c · 飞书配置 / 签名 / 最小消息与逐项目后台 worker、独立 owner、锁外发送 / 有界重试 / unknown、四个真实进程退出点；新增 26 项，全量 333/333、typecheck、Web 构建、单 / 双项目 Chrome 通过，真实 IM 待 e · `31dc86e`
 - 2026-11-17 · Codex（GPT-6） · T4.5d · 本机通知管理、管理员显式重试与跨轮预算、部署前缀、两类消息深链接及权限验收；新增 23 项，356/356、typecheck、Web 构建及四组 Chrome 通过，整体 verify 待真实群验收 · `47b4efc`
-- 2026-11-17 · Codex（GPT-6） · T4.5e · 真实验收执行步骤、默认关闭模板与脱敏证据表；全项目两项预览、明确目标授权、实际 @ / 本人操作、需求仍有效时扫描及重启去重；基线 356/356、typecheck 和模板解析通过，待真实目标配置与授权，e / 整体 verify，无真实发送 · （本次提交）
+- 2026-11-17 · Codex（GPT-6） · T4.5e · 真实验收执行步骤、默认关闭模板与脱敏证据表；全项目两项预览、明确目标授权、实际 @ / 本人操作、需求仍有效时扫描及重启去重；基线 356/356、typecheck 和模板解析通过，待真实目标配置与授权，e / 整体 verify，无真实发送 · `0d303bf`
+- 2026-11-18 · Codex（GPT-6） · T4.5e · 隔离项目准备脚本、引擎实际验证当前 / 基线各 7/7、既有示例离线核对后两类只读预览、13 条事件和空发送账本保持；全量 356/356、typecheck、脚本两次运行与语法通过，真实群配置和 AC-12 待执行 · （本次提交）
