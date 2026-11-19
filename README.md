@@ -112,6 +112,10 @@ node /opt/specforge/apps/server/src/main.ts --projects /srv/specforge/projects.j
 
 浏览器验收：先 `npm run web:build`，再运行 `npm run web:e2e:projects`（需要本机 Chrome，可用 `CHROME` 指定路径）；既有单项目回归仍为 `npm run web:e2e`。两者都只创建临时项目，不调用模型。
 
+变更详情的「代码审查」标签在实现、收尾和交付阶段显示基线与当前 HEAD 的差异。选中文件后加载统一 diff。当前与历史报告、AC 引用和验证证据均可从这里查看。签字请从「查看门禁 / 签字」进入门禁页，签字记录绑定操作时的 HEAD。
+
+审查链接为 `#/changes/<变更ID>/review`，多项目部署下放在对应的 `/p/<项目ID>/` 页面，沿用当前部署前缀。构建 Web 后可用 `npm run web:e2e:review` 在本机 Chrome 复跑根路径单项目和带前缀双项目验收。[验收记录](docs/t4.7-plan.md#47d-evidence)
+
 省略 `--projects` 仍使用原单项目 CLI / Web 模式。自动日志锚定按各仓库原有配置运行；非本机访问仍需 HTTPS 反向代理。
 
 CLI、HTTP 与 Store 共用仓库级跨进程锁，覆盖复合操作和长任务；读请求也参与，忙时立即返回 `409 write_busy`，不同仓库不互相阻塞。Web 将同文档请求串行发送，只读请求对明确的忙错误有限重试；业务提交不会自动重放。中断不会自动抢锁或补成功事件，需用 `sf lock status` / `sf lock recover --reason` 核对；部分文件写入不能称为事务回滚。操作、恢复和本地文件系统限制见 [写入恢复说明](docs/write-recovery.md)。

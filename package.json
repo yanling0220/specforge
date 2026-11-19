@@ -16,6 +16,7 @@
     "web:build": "npm run build -w @specforge/web",
     "web:dev": "npm run dev -w @specforge/web",
     "web:e2e": "node apps/web/e2e/console.e2e.mjs",
+    "web:e2e:review": "node apps/web/e2e/review.e2e.mjs",
     "web:e2e:projects": "node apps/web/e2e/projects.e2e.mjs",
     "web:e2e:notifications": "node apps/web/e2e/notifications.e2e.mjs",
     "web:e2e:projects:postgres": "node apps/web/e2e/projects.e2e.mjs --postgres"

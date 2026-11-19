@@ -5,20 +5,20 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 已交付、待实测或人工确认
 
-最后更新：2026-11-19 · Codex（GPT-6） · T4.7c Web 代码审查视图完成，T4.7d 待验收
+最后更新：2026-11-19 · Codex（GPT-6） · T4.7d 集成与浏览器验收完成
 
 ---
 
 ## 当前快照
 
-- 测试：2026-11-19 T4.7c 默认全量 406/406（45 文件，单 worker，388.51 秒，退出 0），新增 6 项。开工 400/400（44 文件，329.91 秒），install、typecheck、Web 构建和 diff 检查通过，锁文件未变。
-- 浏览器：最近 T4.6 根路径单项目 Chrome 覆盖收件箱、问题定位、本人确认和规格审批流程，最终 29 条事件，链 / 状态 / 名册一致。双项目、带前缀双项目和通知专项沿用 T4.5d 证据。代码审查视图的浏览器验收排在 T4.7d。
+- 测试：2026-11-19 T4.7d 默认全量 406/406（45 文件，单 worker，414.92 秒，退出 0），T4.7c 后未改产品代码；typecheck、Web 构建和 diff 检查通过，锁文件未变。
+- 浏览器：代码审查专项真实 Chrome 根路径单项目和带前缀双项目通过；既有单项目控制台和带前缀双项目回归通过。单项目 10、alpha 10、beta 7 条事件，哈希链 / 状态 / 名册一致。
 - 数据库：真实 PostgreSQL 17.4 契约 5/5（7.91 秒）、服务综合故障 / 迁移 5/5（16.79 秒）与 Postgres Chrome（A 8 / B 5）沿用 T4.3f 历史验收，独立运行，不计入默认测试；本轮未重跑、未启动数据库。
-- 远程：https://github.com/yanling0220/specforge （main）。T4.7 范围设计 `1400141`，T4.7a `b431225`，T4.7b `e62f2ec`，T4.7c 见本次提交。
+- 远程：https://github.com/yanling0220/specforge （main）。T4.7 范围设计 `1400141`，T4.7a `b431225`，T4.7b `e62f2ec`，T4.7c `e8f89a8`，T4.7d 见本次提交。
 - **整体状态**：T4.3a～f 全部 done。用户确认 [T4.5 范围方案](t4.5-plan.md)，采用飞书专用项目群机器人，仅提醒已有答案待角色确认、就绪后待开发者签字。a～d done；e 的[执行步骤与证据表](t4.5-acceptance.md)、[关闭模板](examples/notifications.acceptance.json)、[本地准备脚本](prepare-im-acceptance.mjs)及隔离项目两类离线预览已交付，e 与整体 verify；没有真实 IM 受理或成员 @ 证据。
-- **当前研发**：T4.7a～c 已完成，代码审查视图待真实 Chrome 集成验收。T4.5e 继续暂缓。
-- **下一个建议任务**：T4.7d 集成与浏览器验收。
-- **使用提示**：先 npm run web:build；多项目用 --projects JSON，各项目独立登录。部署前缀用 --base-path，并与 publicBaseUrl 路径一致。sf notify preview / status / retry 必须显式传入 --notifications 和 --project；命令、预算和恢复见 [通知说明](im-notifications.md)。浏览器回归为 npm run web:e2e、npm run web:e2e:projects、npm run web:e2e:projects -- --prefix 和 npm run web:e2e:notifications，均需本机 Chrome。单项目仍在项目目录运行 server；修改需启用名册，既有项目需配置 tdd.command，首次 sf verify 会额外验证基线 commit。
+- **当前研发**：T4.7a～d 已完成，代码审查视图的实现和浏览器验收证据齐全。T4.5e 继续暂缓。
+- **下一个建议任务**：T2.3c Codex 后端实测，需要登录并获准调用真实模型。T4.5e 保留在暂缓待办，待用户选择恢复。
+- **使用提示**：先 npm run web:build；多项目用 --projects JSON，各项目独立登录。部署前缀用 --base-path，并与 publicBaseUrl 路径一致。sf notify preview / status / retry 必须显式传入 --notifications 和 --project；命令、预算和恢复见 [通知说明](im-notifications.md)。浏览器回归为 npm run web:e2e、npm run web:e2e:projects、npm run web:e2e:projects -- --prefix、npm run web:e2e:notifications 和 npm run web:e2e:review，均需本机 Chrome。单项目仍在项目目录运行 server；修改需启用名册，既有项目需配置 tdd.command，首次 sf verify 会额外验证基线 commit。
 - **与用户的协作约定**：每次结束当前任务或收工前，检查并提交未提交改动、推送已提交未同步内容，无需再次询问；确认工作区与远程同步后，汇报整体状态、验证结果和遗留项，给出下一步计划与选项，等待用户选择。需要用户参与或产生费用的验证先询问；给出多种改法时逐个写明优缺点。本规则替代历史记录中推送前再问或不自动推送的收尾约定；独立审计分支备份另行安排。
 
 ---
@@ -90,7 +90,7 @@
 | T4.7a | 安全读取提交差异 | done | 2026-11-18 开始，2026-11-19 完成 · Codex（GPT-6）。runner 有界只读 Git、NUL 路径清单、文件 ID、统一 diff、特殊对象和指纹验证。定向 21/21、全量 390/390（42 文件，347.70 秒）、typecheck 通过，覆盖 T47-AC-01～03、09 / 10 的 Git 部分 |
 | T4.7b | 审查快照与只读 API | done | 2026-11-19 · Codex（GPT-6）。新增 10 项，最终 400/400、typecheck、Web 构建通过。验收涵盖 T47-AC-04～10 的 API 部分及 AC-01～03 的组合读取。Web 实现和真实浏览器验收留给 c～d |
 | T4.7c | Web 代码审查视图 | done | 2026-11-19 · Codex（GPT-6）。实现 T47-AC-11 对应的审查标签、按需 diff、报告、AC 表、证据跳转与刷新状态。新增 6 项，Web 定向 35/35，最终全量 406/406，typecheck 和 Web 构建通过。真实浏览器验证留在 T4.7d |
-| T4.7d | 集成与浏览器验收 | todo | 依赖 T4.7c；根路径单项目 / 带前缀双项目真实 Chrome、收件箱与既有人工操作回归、T47-AC-01～12 证据映射与使用文档；实现完成前不称整体交付 |
+| T4.7d | 集成与浏览器验收 | done | 2026-11-19 · Codex（GPT-6）。新增 `npm run web:e2e:review`，在根路径单项目和 `/console/team` 带前缀双项目中用真实 Chrome 核对 diff、筛选、历史、证据、外部提交刷新、无事件补查、失败恢复、项目隔离、产品只读和开发者签字。既有单项目控制台回归和带前缀双项目回归通过。单项目 10 条事件，双项目 alpha 10、beta 7 条事件，哈希链、状态和名册一致。T47-AC-01～12 证据见 [验收记录](t4.7-plan.md#47d-evidence) |
 
 ## 暂缓待办
 
@@ -133,7 +133,14 @@
 - 开工 main 和 origin/main 均为 `e62f2ec`，工作区干净。install、typecheck 和开工全量 400/400（44 文件，单 worker，329.91 秒，退出 0）通过。锁文件未变。日志 `/tmp/specforge-t47c-baseline.log`。本机无 rtk，沿用原生命令。
 - 在变更详情加入「代码审查」标签，独立读取快照，展示提交范围、按需统一 diff、G6B 检查、当前与历史报告、AC 追溯和引擎证据入口。手动、事件和补查刷新时标注上次版本。快照更新或读取失败后清除旧内容。旧请求取消后忽略迟到结果，文件响应按版本和文件 ID 双重核对。
 - Web 定向 35/35，新增 6 项覆盖带前缀项目链接、迟到响应、串行队列取消、版本与文件核对、失败范围和 diff 行号。typecheck、Web 构建通过。真实 Chrome 交互场景留在 T4.7d。
-- 最终全量 406/406（45 文件，单 worker，388.51 秒，退出 0），日志 `/tmp/specforge-t47c-final.log`。git diff 检查通过。T4.7c 完成，T4.7d 待开始。T4.5e 保留在暂缓待办中。
+- 最终全量 406/406（45 文件，单 worker，388.51 秒，退出 0）。原日志 `/tmp/specforge-t47c-final.log` 已由 T4.7d 复跑覆盖。git diff 检查通过。T4.7c 完成，T4.7d 待开始。T4.5e 保留在暂缓待办中。
+
+### 2026-11-19 · Codex（GPT-6）· T4.7d 集成与浏览器验收
+
+- 开工时 `main` 和 `origin/main` 均为 `e8f89a8`，工作区干净。依赖安装、typecheck、Web 构建通过，锁文件无改动。默认全量 406/406（45 文件，单 worker，414.92 秒，退出 0），本轮日志位于 `/tmp/specforge-t47c-final.log`。本机无 rtk，沿用原生命令。
+- 新增 npm run web:e2e:review，使用临时 Git 项目与真实 Chrome 完成根路径单项目、/console/team 带前缀双项目审查验收。核对提交差异、特殊文件、筛选、历史报告、证据跳转、旧文件版本 409、外部提交刷新、15 秒无事件补查、断网清空 / 恢复、退出与项目隔离、产品可读但不可签字、开发者签字及收件箱。
+- 单项目最终 10 条事件；双项目 alpha 10、beta 7 条事件。三项目哈希链、业务状态、用户名册和证据均一致，没有通知事件。既有 npm run web:e2e 与 npm run web:e2e:projects -- --prefix 也通过。脚本中的首次夹具问题（初始化管理员身份、正常写锁等待）已修复并重跑通过。
+- T47-AC-01～12 的代码与浏览器证据映射见 [T4.7 验收记录](t4.7-plan.md#47d-evidence)。T4.7 完成；T4.5e 继续保留在暂缓待办。
 
 ### 2026-11-19 · Codex（GPT-6）· T4.7b 审查快照与只读 API
 
@@ -422,4 +429,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-18 · Codex（GPT-6） · T4.7 · 交付代码审查视图范围方案，含只读 diff、审查报告、AC 追溯、12 条验收以及实现步骤，基线 369/369、typecheck 通过 · `1400141`
 - 2026-11-19 · Codex（GPT-6） · T4.7a · 交付有界提交差异读取、文件 ID、特殊对象与 HEAD 复核。新增 21 项，最终全量 390/390、typecheck 通过 · `b431225`
 - 2026-11-19 · Codex（GPT-6） · T4.7b · 交付审查快照与按文件 ID 读取差异的 API，含版本复核、AC 追溯和证据目录。新增 10 项，全量 400/400、typecheck、Web 构建通过 · `e62f2ec`
-- 2026-11-19 · Codex（GPT-6） · T4.7c · 交付 Web 代码审查标签，含按需 diff、报告与 AC 筛选、证据入口和快照刷新。新增 6 项，全量 406/406、typecheck、Web 构建通过。真实 Chrome 验收留在 T4.7d · （本次提交）
+- 2026-11-19 · Codex（GPT-6） · T4.7c · 交付 Web 代码审查标签，含按需 diff、报告与 AC 筛选、证据入口和快照刷新。新增 6 项，全量 406/406、typecheck、Web 构建通过 · `e8f89a8`
+- 2026-11-19 · Codex（GPT-6） · T4.7d · 完成根路径单项目与带前缀双项目真实 Chrome 审查验收、既有控制台回归和 T47-AC-01～12 证据映射；新增验收脚本与使用文档。三组项目链 / 状态 / 名册一致 · （本次提交）
