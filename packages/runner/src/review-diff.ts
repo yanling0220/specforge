@@ -61,8 +61,19 @@ export interface ReviewDiffOptions {
   projectBinding: string;
   changeId: string;
   baseSha: string;
+  expectedTargetSha?: string;
   limits?: Partial<ReviewDiffLimits>;
 }
+
+export interface ReviewTreeEntry {
+  path: string;
+  mode: string;
+}
+
+const REVIEW_TREE_BYTES = 2 * 1024 * 1024;
+const REVIEW_TREE_FILES = 20_000;
+const REVIEW_SOURCE_BYTES = 2 * 1024 * 1024;
+const REVIEW_SOURCE_FILE_BYTES = 512 * 1024;
 
 const SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -209,6 +220,7 @@ async function manifest(reader: GitRead, options: ReviewDiffOptions): Promise<Re
   if (!SHA.test(options.baseSha) || !options.projectBinding || !options.changeId) throw new ReviewDiffError('bad_arg');
   await reader.rejectPromisor();
   const targetSha = await reader.commit('HEAD');
+  if (options.expectedTargetSha !== undefined && options.expectedTargetSha !== targetSha) throw new ReviewDiffError('review_stale');
   const baseSha = await reader.commit(options.baseSha);
   const ancestry = await reader.run(['merge-base', '--is-ancestor', baseSha, targetSha], 256, [0, 1]);
   const { out } = await reader.run(['diff-tree', '--no-commit-id', '--raw', '-z', '-r', '--no-renames', '--no-abbrev',
@@ -216,6 +228,78 @@ async function manifest(reader: GitRead, options: ReviewDiffOptions): Promise<Re
   const parsed = parseManifest(out, [reader.repo, options.projectBinding, options.changeId, baseSha, targetSha], reader.limits.maxFiles);
   await reader.ensureHead(targetSha);
   return { baseSha, targetSha, baseIsAncestor: ancestry.code === 0, ...parsed };
+}
+
+export async function readReviewHead(repo: string, expectedSha?: string): Promise<string> {
+  const reader = new GitRead(repo);
+  await reader.rejectPromisor();
+  const sha = await reader.commit('HEAD');
+  if (expectedSha !== undefined && expectedSha !== sha) throw new ReviewDiffError('review_stale');
+  return sha;
+}
+
+/** Lists a bounded committed tree without consulting the worktree or following submodules. */
+export async function listReviewTree(repo: string, targetSha: string): Promise<{
+  files: ReviewTreeEntry[];
+  unavailablePaths: number;
+}> {
+  if (!SHA.test(targetSha)) throw new ReviewDiffError('bad_arg');
+  const reader = new GitRead(repo);
+  await reader.rejectPromisor();
+  await reader.ensureHead(targetSha);
+  const { out } = await reader.run(['ls-tree', '-r', '-z', '--full-tree', targetSha], REVIEW_TREE_BYTES);
+  const files: ReviewTreeEntry[] = [];
+  let unavailablePaths = 0;
+  let offset = 0;
+  let count = 0;
+  while (offset < out.length) {
+    const end = out.indexOf(0, offset);
+    if (end < 0) throw new ReviewDiffError('unavailable');
+    const record = out.subarray(offset, end);
+    offset = end + 1;
+    const tab = record.indexOf(9);
+    if (tab < 0) throw new ReviewDiffError('unavailable');
+    const header = record.subarray(0, tab).toString('ascii');
+    const match = /^(\d{6}) (?:blob|commit) ([a-f0-9]{40}|[a-f0-9]{64})$/.exec(header);
+    if (!match) throw new ReviewDiffError('unavailable');
+    if (++count > REVIEW_TREE_FILES) throw new ReviewDiffError('too_large');
+    const rawPath = record.subarray(tab + 1);
+    if (excluded(rawPath)) continue;
+    const path = utf8(rawPath);
+    if (path === undefined) { unavailablePaths++; continue; }
+    files.push({ path, mode: match[1]! });
+  }
+  await reader.ensureHead(targetSha);
+  return { files, unavailablePaths };
+}
+
+/** Reads regular blob entries selected by the Store from listReviewTree. */
+export async function readReviewTreeBlobs(
+  repo: string,
+  targetSha: string,
+  files: ReviewTreeEntry[],
+): Promise<{ path: string; text: string }[]> {
+  if (!SHA.test(targetSha)) throw new ReviewDiffError('bad_arg');
+  if (!files.length) return [];
+  const reader = new GitRead(repo);
+  await reader.rejectPromisor();
+  await reader.ensureHead(targetSha);
+  let total = 0;
+  const texts: { path: string; text: string }[] = [];
+  for (const file of files) {
+    if (!/^(?:100644|100755)$/.test(file.mode) || file.path.includes('\0') ||
+        file.path.split('/').some((part) => !part || part === '.' || part === '..') || excluded(Buffer.from(file.path))) {
+      throw new ReviewDiffError('unavailable');
+    }
+    const budget = Math.min(REVIEW_SOURCE_FILE_BYTES, REVIEW_SOURCE_BYTES - total);
+    const { out } = await reader.run(['cat-file', 'blob', `${targetSha}:${file.path}`], budget);
+    total += out.length;
+    const text = utf8(out);
+    if (text === undefined || out.includes(0)) throw new ReviewDiffError('unavailable');
+    texts.push({ path: file.path, text });
+  }
+  await reader.ensureHead(targetSha);
+  return texts;
 }
 
 /** Captures HEAD; all content is read from committed trees, never the index/worktree. */
@@ -243,8 +327,7 @@ async function binaryPrefix(reader: GitRead, oid: string): Promise<boolean> {
 export async function readReviewFileDiff(options: ReviewDiffOptions & { targetSha: string; fileId: string }): Promise<ReviewFileDiff> {
   if (!SHA.test(options.targetSha) || !/^[a-f0-9]{64}$/.test(options.fileId)) throw new ReviewDiffError('not_found');
   const reader = new GitRead(options.repo, options.limits);
-  const current = await manifest(reader, options);
-  if (current.targetSha !== options.targetSha) throw new ReviewDiffError('review_stale');
+  const current = await manifest(reader, { ...options, expectedTargetSha: options.targetSha });
   const file = current.files.find((f) => f.id === options.fileId);
   if (!file) throw new ReviewDiffError('not_found');
   let result: ReviewFileDiff;

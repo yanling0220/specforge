@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { chainEvent, emptyRegistry, ForgeError, hashOf, resolveIdentity, sha256, verifyChain } from '@specforge/core';
 import { atomicWrite, git, headSha, isDirty, lockStatus, repositoryLockDir, withRepositoryLock } from '@specforge/runner';
@@ -453,13 +453,18 @@ export class Store {
    * 全部证据（验证证据与 G5 证据）的目录，按记录顺序。
    * hashOk 为 false 表示文件缺失或内容与事件日志中记录的哈希不一致，不应被采信。
    */
-  evidenceIndex(changeId: string): EvidenceEntry[] {
+  evidenceIndex(changeId: string, include: (event: ForgeEvent) => boolean = () => true): EvidenceEntry[] {
     return this.events()
-      .filter((e) => e.changeId === changeId && (e.type === 'evidence.recorded' || e.type === 'tdd.recorded'))
+      .filter((e) => e.changeId === changeId && (e.type === 'evidence.recorded' || e.type === 'tdd.recorded') && include(e))
       .map((e) => {
         const id = String(e.payload.evidenceId);
         const file = join(this.changeDir(changeId), 'evidence', `${id}.json`);
-        const hashOk = existsSync(file) && hashOf(readJson<unknown>(file)) === e.payload.evidenceHash;
+        let hashOk = false;
+        try {
+          hashOk = !/[/\\\0]/.test(id) && lstatSync(file).isFile() && hashOf(readJson<unknown>(file)) === e.payload.evidenceHash;
+        } catch {
+          // A missing or unreadable artifact is not verified evidence.
+        }
         return {
           id,
           kind: e.type === 'tdd.recorded' ? 'tdd' : 'verify',

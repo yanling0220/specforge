@@ -13,6 +13,8 @@ import {
   questionAction,
   readTasksFacts,
   readInbox,
+  readReviewFileSnapshot,
+  readReviewSnapshot,
   releaseTask,
   reopenComment,
   resolveComment,
@@ -63,7 +65,7 @@ function parseFindings(v: unknown): ReviewFinding[] {
 }
 
 /** 错误码 → HTTP 状态 */
-const STATUS_OF: Record<string, 400 | 403 | 404 | 409 | 503> = {
+const STATUS_OF: Record<string, 400 | 403 | 404 | 409 | 413 | 503> = {
   no_change: 404,
   not_found: 404,
   bad_role: 403,
@@ -82,6 +84,11 @@ const STATUS_OF: Record<string, 400 | 403 | 404 | 409 | 503> = {
   index_schema: 503,
   index_identity: 503,
   inbox_unavailable: 503,
+  review_stale: 409,
+  review_not_available: 409,
+  review_too_large: 413,
+  review_unavailable: 503,
+  review_timeout: 503,
 };
 
 /** 不需要登录的接口 */
@@ -138,6 +145,9 @@ export function createApp(store: Store, index: QueryIndex, opts: AppOptions = {}
     if (err instanceof ForgeError) {
       const status = STATUS_OF[err.code] ?? 400;
       return c.json({ error: { code: err.code, message: err.message } }, status);
+    }
+    if (/^\/api\/changes\/[^/]+\/review(?:\/|$)/.test(localPath(c))) {
+      return c.json({ error: { code: 'review_unavailable', message: '审查快照暂不可用' } }, 503);
     }
     console.error(err);
     return c.json({ error: { code: 'internal', message: err.message } }, 500);
@@ -245,6 +255,17 @@ export function createApp(store: Store, index: QueryIndex, opts: AppOptions = {}
     const found = store.readEvidence(id, eid);
     if (!found) throw new ForgeError('not_found', `证据 ${eid} 不存在`);
     return c.json(found);
+  });
+
+  app.get('/api/changes/:id/review', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    return c.json(await readReviewSnapshot(store, c.req.param('id'), opts.projectId ?? 'single-project'));
+  });
+
+  app.get('/api/changes/:id/review/files/:fileId', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const { id, fileId } = c.req.param();
+    return c.json(await readReviewFileSnapshot(store, id, fileId, c.req.query('snapshot') ?? '', opts.projectId ?? 'single-project'));
   });
 
   // ---------------- 写操作（T3.4） ----------------

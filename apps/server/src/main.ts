@@ -36,6 +36,8 @@ REST
   GET /api/changes/:id/events[?type=&after=&limit=]
   GET /api/events[?changeId=&type=&after=&limit=]
   GET /api/changes/:id/evidence[/:eid]           验证证据与 G5 证据（hashOk 表示与事件日志一致）
+  GET /api/changes/:id/review                    提交审查快照
+  GET /api/changes/:id/review/files/:fileId?snapshot=<version>  读取快照内的文件差异
   GET /api/log/verify                            哈希链与带外修改校验
 WebSocket
   /ws[?changeId=&after=]                         推送 hello / event / changes / rebuilt
