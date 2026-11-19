@@ -1017,3 +1017,147 @@ button.link {
   color: var(--pass);
   border-color: var(--pass);
 }
+
+/* 代码审查 */
+.review .tabs {
+  flex-wrap: wrap;
+}
+.review-toolbar,
+.review-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.review-toolbar {
+  justify-content: space-between;
+}
+.review-filter {
+  color: var(--muted);
+  padding: 4px 0;
+}
+.review-toolbar button,
+.review-filter input,
+.review-filter select,
+.review-file-detail .error button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 9px;
+}
+.review-toolbar button:disabled {
+  opacity: 0.6;
+}
+.review .panel,
+.review-file-detail {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.review-range {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+}
+.review-range dt {
+  color: var(--muted);
+}
+.review-range dd {
+  margin: 0;
+}
+.review-current {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+  gap: 12px;
+}
+.review-report,
+.review-gate {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  margin: 8px 0;
+  border-radius: 6px;
+}
+.review-report,
+#review-evidence {
+  scroll-margin-top: 68px;
+}
+.review-report h3,
+.review-file-detail h3 {
+  font-size: 14px;
+  margin: 4px 0;
+}
+.review-history {
+  margin: 8px 0;
+}
+.review-history summary {
+  cursor: pointer;
+}
+.review-literal {
+  white-space: pre-wrap;
+}
+.review-diff {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 3fr);
+  gap: 14px;
+}
+.review-files {
+  position: static;
+  max-height: 28rem;
+  overflow: auto;
+  padding: 2px;
+}
+.review-files button {
+  flex-shrink: 0;
+}
+.review-patch {
+  white-space: pre;
+  overflow: auto;
+  max-height: 36rem;
+  line-height: 1.5;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.review-areas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  list-style: none;
+  padding: 0;
+}
+.review-table-area {
+  overflow-x: auto;
+}
+.review-table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 620px;
+}
+.review-table th,
+.review-table td {
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  padding: 8px;
+  vertical-align: top;
+}
+.review-table thead {
+  background: var(--bg);
+}
+.review-table ul {
+  padding-left: 16px;
+  margin: 0;
+}
+.review-evidence li,
+.review-findings li {
+  margin-bottom: 5px;
+}
+@media (max-width: 720px) {
+  .review-diff {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .review-files {
+    max-height: 13rem;
+  }
+}

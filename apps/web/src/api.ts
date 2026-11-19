@@ -92,6 +92,84 @@ export interface EvidenceDetail {
   content: VerificationEvidence | TddEvidence;
 }
 
+export interface ReviewDiffFile {
+  id: string;
+  path?: string;
+  status: 'A' | 'M' | 'D' | 'T';
+  oldMode: string;
+  newMode: string;
+  oldOid: string;
+  newOid: string;
+  kind: 'file' | 'symlink' | 'submodule' | 'type_change' | 'unavailable';
+}
+
+export interface ReviewFindingView {
+  index: number;
+  disposition: 'current' | 'superseded' | 'historical';
+  finding: ReviewFinding;
+  acId?: string;
+  questionId?: string;
+  acLink: 'exact' | 'ambiguous' | 'unknown' | 'none';
+  questionLink: 'current-question' | 'unknown' | 'none';
+}
+
+export interface ReviewRecordView {
+  seq: number;
+  disposition: 'current' | 'superseded' | 'historical';
+  record: ReviewRecord;
+  coverageAcIds: string[];
+  findings: ReviewFindingView[];
+}
+
+export interface ReviewTraceRow {
+  acId: string;
+  spec: { file: string; requirementTitle: string; requirementLine: number; scenarioTitle: string; scenarioLine: number };
+  occurrenceCount: number;
+  ambiguous: boolean;
+  tasks: { id: string; title: string; done: boolean; line: number }[];
+  testFiles: string[];
+  reviewSeqs: number[];
+  findingRefs: { reviewSeq: number; findingIndex: number }[];
+}
+
+export interface ReviewEvidenceEntry extends EvidenceEntry {
+  scope: 'target' | 'baseline' | 'target_and_baseline' | 'task';
+}
+
+interface ReviewTraceArea {
+  status: 'complete' | 'unavailable' | 'too_large' | 'timeout' | 'not_available';
+  fileCount: number;
+}
+
+export interface ReviewSnapshot {
+  changeId: string;
+  stage: Stage;
+  snapshotVersion: string;
+  baseSha: string;
+  targetSha: string | null;
+  available: boolean;
+  workingTreeExcluded: true;
+  diff: { status: 'complete'; baseSha: string; targetSha: string; baseIsAncestor: boolean; files: ReviewDiffFile[]; excludedFiles: number }
+    | { status: 'unavailable' | 'too_large' | 'timeout' | 'not_available' };
+  reports: ReviewRecordView[];
+  latestReports: { agent?: number; human?: number };
+  reviewGate: GateEvaluation | null;
+  trace: {
+    specs: ReviewTraceArea;
+    tasks: ReviewTraceArea;
+    tests: ReviewTraceArea;
+  };
+  acTrace: ReviewTraceRow[];
+  evidence: ReviewEvidenceEntry[];
+}
+
+export type ReviewFile =
+  | { file: ReviewDiffFile; kind: 'text' | 'symlink'; patch: string }
+  | { file: ReviewDiffFile; kind: 'binary' | 'submodule' | 'type_change'; oldBytes?: number; newBytes?: number }
+  | { file: ReviewDiffFile; kind: 'unavailable'; reason: 'encoding' | 'object_type' };
+
+export interface ReviewFileSnapshot { snapshotVersion: string; file: ReviewFile }
+
 export interface ChainStatus {
   ok: boolean;
   events: number;
@@ -131,8 +209,8 @@ export interface SessionUser {
   admin: boolean;
 }
 
-async function get<T>(path: string): Promise<T> {
-  return request<T>(path);
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return request<T>(path, signal ? { signal } : undefined);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -141,7 +219,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const body = (await res.json().catch(() => ({}))) as { error?: { code: string; message: string } };
   if (!res.ok) {
     // 会话过期、用户被停用或令牌被重置：通知界面回到登录页
-    if (res.status === 401 && body.error?.code === 'unauthorized') window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    if (!init?.signal?.aborted && res.status === 401 && body.error?.code === 'unauthorized') {
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    }
     throw new ApiError(res.status, body.error?.code ?? 'http', body.error?.message ?? `请求失败：${res.status}`);
   }
   return body as T;
@@ -175,6 +255,9 @@ export const api = {
   },
   evidence: (id: string) => get<{ evidence: EvidenceEntry[] }>(`/api/changes/${enc(id)}/evidence`).then((r) => r.evidence),
   evidenceDetail: (id: string, eid: string) => get<EvidenceDetail>(`/api/changes/${enc(id)}/evidence/${enc(eid)}`),
+  review: (id: string, signal?: AbortSignal) => get<ReviewSnapshot>(`/api/changes/${enc(id)}/review`, signal),
+  reviewFile: (id: string, fileId: string, snapshot: string, signal?: AbortSignal) =>
+    get<ReviewFileSnapshot>(`/api/changes/${enc(id)}/review/files/${enc(fileId)}?snapshot=${enc(snapshot)}`, signal),
   chain: () => get<ChainStatus>('/api/log/verify'),
   me: () => get<{ required: boolean; user: SessionUser | null }>('/api/auth/me'),
   login: (name: string, token: string) =>

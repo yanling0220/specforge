@@ -10,6 +10,7 @@ export function fetchWithBusyRetry(input: RequestInfo | URL, init?: RequestInit,
 async function send(input: RequestInfo | URL, init: RequestInit | undefined, request: typeof fetch): Promise<Response> {
   const read = ['GET', 'HEAD'].includes((init?.method ?? 'GET').toUpperCase());
   for (let attempt = 0; ; attempt++) {
+    init?.signal?.throwIfAborted();
     const response = await request(input, init);
     if (!read || response.status !== 409 || attempt >= 6) return response;
     const body = await response.clone().json().catch(() => ({})) as { error?: { code?: string } };

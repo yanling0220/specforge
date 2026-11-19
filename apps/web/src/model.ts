@@ -266,12 +266,12 @@ export function questionHistory(q: Question): HistoryEntry[] {
   return out.sort((a, b) => a.at.localeCompare(b.at));
 }
 
-/** hash 路由：#/、#/inbox、#/changes/:id[/timeline|/analysis[/:qid]]、#/changes/:id/evidence/:eid、#/events */
+/** hash 路由：#/、#/inbox、#/changes/:id[/review|timeline|analysis[/:qid]]、#/changes/:id/evidence/:eid、#/events */
 export type Route =
   | { page: 'board' }
   | { page: 'inbox' }
   | { page: 'events' }
-  | { page: 'change'; id: string; tab: 'gates' | 'timeline' | 'analysis' | 'artifacts'; qid?: string }
+  | { page: 'change'; id: string; tab: 'gates' | 'review' | 'timeline' | 'analysis' | 'artifacts'; qid?: string }
   | { page: 'evidence'; id: string; eid: string };
 
 export function parseRoute(hash: string): Route {
@@ -280,6 +280,7 @@ export function parseRoute(hash: string): Route {
   if (parts[0] === 'inbox') return { page: 'inbox' };
   if (parts[0] === 'changes' && parts[1]) {
     if (parts[2] === 'evidence' && parts[3]) return { page: 'evidence', id: parts[1], eid: parts[3] };
+    if (parts[2] === 'review') return { page: 'change', id: parts[1], tab: 'review' };
     if (parts[2] === 'artifacts') return { page: 'change', id: parts[1], tab: 'artifacts' };
     if (parts[2] === 'analysis') return parts[3] ? { page: 'change', id: parts[1], tab: 'analysis', qid: parts[3] } : { page: 'change', id: parts[1], tab: 'analysis' };
     return { page: 'change', id: parts[1], tab: parts[2] === 'timeline' ? 'timeline' : 'gates' };
