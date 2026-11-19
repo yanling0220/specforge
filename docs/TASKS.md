@@ -5,7 +5,7 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 已交付、待实测或人工确认
 
-最后更新：2026-11-19 · Codex（GPT-6） · T2.3c 隔离样例准备完成，待 Codex 登录
+最后更新：2026-11-19 · Codex（GPT-6） · 功能开发完成，两项实测暂缓，本地控制台已启动
 
 ---
 
@@ -17,7 +17,8 @@
 - 远程：https://github.com/yanling0220/specforge （main）。T4.7 范围设计 `1400141`，T4.7a `b431225`，T4.7b `e62f2ec`，T4.7c `e8f89a8`，T4.7d `281dd49`。
 - **整体状态**：T4.3a～f 全部 done。用户确认 [T4.5 范围方案](t4.5-plan.md)，采用飞书专用项目群机器人，仅提醒已有答案待角色确认、就绪后待开发者签字。a～d done；e 的[执行步骤与证据表](t4.5-acceptance.md)、[关闭模板](examples/notifications.acceptance.json)、[本地准备脚本](prepare-im-acceptance.mjs)及隔离项目两类离线预览已交付，e 与整体 verify；没有真实 IM 受理或成员 @ 证据。
 - **当前研发**：计划内的功能开发全部完成。T4.7a～d 代码审查视图已交付。剩余两项独立验收为 T2.3c 和 T4.5e。
-- **下一个建议任务**：Codex 登录后，继续 T2.3c 真实审查并核对记录。T4.5e 保留在暂缓待办，待用户选择恢复。
+- **当前安排**：2026-11-19 用户要求暂不验证剩余测试待办，先查看本地最终效果。T2.3c 与 T4.5e 均保留 verify，暂不执行；功能开发已完成，等待用户体验反馈。
+- **本地预览**：`http://127.0.0.1:4317/`，独立演示项目 `/tmp/specforge-preview-R82k5W/demo`，包含需求分析、实现中和待签字三个变更。演示账号与令牌保存在父目录的 `preview-info.local.json`（仅本机）；未配置通知或真实模型。
 - **使用提示**：先 npm run web:build；多项目用 --projects JSON，各项目独立登录。部署前缀用 --base-path，并与 publicBaseUrl 路径一致。sf notify preview / status / retry 必须显式传入 --notifications 和 --project；命令、预算和恢复见 [通知说明](im-notifications.md)。浏览器回归为 npm run web:e2e、npm run web:e2e:projects、npm run web:e2e:projects -- --prefix、npm run web:e2e:notifications 和 npm run web:e2e:review，均需本机 Chrome。单项目仍在项目目录运行 server；修改需启用名册，既有项目需配置 tdd.command，首次 sf verify 会额外验证基线 commit。
 - **与用户的协作约定**：每次结束当前任务或收工前，检查并提交未提交改动、推送已提交未同步内容，无需再次询问；确认工作区与远程同步后，汇报整体状态、验证结果和遗留项，给出下一步计划与选项，等待用户选择。需要用户参与或产生费用的验证先询问；给出多种改法时逐个写明优缺点。本规则替代历史记录中推送前再问或不自动推送的收尾约定；独立审计分支备份另行安排。
 
@@ -96,6 +97,7 @@
 
 | 任务 | 暂缓原因 | 恢复条件 |
 |---|---|---|
+| T2.3c Codex 后端实测 | 2026-11-19 用户要求暂不验证剩余测试待办；隔离样例已准备，但无真实 Codex 审查记录 | 用户选择恢复，完成 Codex 登录后，按下方 T2.3c 记录运行并核对真实审查与哈希链 |
 | T4.5e / T45-AC-12 真实飞书验收 | 2026-11-18 用户要求跳过本阶段、优先下一功能；当前没有真实群或成员 @ 证据，T4.5 / e 保持 verify | 用户选择恢复；准备专用测试群、成员映射、凭据环境变量和 HTTPS 地址，核对实际全项目预览并授权后，按[验收步骤](t4.5-acceptance.md)执行；临时项目被清理时用脚本重建 |
 
 ---
@@ -127,6 +129,13 @@
 ---
 
 ## 实测记录
+
+### 2026-11-19 · Codex（GPT-6）· 本地最终效果预览
+
+- 用户要求暂缓剩余两项实测，先启动服务查看最终效果；T2.3c、T4.5e 保持 verify。本轮未执行这两项验收，也未重跑全量测试。
+- `npm run web:build` 成功（37 modules）。复制既有隔离样例，使用 CLI / Store 和 ScriptedAdapter 创建演示数据：CSV 导入的需求分解与待产品确认问题、实现中的审计导出、已有引擎证据和脚本示例审查报告的待签字变更。脚本报告明确标记为演示，不作为真实模型验收证据。
+- 在 `/tmp/specforge-preview-R82k5W/demo` 启动 `node /Users/yan/Downloads/project/sdd_plantform/apps/server/src/main.ts --port 4317 --host 127.0.0.1`，启动进程 PID `94529`。浏览器地址 `http://127.0.0.1:4317/`；演示账号与令牌位于 `/tmp/specforge-preview-R82k5W/preview-info.local.json`。未使用通知配置，未连接数据库或调用真实模型。
+- HTTP 健康、页面和 JavaScript 资源、演示登录、变更列表、审查快照及 dev / product 收件箱均返回 200，已用系统默认浏览器打开。演示数据为临时目录，重启或清理后需要重新准备。
 
 ### 2026-11-19 · Codex（GPT-6）· T2.3c 本地准备
 
@@ -438,4 +447,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-19 · Codex（GPT-6） · T4.7b · 交付审查快照与按文件 ID 读取差异的 API，含版本复核、AC 追溯和证据目录。新增 10 项，全量 400/400、typecheck、Web 构建通过 · `e62f2ec`
 - 2026-11-19 · Codex（GPT-6） · T4.7c · 交付 Web 代码审查标签，含按需 diff、报告与 AC 筛选、证据入口和快照刷新。新增 6 项，全量 406/406、typecheck、Web 构建通过 · `e8f89a8`
 - 2026-11-19 · Codex（GPT-6） · T4.7d · 完成根路径单项目与带前缀双项目真实 Chrome 审查验收、既有控制台回归和 T47-AC-01～12 证据映射；新增验收脚本与使用文档。三组项目链 / 状态 / 名册一致 · `281dd49`
-- 2026-11-19 · Codex（GPT-6） · T2.3c · 隔离样例进入 closing，G6A 与 7 条事件校验通过。SDK 所用 Codex CLI 尚未登录，待真实审查写入 · （本次提交）
+- 2026-11-19 · Codex（GPT-6） · T2.3c · 隔离样例进入 closing，G6A 与 7 条事件校验通过。SDK 所用 Codex CLI 尚未登录，待真实审查写入 · `bf98b70`
+- 2026-11-19 · Codex（GPT-6） · 本地预览 · 用户暂缓两项实测；构建并启动 4317 本地控制台，提供三种阶段的演示变更，页面、登录和主要读取接口可用，已打开浏览器 · （本次提交）
