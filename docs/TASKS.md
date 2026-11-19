@@ -5,19 +5,19 @@
 
 状态：`done` 已完成并验证 · `doing` 进行中 · `todo` 待开始 · `blocked` 被阻塞 · `verify` 已交付、待实测或人工确认
 
-最后更新：2026-11-19 · Codex（GPT-6） · T4.7d 集成与浏览器验收完成
+最后更新：2026-11-19 · Codex（GPT-6） · T2.3c 隔离样例准备完成，待 Codex 登录
 
 ---
 
 ## 当前快照
 
-- 测试：2026-11-19 T4.7d 默认全量 406/406（45 文件，单 worker，414.92 秒，退出 0），T4.7c 后未改产品代码；typecheck、Web 构建和 diff 检查通过，锁文件未变。
+- 测试：2026-11-19 T2.3c 基线默认全量 406/406（45 文件，单 worker，393.37 秒，退出 0）；install、typecheck 通过，锁文件未变。未改产品代码，Web 构建与浏览器验收沿用 T4.7d 证据。
 - 浏览器：代码审查专项真实 Chrome 根路径单项目和带前缀双项目通过；既有单项目控制台和带前缀双项目回归通过。单项目 10、alpha 10、beta 7 条事件，哈希链 / 状态 / 名册一致。
 - 数据库：真实 PostgreSQL 17.4 契约 5/5（7.91 秒）、服务综合故障 / 迁移 5/5（16.79 秒）与 Postgres Chrome（A 8 / B 5）沿用 T4.3f 历史验收，独立运行，不计入默认测试；本轮未重跑、未启动数据库。
-- 远程：https://github.com/yanling0220/specforge （main）。T4.7 范围设计 `1400141`，T4.7a `b431225`，T4.7b `e62f2ec`，T4.7c `e8f89a8`，T4.7d 见本次提交。
+- 远程：https://github.com/yanling0220/specforge （main）。T4.7 范围设计 `1400141`，T4.7a `b431225`，T4.7b `e62f2ec`，T4.7c `e8f89a8`，T4.7d `281dd49`。
 - **整体状态**：T4.3a～f 全部 done。用户确认 [T4.5 范围方案](t4.5-plan.md)，采用飞书专用项目群机器人，仅提醒已有答案待角色确认、就绪后待开发者签字。a～d done；e 的[执行步骤与证据表](t4.5-acceptance.md)、[关闭模板](examples/notifications.acceptance.json)、[本地准备脚本](prepare-im-acceptance.mjs)及隔离项目两类离线预览已交付，e 与整体 verify；没有真实 IM 受理或成员 @ 证据。
-- **当前研发**：T4.7a～d 已完成，代码审查视图的实现和浏览器验收证据齐全。T4.5e 继续暂缓。
-- **下一个建议任务**：T2.3c Codex 后端实测，需要登录并获准调用真实模型。T4.5e 保留在暂缓待办，待用户选择恢复。
+- **当前研发**：计划内的功能开发全部完成。T4.7a～d 代码审查视图已交付。剩余两项独立验收为 T2.3c 和 T4.5e。
+- **下一个建议任务**：Codex 登录后，继续 T2.3c 真实审查并核对记录。T4.5e 保留在暂缓待办，待用户选择恢复。
 - **使用提示**：先 npm run web:build；多项目用 --projects JSON，各项目独立登录。部署前缀用 --base-path，并与 publicBaseUrl 路径一致。sf notify preview / status / retry 必须显式传入 --notifications 和 --project；命令、预算和恢复见 [通知说明](im-notifications.md)。浏览器回归为 npm run web:e2e、npm run web:e2e:projects、npm run web:e2e:projects -- --prefix、npm run web:e2e:notifications 和 npm run web:e2e:review，均需本机 Chrome。单项目仍在项目目录运行 server；修改需启用名册，既有项目需配置 tdd.command，首次 sf verify 会额外验证基线 commit。
 - **与用户的协作约定**：每次结束当前任务或收工前，检查并提交未提交改动、推送已提交未同步内容，无需再次询问；确认工作区与远程同步后，汇报整体状态、验证结果和遗留项，给出下一步计划与选项，等待用户选择。需要用户参与或产生费用的验证先询问；给出多种改法时逐个写明优缺点。本规则替代历史记录中推送前再问或不自动推送的收尾约定；独立审计分支备份另行安排。
 
@@ -43,7 +43,7 @@
 | T2.3 | 多后端：`deepseek`（Anthropic 兼容）、`openai-compatible`（自研循环，预设 deepseek/ollama）、`codex`（只读沙箱 + 整批提交） | done | T2.1 | 提交 `7154743`；`backends.test.ts` |
 | T2.3v | 确认问题分类修复（`cd9ece1`）有效：在干净示例仓库上用 DeepSeek 跑分析 | done | T2.3 | 部分通过：核心业务问题（导入 admin、部分成功、重复邮箱、失败原因展示、交付形态）都要求 product；Q-7 行数上限、Q-8 是否做审计仍被归为 dev-only → 新增 `sf q require` 由人兜底追加确认角色（T2.3w）。见实测记录 |
 | T2.3w | `sf q require <id> <Q> --role product --reason`：追加确认角色（只增不减、必须写原因、已确认答案回到待确认、写入哈希链） | done | T1.2 | `questions.test.ts`；在 T2.3v 的真实输出上实测 Q-8 |
-| T2.3c | Codex 后端实测 | todo | T2.3 | 需要 Codex 登录；跑一次 `sf agent review --backend codex` 成功写入审查记录 |
+| T2.3c | Codex 后端实测 | verify | T2.3 | 2026-11-19 · Codex（GPT-6）。隔离样例已进入 `closing` 并通过 G6A。项目所用 Codex CLI 0.167.2 尚未登录，待运行 `sf agent review <id> --backend codex` 并核对审查记录与哈希链 |
 | T2.4 | G3 方案门：解析 `design.md`；必须覆盖全部 AC、不得引用不存在的 AC；必须有「## 结构变更」清单（`- [S-n] …` 或 `- 无：<原因>`）；L 档或结构变更涉及受保护路径时需人工审批（绑定 design + spec 哈希） | done | T1.3 | `packages/core/test/design.test.ts`；状态机加入 `design` 阶段；`sf design approve`；审查 agent 读取结构变更清单判断计划外新增；CLI 端到端演示通过 |
 | T2.5 | G4 任务门：解析 `tasks.md`（`- [ ] T-n 标题（AC-n, S-n）依赖 T-m`）；每个任务关联 AC；引用必须存在；每个 AC 与结构变更都有任务负责；依赖存在、无自依赖、无环；绑定任务结构而非原文（勾选进度不使 G4 失效） | done | T2.4 | `packages/core/test/tasks.test.ts`；状态机加入 `tasks` 阶段；`executionOrder` 供 T2.6 使用；CLI 端到端演示通过 |
 | T2.6 | 可写的实现 agent `sf agent implement [--task T-n]`：独立 worktree；写文件执行时拦截（Claude canUseTool / openai-compatible 写工具）+ 引擎事后路径校验（`implementPolicy`：禁 openspec/、.specforge/、.git/、受保护路径）；主工作区指纹兜底；agent 自己的提交会被收拢；引擎勾选任务、提交（带 SpecForge-* trailer）、fast-forward 合入；`implement.committed / rejected / blocked` 事件 | done | T2.5 | `apps/cli/test/implement.test.ts`（8 个场景）、`packages/agents/test/implementer.test.ts` |
@@ -127,6 +127,13 @@
 ---
 
 ## 实测记录
+
+### 2026-11-19 · Codex（GPT-6）· T2.3c 本地准备
+
+- 开工时 `main` 与 `origin/main` 均为 `281dd49`，工作区干净。install、typecheck 与默认全量 406/406（45 文件，单 worker，393.37 秒，退出 0）通过，锁文件未变。本机无 rtk，沿用原生命令。
+- 在 `/tmp/specforge-t23c-review.DdmRzqZE` 用 CLI 建立独立 Git 示例，使用合成数据。变更 `reusable-zero` 由引擎推进至 `closing`，HEAD 为 `83d70dcb9a5a77f4acbd59e82161f72ba76afa8c`。G6A 通过（基线 1 项，当前 2 项），`sf log verify` 校验 7 条事件及状态一致，工作区干净。
+- 项目所用 Codex SDK / CLI 为 0.167.2。仓库根目录执行 `./node_modules/.bin/codex login status`，沙箱内外均报告 `Not logged in`。本轮未调用真实模型。账号登录后，进入该示例目录，运行 `node /Users/yan/Downloads/project/sdd_plantform/apps/cli/src/main.ts agent review reusable-zero --backend codex`。
+- 结束时确认 `agent.run` 的 `backend` 为 `codex` 且 `ok` 为 `true`，`review.recorded` 的 SHA 与调用前后的 HEAD 一致，检查 Git 工作区并运行 `sf log verify`。审查记录成功写入后才关闭 T2.3c。
 
 ### 2026-11-19 · Codex（GPT-6）· T4.7c Web 代码审查视图
 
@@ -430,4 +437,5 @@ T2.6v 示例项目：仓库含 `src/users.js`、`src/upload.js`、`src/auth.js`�
 - 2026-11-19 · Codex（GPT-6） · T4.7a · 交付有界提交差异读取、文件 ID、特殊对象与 HEAD 复核。新增 21 项，最终全量 390/390、typecheck 通过 · `b431225`
 - 2026-11-19 · Codex（GPT-6） · T4.7b · 交付审查快照与按文件 ID 读取差异的 API，含版本复核、AC 追溯和证据目录。新增 10 项，全量 400/400、typecheck、Web 构建通过 · `e62f2ec`
 - 2026-11-19 · Codex（GPT-6） · T4.7c · 交付 Web 代码审查标签，含按需 diff、报告与 AC 筛选、证据入口和快照刷新。新增 6 项，全量 406/406、typecheck、Web 构建通过 · `e8f89a8`
-- 2026-11-19 · Codex（GPT-6） · T4.7d · 完成根路径单项目与带前缀双项目真实 Chrome 审查验收、既有控制台回归和 T47-AC-01～12 证据映射；新增验收脚本与使用文档。三组项目链 / 状态 / 名册一致 · （本次提交）
+- 2026-11-19 · Codex（GPT-6） · T4.7d · 完成根路径单项目与带前缀双项目真实 Chrome 审查验收、既有控制台回归和 T47-AC-01～12 证据映射；新增验收脚本与使用文档。三组项目链 / 状态 / 名册一致 · `281dd49`
+- 2026-11-19 · Codex（GPT-6） · T2.3c · 隔离样例进入 closing，G6A 与 7 条事件校验通过。SDK 所用 Codex CLI 尚未登录，待真实审查写入 · （本次提交）
