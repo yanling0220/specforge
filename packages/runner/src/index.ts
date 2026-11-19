@@ -6,3 +6,4 @@ export * from './anchors.ts';
 export * from './lock.ts';
 export * from './notification-owner.ts';
 export * from './notification-config.ts';
+export * from './review-diff.ts';
