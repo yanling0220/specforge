@@ -21,6 +21,8 @@ export interface QuestionWorkPage {
   role: HumanRole;
   counts: Record<QuestionWorkStatus, number>;
   items: QuestionWorkItem[];
+  /** 首次、未筛选的读取返回整个列表中排序最靠前的可操作问题。 */
+  nextAction?: QuestionWorkItem;
   nextCursor?: string;
 }
 

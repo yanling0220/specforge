@@ -118,6 +118,7 @@ describe('事件', () => {
 describe('路由', () => {
   it('解析与生成互逆；未知路径回到看板', () => {
     for (const r of [
+      { page: 'home' },
       { page: 'board' },
       { page: 'events' },
       { page: 'inbox' },
@@ -128,7 +129,7 @@ describe('路由', () => {
       expect(parseRoute(href(r))).toEqual(r);
     }
     expect(parseRoute('#/whatever')).toEqual({ page: 'board' });
-    expect(parseRoute('')).toEqual({ page: 'board' });
+    expect(parseRoute('')).toEqual({ page: 'home' });
   });
 });
 

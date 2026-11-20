@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { Role } from '@specforge/shared';
+import type { HumanRole, Role } from '@specforge/shared';
 import { api, API_BASE, PROJECT_ERROR, PROJECT_ID, UNAUTHORIZED_EVENT } from './api.ts';
-import { allowQuestionLeave, clearQuestionDrafts } from './question-work.ts';
+import { allowQuestionLeave, clearQuestionDrafts, roleLabel } from './question-work.ts';
 import { MeProvider, useMe } from './me.tsx';
 import { useData, useLive, type LiveStatus } from './live.ts';
 import { href, parseRoute, type Route } from './model.ts';
@@ -12,6 +12,7 @@ import { Login } from './views/Login.tsx';
 import { Timeline } from './views/Timeline.tsx';
 import { ProjectPicker } from './views/ProjectPicker.tsx';
 import { Inbox } from './views/Inbox.tsx';
+import { WorkHome } from './views/WorkHome.tsx';
 import { DEPLOYMENT_BASE, rememberProject } from './project.ts';
 
 function useRoute(): Route {
@@ -97,19 +98,26 @@ function Console({ onLogout }: { onLogout?: () => void }) {
   const changeId = route.page === 'change' || route.page === 'evidence' ? route.id : undefined;
   const live = useLive(changeId);
   const chain = useData(() => api.chain(), [live.version]);
+  const humanRole = role === 'dev' || role === 'product' ? role : undefined;
+  const alternate = user?.roles.find((r): r is HumanRole => r !== humanRole && (r === 'dev' || r === 'product'));
+  const canSeeWork = !!user && !!humanRole;
+  const home = href({ page: canSeeWork ? 'home' : 'board' });
+  const version = live.version + live.reconnects;
+  useEffect(() => { window.scrollTo(0, 0); }, [route]);
 
   return (
     <div className="app">
       <header className="topbar">
-        <a className="brand" href={href({ page: 'board' })}>
+        <a className="brand" href={home}>
           SpecForge
         </a>
         {PROJECT_ID && <><span className="project-current">项目：{PROJECT_ID}</span><a className="project-switch" href={DEPLOYMENT_BASE + '/'}>切换项目</a></>}
         <nav>
-          <a className={route.page === 'board' ? 'active' : ''} href={href({ page: 'board' })}>
-            看板
+          {canSeeWork && <a className={route.page === 'home' ? 'active' : ''} href={home}>我的待办</a>}
+          <a className={route.page === 'board' || (route.page === 'home' && !canSeeWork) ? 'active' : ''} href={href({ page: 'board' })}>
+            变更看板
           </a>
-          {user && <a className={route.page === 'inbox' ? 'active' : ''} href={href({ page: 'inbox' })}>工作台</a>}
+          {canSeeWork && <a className={route.page === 'inbox' ? 'active' : ''} href={href({ page: 'inbox' })}>查看问题</a>}
           <a className={route.page === 'events' ? 'active' : ''} href={href({ page: 'events' })}>
             全部事件
           </a>
@@ -135,15 +143,15 @@ function Console({ onLogout }: { onLogout?: () => void }) {
               <select className="role-picker" value={role} onChange={(e) => {
                 if (allowQuestionLeave()) setRole(e.target.value as Role);
                 else e.target.value = role ?? '';
-              }} title="以哪个角色操作">
+              }} aria-label="当前工作角色">
                 {user.roles.map((r) => (
                   <option key={r} value={r}>
-                    以 {r} 身份
+                    {roleLabel(r)}身份
                   </option>
                 ))}
               </select>
             ) : (
-              <span className="muted">（{role}）</span>
+              <span className="muted">（{role && roleLabel(role)}）</span>
             )}
             {user.admin && <span className="muted">管理员</span>}
             <button className="link" onClick={() => { if (allowQuestionLeave()) onLogout?.(); }}>
@@ -155,15 +163,17 @@ function Console({ onLogout }: { onLogout?: () => void }) {
         )}
       </header>
       <main>
-        {route.page === 'board' && <Board version={live.version} />}
+        {(route.page === 'board' || (route.page === 'home' && !canSeeWork)) && <Board version={live.version} />}
+        {route.page === 'home' && user && humanRole && <WorkHome key={`${user.name}:${humanRole}`} role={humanRole} name={user.name}
+          alternate={alternate} onSwitch={(next) => { if (allowQuestionLeave()) setRole(next); }} version={version} />}
         {route.page === 'inbox' && (role === 'dev' || role === 'product'
-          ? <Inbox key={`${user?.name}:${role}`} name={user?.name ?? ''} role={role} version={live.version + live.reconnects} approvals={route.approvals} />
+          ? <Inbox key={`${user?.name}:${role}`} name={user?.name ?? ''} role={role} version={version} approvals={route.approvals} />
           : <div className="muted">启用用户名册并登录后，可查看当前角色的审批收件箱。</div>)}
         {route.page === 'events' && <Timeline version={live.version} />}
         {route.page === 'change' && <ChangeView id={route.id} tab={route.tab} qid={route.qid} version={live.version + (route.tab === 'analysis' && route.qid ? live.reconnects : 0)} />}
         {route.page === 'evidence' && <EvidenceView id={route.id} eid={route.eid} />}
       </main>
-      <footer>{user ? `以 ${user.name}（${role}）身份操作；所有修改写入哈希链` : '只读：启用用户名册并登录后可在控制台操作'}</footer>
+      <footer>{user ? `以 ${user.name}（${role && roleLabel(role)}）身份操作；所有修改写入哈希链` : '只读：启用用户名册并登录后可在控制台操作'}</footer>
     </div>
   );
 }

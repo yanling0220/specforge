@@ -5,6 +5,7 @@ export interface QuestionDraft {
   mode: 'free' | 'option'; touched: boolean;
 }
 export const WORK_LABEL = { answer: '待回答', revise: '待修订', confirm: '待本角色确认', waiting: '等待其他角色' };
+export const WORK_ACTION = { answer: '开始回答', revise: '修改答案', confirm: '核对答案', waiting: '查看进度' };
 export const roleLabel = (role: string) => ({ dev: '开发', product: '产品', agent: '智能体' })[role] ?? role;
 export const rolesLabel = (roles: string[]) => roles.map(roleLabel).join('、');
 export function initialQuestionDraft(detail: QuestionWorkDetail): QuestionDraft {

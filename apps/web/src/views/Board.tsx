@@ -6,13 +6,13 @@ import { Loading } from './common.tsx';
 export function Board({ version }: { version: number }) {
   const { data, error } = useData(() => api.changes(), [version]);
   if (!data) return <Loading error={error} />;
-  if (!data.length) return <div className="muted">还没有 change。在项目中运行 sf change new 创建。</div>;
+  if (!data.length) return <div className="muted">还没有变更。可以请开发在项目中创建变更。</div>;
   const waiting = data.filter((c) => attentionReasons(c).length).length;
 
   return (
     <>
       <h1>
-        看板 <small className="muted">{data.length} 个 change{waiting ? ` · ${waiting} 个在等人` : ''}</small>
+        变更看板 <small className="muted">{data.length} 个变更{waiting ? ` · ${waiting} 个在等人` : ''}</small>
       </h1>
       {error && <div className="error">刷新失败：{error.message}</div>}
       <div className="board">

@@ -268,7 +268,7 @@ export function questionHistory(q: Question): HistoryEntry[] {
 
 /** hash 路由：#/、#/inbox、#/changes/:id[/review|timeline|analysis[/:qid]]、#/changes/:id/evidence/:eid、#/events */
 export type Route =
-  | { page: 'board' }
+  | { page: 'home' | 'board' }
   | { page: 'inbox'; approvals?: true }
   | { page: 'events' }
   | { page: 'change'; id: string; tab: 'gates' | 'review' | 'timeline' | 'analysis' | 'artifacts'; qid?: string }
@@ -276,6 +276,7 @@ export type Route =
 
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+  if (!hash || parts[0] === 'home') return { page: 'home' };
   if (parts[0] === 'events') return { page: 'events' };
   if (parts[0] === 'inbox') return parts[1] === 'approvals' ? { page: 'inbox', approvals: true } : { page: 'inbox' };
   if (parts[0] === 'changes' && parts[1]) {
@@ -291,6 +292,8 @@ export function parseRoute(hash: string): Route {
 export function href(r: Route): string {
   const e = encodeURIComponent;
   switch (r.page) {
+    case 'home':
+      return '#/home';
     case 'board':
       return '#/';
     case 'events':

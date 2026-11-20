@@ -128,7 +128,13 @@ describe('问题工作台', () => {
     store.mutate('same', dev, 'question.raised', (s) => ({ ...s, questions: [...s.questions, ...Array.from({ length: 52 }, (_, i) => createQuestion({
       id: 'Q-' + (i + 2), question: '长问题'.repeat(500), severity: i === 51 ? 'blocking' : 'minor', category: '业务规则', raisedAtStage: 'analysis',
     }, store.config(), dev, 'T'))] }), () => ({}));
+    const product = await page();
+    expect(product.nextAction).toMatchObject({ questionId: 'Q-1', status: 'confirm' });
+    const developer = await page('role=dev', devCookie);
+    expect(developer.items[0]).toMatchObject({ questionId: 'Q-1', status: 'waiting' });
+    expect(developer.nextAction).toMatchObject({ questionId: 'Q-53', status: 'answer' });
     const first = await page('role=product&status=answer');
+    expect(first.nextAction).toBeUndefined();
     expect(first.counts).toEqual({ answer: 52, revise: 0, confirm: 1, waiting: 0 });
     expect(first.items).toHaveLength(50);
     expect(first.items[0]).toMatchObject({ questionId: 'Q-53', severity: 'blocking' });

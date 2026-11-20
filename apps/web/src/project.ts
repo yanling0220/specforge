@@ -30,7 +30,7 @@ export function projectBase(projectId?: string, base = DEPLOYMENT_BASE): string 
   return prefix + '/p/' + projectId;
 }
 
-export function projectHref(projectId: string, hash = '#/', base = DEPLOYMENT_BASE): string {
+export function projectHref(projectId: string, hash = '', base = DEPLOYMENT_BASE): string {
   let route = '#/';
   try { route = href(parseRoute(hash)); } catch {}
   return projectBase(projectId, base) + '/' + route;

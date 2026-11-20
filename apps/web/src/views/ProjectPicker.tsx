@@ -7,7 +7,7 @@ export function ProjectPicker() {
   const [projects, setProjects] = useState<string[]>([]);
   const [checking, setChecking] = useState(true);
   const destination = (entry: string) => {
-    try { return projectHref(entry, sessionStorage.getItem(`${PROJECT_ROUTE_KEY}${entry}`) ?? '#/'); }
+    try { return projectHref(entry, sessionStorage.getItem(`${PROJECT_ROUTE_KEY}${entry}`) ?? undefined); }
     catch { return projectHref(entry); }
   };
   useEffect(() => {

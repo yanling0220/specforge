@@ -166,8 +166,8 @@ async function main() {
   await login('devon', tokens.dev);
   await go('#/changes/demo/analysis/Q-1');
   await waitFor(`!!document.querySelector('#q-Q-1')`, '问题卡片');
-  await waitFor(`!!document.querySelector('.answer-editor select')`, '标准选项表单');
-  await evaluate(`__set(document.querySelector('.answer-editor select'), 'option:A'), true`);
+  await waitFor(`!!document.querySelector('.answer-choices input[value="A"]')`, '标准选项表单');
+  await evaluate(`document.querySelector('.answer-choices input[value="A"]').click(), true`);
   await waitFor(`document.querySelector('.answer-preview')?.textContent.includes('不能，一律 member')`, '提交正文预览');
   await evaluate(`__btn('提交答案', document.querySelector('.answer-editor')).click(), true`);
   await waitFor(`document.querySelector('#q-Q-1 .badge.work-waiting') !== null`, 'Q-1 变为待确认');
@@ -225,7 +225,7 @@ async function main() {
   await login('pam', tokens.pm);
   await go('#/changes/demo');
   await waitFor(`!!document.querySelector('.action-bar')`, '操作栏');
-  const disabled = await evaluate(`[...document.querySelectorAll('.action-bar button')].find((b) => b.textContent.includes('审批当前 spec'))?.disabled`);
+  const disabled = await evaluate(`[...document.querySelectorAll('.action-bar button')].find((b) => b.textContent.includes('审批当前规格'))?.disabled`);
   if (disabled !== true) throw new Error('产品角色的审批按钮应当禁用');
   step('产品在产物审阅中评论 spec 第 7 行；未解决的评论挡住 G2');
   await go('#/changes/demo/artifacts');
@@ -249,7 +249,7 @@ async function main() {
   await go('#/inbox/approvals');
   await waitFor(`!!document.querySelector('[data-inbox-kind="spec-approval"] a')`, '评论解决后规格审批重新就绪');
   await evaluate(`document.querySelector('[data-inbox-kind="spec-approval"] a').click(), true`);
-  await act('.action-bar', '审批当前 spec');
+  await act('.action-bar', '审批当前规格');
   await waitFor(`[...document.querySelectorAll('.gate-card')].some((g) => g.textContent.includes('G2 规格门') && g.classList.contains('passed'))`, 'G2 通过');
   await go('#/inbox/approvals');
   await waitFor(`document.body.innerText.includes('当前角色暂无其他审批待处理') && !document.querySelector('.inbox-item')`, '审批后开发者待办消失');
@@ -257,9 +257,10 @@ async function main() {
   await act('.action-bar', '推进到「方案」');
   await waitFor(`document.querySelector('h1')?.textContent.includes('当前阶段：方案')`, '推进到 design');
 
-  step('推进被门禁拦截时显示原因');
-  await act('.action-bar', '推进到「任务」');
-  await waitFor(`document.querySelector('.action-bar .error')?.textContent.includes('门禁未通过')`, '显示拦截原因');
+  step('进入变更时直接说明无法推进的原因');
+  await waitFor(`document.querySelector('.stage-next h2')?.textContent.includes('进入「任务」前还需完成') && !!document.querySelector('.stage-blockers a[href$="/artifacts"]') && !__btn('推进到「任务」')`, '展示待完成条件和产物入口');
+  const blocked = await evaluate(`fetch('/api/changes/demo/advance', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role: 'dev' }) }).then(async r => ({ status: r.status, code: (await r.json()).error?.code }))`);
+  if (blocked.code !== 'gate_blocked') throw new Error('引擎应拒绝未满足条件的推进，实际收到 ' + JSON.stringify(blocked));
 
   step('接管：推进到任务阶段后，在任务面板接手 T-1');
   writeFileSync(join(proj, 'openspec/changes/demo/design.md'), '# 方案\n实现 AC-1。\n\n## 结构变更\n- 无：只改现有模块\n');

@@ -220,8 +220,8 @@ async function main() {
     await waitFor(`!!document.querySelector('#q-Q-1 form.action-form')`, '确认表单');
   };
   const openRevision = async () => {
-    await waitFor(`!!document.querySelector('#q-Q-1') && !!__btn('修订答案', document.querySelector('#q-Q-1'))`, '可以修订答案');
-    await evaluate(`document.querySelector('#q-Q-1 > details:last-child').open = true; __btn('修订答案', document.querySelector('#q-Q-1')).click(), true`);
+    await waitFor(`!!document.querySelector('#q-Q-1') && !!__btn('修改答案', document.querySelector('#q-Q-1'))`, '可以直接修改答案');
+    await evaluate(`__btn('修改答案', document.querySelector('#q-Q-1')).click(), true`);
   };
   const switchEntry = async () => {
     await evaluate(`document.querySelector('.project-switch').click(), true`);
@@ -385,7 +385,7 @@ async function main() {
     await databasePool.query(`CREATE FUNCTION specforge_index.browser_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.project_id = 'b' THEN RAISE EXCEPTION 'private-browser-db-error'; END IF; RETURN NEW; END $$; CREATE TRIGGER browser_fail BEFORE UPDATE ON specforge_index.projects FOR EACH ROW EXECUTE FUNCTION specforge_index.browser_fail()`);
     try {
       assert.equal(await evaluate(`__read('${mount}/p/b/api/changes').then((response) => response.status)`), 503);
-      await waitFor(`!!document.querySelector('.error') && !__btn('确认此答案') && !__btn('修订答案')`, '索引失败显示错误且不显示旧问题');
+      await waitFor(`!!document.querySelector('.error') && !__btn('确认此答案') && !__btn('修改答案')`, '索引失败显示错误且不显示旧问题');
       assert.equal(await evaluate(`document.body.innerText.includes('private-browser-db-error')`), false);
       assert.equal(await evaluate(`document.querySelectorAll('form.action-form').length`), 0);
     } finally { await databasePool.query('DROP TRIGGER browser_fail ON specforge_index.projects; DROP FUNCTION specforge_index.browser_fail()'); }

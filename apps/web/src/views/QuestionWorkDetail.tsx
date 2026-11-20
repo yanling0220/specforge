@@ -3,7 +3,7 @@ import type { AnswerDraftInput, HumanRole, QuestionWorkAction, QuestionWorkDetai
 import { ApiError, api, API_BASE } from '../api.ts';
 import { useData, useQuestionRead, useVisibleRefresh } from '../live.ts';
 import { questionHistory, formatTime, href, Q_STATUS_LABEL, SEVERITY_LABEL } from '../model.ts';
-import { draftKey, initialQuestionDraft, leaveQuestionEvent, readQuestionDraft, roleLabel, rolesLabel, saveQuestionDraft, workListState, WORK_LABEL, type QuestionDraft } from '../question-work.ts';
+import { draftKey, initialQuestionDraft, leaveQuestionEvent, readQuestionDraft, roleLabel, rolesLabel, saveQuestionDraft, workListState, WORK_ACTION, WORK_LABEL, type QuestionDraft } from '../question-work.ts';
 import { Loading } from './common.tsx';
 import { Action } from './Action.tsx';
 
@@ -12,8 +12,9 @@ async function nextQuestion(role: HumanRole, status: QuestionWorkStatus | '', pr
     let cursor: string | undefined;
     do {
       const page = await api.questionWork(role, filter, cursor, signal);
-      const match = page.items.find((item) => item.status !== 'waiting'
-        && href({ page: 'change', id: item.changeId, tab: 'analysis', qid: item.questionId }) !== current);
+      const eligible = (item: typeof page.items[number]) => item.status !== 'waiting'
+        && href({ page: 'change', id: item.changeId, tab: 'analysis', qid: item.questionId }) !== current;
+      const match = page.nextAction && eligible(page.nextAction) ? page.nextAction : page.items.find(eligible);
       if (match) return match;
       cursor = page.nextCursor;
     } while (cursor);
@@ -58,6 +59,8 @@ function QuestionEditor({ detail, name, loading, readError, reload, version }: {
   const [writePendingRead, setWritePendingRead] = useState(false);
   const [editing, setEditing] = useState(!!stored.draft);
   const pending = useRef(false);
+  const receiptPanel = useRef<HTMLElement>(null);
+  const editor = useRef<HTMLFormElement>(null);
   const lastWriteView = useRef<Detail | undefined>(undefined);
   const can = (action: QuestionWorkAction) => detail.actions.includes(action);
   const needsReview = draft.touched && draft.base !== detail.questionVersion;
@@ -81,6 +84,7 @@ function QuestionEditor({ detail, name, loading, readError, reload, version }: {
   useEffect(() => {
     setDraft((value) => value.touched ? value : initialQuestionDraft(detail));
   }, [detail]);
+  useEffect(() => { if (receipt) receiptPanel.current?.focus(); }, [receipt]);
   useEffect(() => {
     if (!draft.touched || !storageFailed) return;
     const leave = () => window.confirm('草稿未能保存到此标签页。确定要离开并放弃当前输入吗？');
@@ -168,7 +172,14 @@ function QuestionEditor({ detail, name, loading, readError, reload, version }: {
   const act = (kind: 'confirm' | 'reject' | 'defer' | 'invalidate', fields: Record<string, string> = {}) => {
     const ref = current ? { rev: current.rev, answerHash: current.hash } : {};
     return run(() => api.questionAction(changeId, questionId, kind, { role, baseQuestionVersion: detail.questionVersion, ...ref, ...fields }),
-      () => ({ confirm: `已确认第 ${current?.rev} 版答案`, reject: `已退回第 ${current?.rev} 版答案`, defer: '已推迟此问题', invalidate: '已作废此问题' })[kind]);
+      (saved) => {
+        const missing = saved.requiredRoles.filter((r) => !saved.revisions.at(-1)?.confirmations.some((c) => c.role === r));
+        return {
+          confirm: `已确认第 ${current?.rev} 版答案，${missing.length ? `等待${rolesLabel(missing)}确认` : '此问题已处理完成'}`,
+          reject: `已退回第 ${current?.rev} 版答案，等待${rolesLabel(saved.requiredRoles)}提交新答案`,
+          defer: '已推迟此问题', invalidate: '已作废此问题',
+        }[kind];
+      });
   };
   const submit = () => {
     if (needsReview || !preview.trim()) return;
@@ -184,6 +195,12 @@ function QuestionEditor({ detail, name, loading, readError, reload, version }: {
   };
   const primaryEditor = !receipt && (detail.status === 'answer' || detail.status === 'revise');
   const editorOpen = can('submit-answer') && (primaryEditor || editing);
+  const answerModeChosen = !q.options.length || !!current || draft.touched;
+  const showEditor = () => {
+    setReceipt(undefined);
+    setEditing(true);
+    requestAnimationFrame(() => editor.current?.focus());
+  };
   const relatedRoles = q.requiredRoles.filter((r) => r !== role);
   const proxyOptions = (users.data ?? []).filter((u) => !u.disabled).flatMap((u) => u.roles.filter((r) => detail.missingRoles.includes(r)).map((r) => ({
     value: JSON.stringify([u.name, r]), label: `${u.name}（${roleLabel(r)}）`,
@@ -199,34 +216,47 @@ function QuestionEditor({ detail, name, loading, readError, reload, version }: {
         <span className={`badge sev-${q.severity}`}>{SEVERITY_LABEL[q.severity]}</span>
       </div>
       <h1 className="qtext">{q.question}</h1>
-      {q.why && <p>{q.why}</p>}
-      {q.evidence && <p className="muted">依据 · {q.evidence}</p>}
-      <p className="muted small">由 {q.raisedBy.name} 提出 · 需要{rolesLabel(q.requiredRoles)}确认</p>
+      {detail.status === 'waiting' && !receipt && <p className="waiting-guidance">
+        等待{rolesLabel(detail.missingRoles)}确认。<a href={href({ page: 'home' })}>返回我的待办</a>
+      </p>}
+      {!detail.status && !receipt && <p className="muted">{detail.delivered ? '该变更已交付。' : '当前角色没有待办。'}{' '}
+        <a href={href({ page: 'home' })}>返回我的待办</a></p>}
+      {(q.why || q.evidence) && <details className="question-background">
+        <summary>查看问题背景</summary>{q.why && <p>{q.why}</p>}{q.evidence && <p>依据 · {q.evidence}</p>}
+      </details>}
       {q.closure && <p className="muted">{q.closure.reason}</p>}
     </header>
     {loading && <p className="muted small" role="status">正在核对当前版本…</p>}
     {readError && <div className="error" role="alert">问题暂时无法核对。{readError.message} <button className="btn" onClick={reload}>重试读取问题</button></div>}
-    {receipt && <section className="work-receipt panel" aria-live="polite">
+    {receipt && <section ref={receiptPanel} className="work-receipt panel" tabIndex={-1} aria-label="处理结果" aria-live="polite">
       <b>{receipt.text}</b>
       <div className="action-buttons">
+        {!next.loading && !next.error && next.data && <a className="btn primary" href={href({ page: 'change', id: next.data.changeId, tab: 'analysis', qid: next.data.questionId })}>
+          {WORK_ACTION[next.data.status]} · 下一项</a>}
+        {!next.loading && !next.error && !next.data && <a className="btn primary" href={href({ page: 'home' })}>返回我的待办</a>}
         <a className="btn" href="#/inbox" onClick={restoreListPosition}>返回问题列表</a>
-        {!next.loading && !next.error && next.data && <a className="btn primary" href={href({ page: 'change', id: next.data.changeId, tab: 'analysis', qid: next.data.questionId })}>下一项 · {next.data.questionId}</a>}
         {next.loading && <span className="muted">正在读取下一项…</span>}
         {next.error && <button className="btn" onClick={reload}>重试读取下一项</button>}
-        {!next.loading && !next.error && !next.data && <span className="muted">当前筛选下没有下一项可处理的问题。</span>}
       </div>
+      {!next.loading && !next.error && next.data && <p className="muted">下一项 · {next.data.question}</p>}
+      {!next.loading && !next.error && !next.data && <p className="muted">{view.status ? '当前筛选下没有下一项可处理的问题。' : '当前角色没有其他问题需要处理。'}</p>}
     </section>}
     {current && <section className="panel answer-current">
       <h2>{current.state === 'rejected' ? '退回的答案' : '当前答案'} · 第 {current.rev} 版</h2>
-      <p className="work-answer">{current.text}</p>
       {current.rejection && <div className="banner warn"><b>退回意见 · {current.rejection.actor.name}</b><p>{current.rejection.note}</p></div>}
-      <p className="muted">由 {current.proposedBy.name} 提交{detail.missingRoles.length ? ` · 等待${rolesLabel(detail.missingRoles)}确认` : current.state === 'confirmed' ? ' · 已完成确认' : ''}</p>
-      {current.confirmations.length > 0 && <ul className="plain">{current.confirmations.map((c) => <li key={c.role}>✓ {roleLabel(c.role)} · {c.actor.name}{c.note ? ` · ${c.note}` : ''}</li>)}</ul>}
+      {detail.status === 'revise' ? <details><summary>查看原答案</summary><p className="work-answer">{current.text}</p></details>
+        : <p className="work-answer">{current.text}</p>}
       {(can('confirm') || can('reject')) && <div className="inline-actions" key={detail.questionVersion}>
+        <p className="work-instruction">请核对这版答案。认可就确认，需要修改就退回并写明原因。</p>
         {can('confirm') && <button className="btn primary" disabled={!canWrite} onClick={() => void act('confirm').catch(() => {})}>确认此答案</button>}
         {can('reject') && <Action label="退回并要求修订" disabled={!canWrite} danger fields={[{ key: 'note', label: '退回理由', kind: 'textarea', required: true }]}
           run={(v) => act('reject', v)} onDone={() => {}} />}
       </div>}
+      <p className="muted small">由 {current.proposedBy.name} 提交{current.state === 'confirmed' ? ' · 已完成确认' : ''}</p>
+      {current.confirmations.length > 0 && <details className="answer-confirmations"><summary>查看已确认的人</summary>
+        <ul className="plain">{current.confirmations.map((c) => <li key={c.role}>{roleLabel(c.role)} · {c.actor.name}{c.note ? ` · ${c.note}` : ''}</li>)}</ul>
+      </details>}
+      {!editorOpen && can('submit-answer') && <button className="btn" disabled={!canWrite} onClick={showEditor}>修改答案</button>}
     </section>}
     {failure && <div className="error" role="alert">{failure.message}
       {failure.unknown && <div className="action-buttons">
@@ -234,27 +264,28 @@ function QuestionEditor({ detail, name, loading, readError, reload, version }: {
         <button className="btn" disabled={loading || !!readError || writePendingRead} onClick={() => setFailure(undefined)}>已核对提交结果</button>
       </div>}
     </div>}
-    {editorOpen && <form className="panel answer-editor" onSubmit={(event) => { event.preventDefault(); submit(); }}>
-      <h2>{detail.status === 'revise' || current ? '提交修订' : '提交答案'}</h2>
+    {editorOpen && <form ref={editor} tabIndex={-1} className="panel answer-editor" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+      <h2>{current ? '修改答案' : '回答问题'}</h2>
       <p className="muted">{q.requiredRoles.includes(role)
-        ? `以${roleLabel(role)}身份提交会确认新版本${relatedRoles.length ? `，并交给${rolesLabel(relatedRoles)}确认` : ''}。`
-        : `以${roleLabel(role)}身份提交，仍需${rolesLabel(q.requiredRoles)}确认。`}</p>
-      {q.options.length > 0 && <>
-        <label>作答方式
-          <select value={draft.mode === 'option' ? 'option:' + draft.optionId : 'free'} onChange={(e) => e.target.value === 'free'
-            ? update({ mode: 'free', optionId: current?.optionId ?? '' })
-            : update({ mode: 'option', optionId: e.target.value.slice('option:'.length) })}>
-            <option value="free">自由回答</option>
-            {draft.mode === 'option' && !option && <option value={'option:' + draft.optionId}>原选项已移除，请重新选择</option>}
-            {q.options.map((o) => <option key={o.id} value={'option:' + o.id}>{o.text}</option>)}
-          </select>
+        ? relatedRoles.length ? `提交后交给${rolesLabel(relatedRoles)}确认。` : '提交后此问题即处理完成。'
+        : `提交后交给${rolesLabel(q.requiredRoles)}确认。`}</p>
+      {(q.options.length > 0 || draft.mode === 'option') && <fieldset className="answer-choices">
+        <legend>选择一项作为答案</legend>
+        {q.options.map((o) => <label key={o.id}>
+          <input type="radio" name="answer-mode" value={o.id} checked={draft.mode === 'option' && draft.optionId === o.id}
+            onChange={() => update({ mode: 'option', optionId: o.id })} />
+          <span><b>{o.text}</b>{o.recommended && ' · 推荐'}{o.impact && <span className="muted">{o.impact}</span>}</span>
+        </label>)}
+        <label>
+          <input type="radio" name="answer-mode" value="free" checked={draft.mode === 'free' && answerModeChosen}
+            onChange={() => update({ mode: 'free', optionId: current?.optionId ?? '' })} />
+          <span>自己填写答案</span>
         </label>
-        <ul className="options">{q.options.map((o) => <li key={o.id}><b>{o.text}</b>{o.recommended && ' · 推荐'}{o.impact && <div className="muted">{o.impact}</div>}</li>)}</ul>
-      </>}
-      {draft.mode === 'option' ? <>
+      </fieldset>}
+      {answerModeChosen && (draft.mode === 'option' ? <>
         <label>补充说明（可选）<textarea value={draft.supplement} rows={3} onChange={(e) => update({ supplement: e.target.value })} /></label>
         <div className="answer-preview"><b>提交正文预览</b><p className="work-answer">{preview || '请重新选择有效选项。'}</p></div>
-      </> : <label>答案<textarea value={draft.text} rows={5} onChange={(e) => update({ text: e.target.value })} required /></label>}
+      </> : <label>答案<textarea placeholder="填写你的决定或建议" value={draft.text} rows={5} onChange={(e) => update({ text: e.target.value })} required /></label>)}
       {current?.state === 'confirmed' && <label>修订原因<textarea value={draft.reason} rows={2} onChange={(e) => update({ reason: e.target.value })} required /></label>}
       {needsReview && <div className="banner warn" role="alert">
         <p>问题已更新。草稿仍保留，请核对上方当前答案和确认状态。</p>
@@ -282,8 +313,7 @@ function QuestionEditor({ detail, name, loading, readError, reload, version }: {
         <li key={i}><span className="muted">{formatTime(event.at)}</span> {event.rev && <code>v{event.rev}</code>} <b>{event.actor.name}</b>（{roleLabel(event.actor.role)}）{event.text}
           {event.recordedBy && ` · 由 ${event.recordedBy.name} 代录`}{event.via && ` · ${event.via}`}</li>)}</ol>
     </details>
-    {detail.actions.length > 0 && <details className="panel"><summary>其他操作</summary><div className="inline-actions" key={detail.questionVersion}>
-      {can('submit-answer') && !editorOpen && <button className="btn" disabled={!canWrite} onClick={() => setEditing(true)}>修订答案</button>}
+    {(proxyOptions.length > 0 || can('defer') || can('invalidate')) && <details className="panel"><summary>其他操作</summary><div className="inline-actions" key={detail.questionVersion}>
       {can('record') && proxyOptions.length > 0 && <Action label="代录确认" disabled={!canWrite} fields={[
         { key: 'subject', label: '确认人', kind: 'select', options: proxyOptions },
         { key: 'via', label: '核对渠道', required: true }, { key: 'note', label: '说明（可选）' },

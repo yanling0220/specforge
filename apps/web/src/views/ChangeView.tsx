@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { GateEvaluation } from '@specforge/shared';
+import type { GateEvaluation, GateId } from '@specforge/shared';
 import { api, type ChangeDetail, type EvidenceEntry, type GatesResponse } from '../api.ts';
 import { useMe } from '../me.tsx';
 import { Action } from './Action.tsx';
@@ -12,6 +12,7 @@ import { Timeline } from './Timeline.tsx';
 import { ReviewView } from './ReviewView.tsx';
 import { ChangeTabs, type ChangeTab } from './ChangeTabs.tsx';
 import { QuestionWorkDetailView } from './QuestionWorkDetail.tsx';
+import { roleLabel } from '../question-work.ts';
 
 export function ChangeView({ id, tab, qid, version }: { id: string; tab: ChangeTab; qid?: string; version: number }) {
   const { user, role } = useMe();
@@ -66,7 +67,7 @@ function ChangeDetails({ id, tab, qid, version }: { id: string; tab: Exclude<Cha
         </div>
       )}
       {gates.data.upstreamInvalid.length > 0 && <div className="banner warn">⚠️ 上游门禁已失效：{gates.data.upstreamInvalid.join(', ')}，需要重新满足后才能继续推进</div>}
-      {openBlocking.length > 0 && (
+      {tab !== 'gates' && openBlocking.length > 0 && (
         <div className="banner warn">
           ⏸ {openBlocking.length} 个阻塞问题待处理：
           {openBlocking.map((q) => (
@@ -102,7 +103,8 @@ function ChangeDetails({ id, tab, qid, version }: { id: string; tab: Exclude<Cha
         <AnalysisView detail={detail.data} qid={qid} onChanged={refresh} />
       ) : tab === 'gates' ? (
         <>
-          <GateActions id={id} detail={detail.data} gates={gates.data} onDone={refresh} />
+          <GateActions key={change.stage} id={id} detail={detail.data} gates={gates.data}
+            checking={detail.loading || gates.loading || change.stage !== gates.data.stage} onDone={refresh} />
           {detail.data.tasks.length > 0 && <TasksPanel id={id} detail={detail.data} onDone={refresh} />}
           <p className="muted">
             门禁按{detail.data.factsSource.kind === 'commit' ? ` HEAD（${detail.data.factsSource.sha.slice(0, 7)}）` : '工作区'}中的 OpenSpec 文件实时评估
@@ -155,37 +157,57 @@ function GateCard({ gate, changeId, evidence }: { gate: GateEvaluation; changeId
 }
 
 /** 门禁相关的人工操作：审批与签字 / 打回需要 dev 角色；推进由门禁把关。服务端最终校验 */
-function GateActions({ id, detail, gates, onDone }: { id: string; detail: ChangeDetail; gates: GatesResponse; onDone: () => void }) {
+function GateActions({ id, detail, gates, checking, onDone }: {
+  id: string; detail: ChangeDetail; gates: GatesResponse; checking: boolean; onDone: () => void;
+}) {
   const { canWrite, role } = useMe();
   if (!canWrite || !role) return null;
   const { stage } = detail.change;
   const needsApproval = (g?: GateEvaluation) => !!g?.checks.some((c) => c.id === 'approved' && !c.passed);
   const notDev = role !== 'dev';
-  const devOnly = notDev ? '需要以 dev 身份操作' : undefined;
-  const next = gates.pipeline[gates.pipeline.findIndex((p) => p.stage === stage) + 1];
+  const devOnly = notDev ? '需要开发身份' : undefined;
+  const current = gates.pipeline.findIndex((p) => p.stage === stage);
+  const next = current < 0 ? undefined : gates.pipeline[current + 1];
+  const exit = gates.pipeline[current]?.exitGate;
+  const blocked = [...gates.upstreamInvalid, ...(exit && gates.gates[exit]?.status !== 'passed' ? [exit] : [])];
+  const specApproval = blocked.includes('G2') && needsApproval(gates.gates.G2);
+  const designApproval = blocked.includes('G3') && needsApproval(gates.gates.G3);
 
-  return (
+  if (!next) return <p className="muted">{stage === 'delivered' ? '此变更已交付。' : '暂时无法识别当前阶段。'}</p>;
+  return <>
+    {checking && <p role="status">正在核对能否进入下一阶段…</p>}
+    <section className="panel stage-next" hidden={checking}>
+    <h2>{blocked.length ? `进入「${STAGE_LABEL[next.stage]}」前还需完成` : `可以进入「${STAGE_LABEL[next.stage]}」`}</h2>
+    {blocked.length > 0 && <ul className="stage-blockers">
+      {blocked.flatMap((id) => {
+        const checks = gates.gates[id]?.checks.filter((check) => !check.passed);
+        return checks?.length ? checks.map((check) => <li key={`${id}:${check.id}`}>
+          {check.label}{blockerLink(detail.change.id, id, check.id)}
+        </li>) : [<li key={id}>{GATE_LABEL[id]}还未验证</li>];
+      })}
+    </ul>}
+    {notDev && (specApproval || designApproval || stage === 'closing') && <p>审批和签字由开发角色处理。</p>}
     <div className="action-bar">
-      {needsApproval(gates.gates.G2) && (
-        <Action label="审批当前 spec" disabled={notDev} title={devOnly} confirm="审批绑定当前 spec 内容的哈希；内容或上游再变化，审批即失效。确认审批？" run={() => api.approve(id, { role, target: 'spec' })} onDone={onDone} />
+      {specApproval && (
+        <Action label="审批当前规格" disabled={checking || notDev} title={devOnly} confirm="确认通过当前版本的规格？规格修改后需要重新审批。" run={() => api.approve(id, { role, target: 'spec' })} onDone={onDone} />
       )}
-      {needsApproval(gates.gates.G3) && (
-        <Action label="审批当前方案" disabled={notDev} title={devOnly} confirm="审批绑定当前方案内容的哈希。确认审批？" run={() => api.approve(id, { role, target: 'design' })} onDone={onDone} />
+      {designApproval && (
+        <Action label="审批当前方案" disabled={checking || notDev} title={devOnly} confirm="确认通过当前版本的方案？方案修改后需要重新审批。" run={() => api.approve(id, { role, target: 'design' })} onDone={onDone} />
       )}
       {stage === 'closing' && (
         <>
           <Action
             label="签字通过"
-            disabled={notDev}
+            disabled={checking || notDev}
             title={devOnly}
-            confirm={`以 ${role} 身份对当前 HEAD 签字通过？`}
+            confirm={`以${roleLabel(role)}身份对当前提交签字通过？`}
             run={() => api.signoff(id, { role, verdict: 'pass' })}
             onDone={onDone}
           />
           <Action
             label="打回"
             danger
-            disabled={notDev}
+            disabled={checking || notDev}
             title={devOnly}
             fields={[
               { key: 'note', label: '打回原因', kind: 'textarea', required: true },
@@ -213,16 +235,27 @@ function GateActions({ id, detail, gates, onDone }: { id: string; detail: Change
           />
         </>
       )}
-      {next && (
+      {!blocked.length && (
         <Action
           label={`推进到「${STAGE_LABEL[next.stage]}」`}
-          confirm={`引擎会重新评估门禁，全部通过才能推进。推进到「${STAGE_LABEL[next.stage]}」？`}
+          disabled={checking}
+          confirm={`确认进入「${STAGE_LABEL[next.stage]}」？`}
           run={() => api.advance(id, { role })}
           onDone={onDone}
         />
       )}
     </div>
-  );
+    </section>
+  </>;
+}
+
+function blockerLink(changeId: string, gate: GateId, check: string) {
+  if (gate === 'G1') return <a href={href({ page: 'change', id: changeId, tab: 'analysis' })}>查看需求分析</a>;
+  if (gate === 'G2' || gate === 'G3' || gate === 'G4') {
+    const label = check === 'comments' ? '查看产物评论' : gate === 'G2' ? '查看规格' : gate === 'G3' ? '查看方案' : '查看任务清单';
+    return <a href={href({ page: 'change', id: changeId, tab: 'artifacts' })}>{label}</a>;
+  }
+  return null;
 }
 
 /** 任务列表：完成 / 人接手 / 暂停 / 交给 agent；dev 可以接管或交还 */

@@ -53,7 +53,8 @@ export const readQuestionWork = withStoreLock(function readQuestionWork(
     }
   }
   const next = offset + PAGE_SIZE;
-  return { role, counts, items: items.slice(offset, next), nextCursor: next < items.length ? `${version}.${next}` : undefined };
+  const nextAction = !filter && !cursor ? items.find((item) => item.status !== 'waiting') : undefined;
+  return { role, counts, items: items.slice(offset, next), nextAction, nextCursor: next < items.length ? `${version}.${next}` : undefined };
 });
 
 export const readQuestionDetail = withStoreLock(function readQuestionDetail(

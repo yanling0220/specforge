@@ -12,6 +12,7 @@ import { chrome } from './chrome.mjs';
 
 const dev = { name: 'dev-fixture', role: 'dev' };
 const pm = { name: 'product-fixture', role: 'product' };
+const both = { name: 'dual-fixture', role: 'product' };
 const fixtureToken = (actor) => actor.name + '-local-test';
 const quote = JSON.stringify;
 const route = (number) => '#/changes/demo/analysis/Q-' + number;
@@ -28,6 +29,7 @@ function fixture(root) {
   const store = new Store(root);
   store.mutateUsers(dev, 'user.added', (registry) => addUser(registry, { name: dev.name, roles: [dev.role], admin: true }, sha256(fixtureToken(dev)), undefined, 'T'), {});
   store.mutateUsers(dev, 'user.added', (registry) => addUser(registry, { name: pm.name, roles: [pm.role] }, sha256(fixtureToken(pm)), dev, 'T'), {});
+  store.mutateUsers(dev, 'user.added', (registry) => addUser(registry, { name: both.name, roles: ['product', 'dev'] }, sha256(fixtureToken(both)), dev, 'T'), {});
   const create = (id, input) => createQuestion({ id, category: '业务规则', severity: 'blocking', raisedAtStage: 'analysis', ...input }, config, dev, '2026-11-01T12:00:00Z');
   const questions = [
     create('Q-1', { question: '导入遇到重复邮箱如何处理？' }),
@@ -60,6 +62,10 @@ async function flow(browser, server, store) {
   const field = (selector, value) => evaluate('setField(' + select(selector) + ', ' + quote(value) + '), true');
   const has = (selector) => '!!' + select(selector);
   const clickLink = (selector) => evaluate(select(selector) + '.click(), true');
+  const startWork = async (label) => {
+    await wait(contains('.work-start > .primary', label), '首页首选操作是「' + label + '」');
+    await clickLink('.work-start > .primary');
+  };
   const enter = async (actor, hash) => {
     await go(hash);
     await wait(has('form.login'), '项目登录');
@@ -75,12 +81,15 @@ async function flow(browser, server, store) {
   const question = (number) => '.question-work-item a[href$="/Q-' + number + '"]';
   const checkHistory = () => available(() => verifyLog(store));
 
-  await enter(pm, '#/inbox');
-  await wait(contains('.inbox-list', '重复邮箱') + ' && ' + contains('.inbox-list', '成功数和失败数'), '产品从摘要识别两项确认');
-  assert.equal(await evaluate(has(question(5))), false);
-  await field('.inbox-toolbar select', 'confirm');
-  await wait('document.querySelectorAll(".question-work-item").length === 2', '待本角色确认筛选');
-  await clickLink(question(1));
+  await send('Network.setBlockedURLs', { urls: ['*/api/question-work*'] });
+  await enter(pm, '');
+  await wait(contains('.work-home .error', '问题待办读取失败') + ' && !' + has('.work-start'), '读取失败不会显示暂无待办');
+  await send('Network.setBlockedURLs', { urls: [] });
+  await click('重新读取');
+  await wait(contains('.work-role', '产品身份') + ' && ' + contains('.work-start h2', '重复邮箱'), '普通登录后看到产品问题');
+  await startWork('核对答案');
+  assert.equal(await evaluate('location.hash'), route(1));
+  await wait(contains('.work-instruction', '需要修改就退回'), '打开问题即说明确认和退回的区别');
   await wait(contains('.answer-current', '跳过重复邮箱'), '核对完整答案');
   await click('确认此答案');
   await receipt('已确认第 1 版');
@@ -91,14 +100,18 @@ async function flow(browser, server, store) {
   await click('提交');
   await receipt('已退回第 1 版');
   await clickLink('.work-receipt a[href="#/inbox"]');
-  await wait(contains('main', '当前筛选下没有问题') + ' && document.activeElement.tagName === "SELECT"', '返回恢复筛选并将焦点移到筛选框');
+  await wait(has(question(2)), '返回问题列表可以看到「开始回答」');
+  assert.equal(await evaluate(has(question(5))), false);
+  await field('.inbox-toolbar select', 'confirm');
+  await wait(contains('main', '当前筛选下没有问题'), '筛选结果提供回到全部问题的操作');
   assert.equal(await evaluate(select('.inbox-toolbar select') + '.value'), 'confirm');
-  await field('.inbox-toolbar select', '');
+  await click('查看全部问题');
   await wait(contains('[data-question-status="revise"]', '需要逐行列出失败原因') + ' && ' + has(question(2)) + ' && ' + has(question(4)), '退回进入修订，未答事项仍可见');
 
+  assert.equal(await evaluate(contains(question(2), '开始回答')), true);
   await clickLink(question(2));
-  await wait(has('.answer-editor select'), '标准选项选择');
-  await field('.answer-editor select', 'option:b');
+  await wait(contains('.answer-choices', '保留 30 天'), '标准选项直接显示在页面');
+  await evaluate(select('.answer-choices input[value="b"]') + '.click(), true');
   await wait(contains('.answer-preview', '保留 30 天'), '按选项预览正文');
   await click('提交答案');
   await receipt('已提交第 1 版答案，等待开发确认');
@@ -164,16 +177,28 @@ async function flow(browser, server, store) {
   await server.tick();
   await wait(has('form.login'), '登录会话撤销后返回登录页');
   assert.equal(await evaluate('Object.keys(sessionStorage).filter((k) => k.startsWith("specforge.question-draft:")).length'), 0);
-  await enter(dev, route(4));
+  await enter(both, '');
+  await wait(contains('.work-start', '你这边的操作已完成') + ' && ' + contains('.work-shortcuts', '3 项等其他角色'), '只剩等待时告知当前角色无须操作');
+  await click('查看开发待办');
+  await wait(contains('.work-role', '开发身份') + ' && ' + contains('.work-start', '核对答案'), '用户主动切换到开发待办');
+  await logout();
+  await enter(dev, '');
+  await wait(contains('.work-start h2', '保留多久'), '普通登录后开发看到产品交来的确认');
+  await startWork('核对答案');
+  await wait(contains('.answer-current', '保留 30 天'), '开发核对产品提交的选项');
+  await click('确认此答案');
+  await receipt('已确认第 1 版');
+  await wait(contains('.work-receipt .primary', '核对答案 · 下一项'), '开发确认后可继续下一项');
+  await go(route(4));
   await wait(contains('.answer-current', '产品的并发草稿'), '开发通过旧深链接核对新版');
   assert.equal(await evaluate(has(draft)), false, '产品草稿未进入开发会话');
   await click('确认此答案');
   await receipt('已确认第 2 版');
   await go('#/inbox');
-  await wait(has(question(5)) + ' && ' + contains('.inbox-list', '保留 30 天'), '开发收到交接且能看到技术题');
-  await clickLink(question(2));
-  await click('确认此答案');
-  await receipt('已确认第 1 版');
+  await wait(has(question(5)) + ' && ' + contains('[data-question-status="answer"] a', '开始回答'), '开发能识别未回答的技术题');
+  await logout();
+  await enter(dev, route(4));
+  await wait(contains('.answer-current', '产品的并发草稿'), '重新登录仍保留问题深链接');
   await logout();
   const audit = await checkHistory();
   assert.equal(audit.ok, true);

@@ -10,7 +10,7 @@ describe('Web 项目上下文（T4.3d）', () => {
     expect(projectFromPath('/p/alpha/')).toBe('alpha');
     expect(projectBase()).toBe('');
     expect(projectBase('alpha')).toBe('/p/alpha');
-    expect(projectHref('alpha')).toBe('/p/alpha/#/');
+    expect(projectHref('alpha')).toBe('/p/alpha/#/home');
     expect(projectHref('alpha', '#/inbox')).toBe('/p/alpha/#/inbox');
     expect(projectHref('alpha', '#/changes/same/analysis/Q-1')).toBe('/p/alpha/#/changes/same/analysis/Q-1');
     expect(projectHref('alpha', '#/changes/%ZZ')).toBe('/p/alpha/#/');
