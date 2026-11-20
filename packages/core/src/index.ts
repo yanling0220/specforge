@@ -18,4 +18,5 @@ export * from './notification-message.ts';
 export * from './notification-config.ts';
 export * from './deployment.ts';
 export * from './inbox.ts';
+export * from './question-work.ts';
 export * from './review.ts';

@@ -1,5 +1,5 @@
 import { Hono, type Context } from 'hono';
-import { activeClaims, ForgeError, isResolved, missingRoles, pausedTasks, pipelineFor, publicUsers, resolveIdentity, upstreamGates } from '@specforge/core';
+import { activeClaims, ForgeError, isResolved, missingRoles, pausedTasks, pipelineFor, publicUsers, questionVersion, resolveIdentity, upstreamGates } from '@specforge/core';
 import {
   addComment,
   advance,
@@ -13,6 +13,8 @@ import {
   questionAction,
   readTasksFacts,
   readInbox,
+  readQuestionDetail,
+  readQuestionWork,
   readReviewFileSnapshot,
   readReviewSnapshot,
   releaseTask,
@@ -24,7 +26,7 @@ import {
   type QuestionOp,
   type Store,
 } from '@specforge/store';
-import type { Actor, AnswerReference, ReviewFinding, Role } from '@specforge/shared';
+import { QUESTION_WORK_STATUSES, type Actor, type AnswerReference, type QuestionWorkStatus, type ReviewFinding, type Role } from '@specforge/shared';
 import { Auth, mountAuthRoutes, type AuthEnv } from './auth.ts';
 import type { QueryIndex } from './query-index.ts';
 import { webResponse } from './web.ts';
@@ -78,6 +80,11 @@ const STATUS_OF: Record<string, 400 | 403 | 404 | 409 | 413 | 503> = {
   claimed: 409,
   out_of_band: 409,
   stale_answer: 409,
+  stale_question: 409,
+  stale_cursor: 409,
+  question_action_unavailable: 409,
+  read_only: 403,
+  question_work_unavailable: 503,
   write_busy: 409,
   recovery_required: 503,
   index_unavailable: 503,
@@ -97,6 +104,14 @@ const PUBLIC_API = new Set(['/api/health', '/api/auth/me', '/api/auth/login', '/
 export function createApp(store: Store, index: QueryIndex, opts: AppOptions = {}): Hono<AuthEnv> {
   const app = new Hono<AuthEnv>();
   const auth = opts.auth ?? new Auth(store);
+  const questionProject = JSON.stringify([store.root, opts.projectId ?? null, opts.basePath ?? '']);
+  const questionReader = (c: Context<AuthEnv>): Actor => {
+    const user = c.get('user');
+    if (!user) throw new ForgeError('no_registry', '请登录后查看问题工作列表');
+    const role = c.req.query('role');
+    if (role !== 'dev' && role !== 'product') throw new ForgeError('bad_arg', 'role 必须是 dev 或 product');
+    return { name: user.name, role };
+  };
   const localPath = (c: Context) => c.req.path.slice(opts.basePath?.length ?? 0);
   app.use('*', async (c, next) => {
     if (['POST', 'PUT', 'PATCH'].includes(c.req.method)) await c.req.arrayBuffer();
@@ -180,6 +195,13 @@ export function createApp(store: Store, index: QueryIndex, opts: AppOptions = {}
     return c.json({ role, items: readInbox(store, { name: user.name, role }) });
   });
 
+  app.get('/api/question-work', (c) => {
+    const status = c.req.query('status') as QuestionWorkStatus | undefined;
+    if (status !== undefined && !QUESTION_WORK_STATUSES.includes(status)) throw new ForgeError('bad_arg', '无效的问题状态筛选');
+    c.header('Cache-Control', 'no-store');
+    return c.json(readQuestionWork(store, questionReader(c), status, c.req.query('cursor'), questionProject));
+  });
+
   app.get('/api/changes/:id', (c) => {
     const id = c.req.param('id');
     const state = store.load(id);
@@ -222,6 +244,12 @@ export function createApp(store: Store, index: QueryIndex, opts: AppOptions = {}
 
   app.get('/api/changes/:id/questions/:qid', (c) => {
     const { id, qid } = c.req.param();
+    if (c.req.query('role') !== undefined) {
+      const actor = questionReader(c);
+      c.header('Cache-Control', 'no-store');
+      const detail = readQuestionDetail(store, actor, id, qid, c.get('draftScope')!, questionProject);
+      return c.json(opts.readOnly ? { ...detail, actions: [] } : detail);
+    }
     const q = store.load(id).questions.find((x) => x.id === qid);
     if (!q) throw new ForgeError('not_found', `问题 ${qid} 不存在`);
     return c.json(q);
@@ -309,15 +337,29 @@ export function createApp(store: Store, index: QueryIndex, opts: AppOptions = {}
     const { id, qid, action } = c.req.param();
     const b = await body(c);
     const actor = writer(c, b);
+    const version = str(b, 'baseQuestionVersion', action === 'submit-answer');
+    if (version !== undefined && !/^[a-f0-9]{64}$/.test(version)) throw new ForgeError('bad_arg', '无效的问题版本');
+    const basis = version === undefined ? undefined : { version, project: questionProject };
     const ops: Record<string, () => QuestionOp> = {
       answer: () => ({ kind: 'answer', text: str(b, 'text', true)!, optionId: str(b, 'optionId'), reason: str(b, 'reason'), via: str(b, 'via') }),
       confirm: () => ({ kind: 'confirm', onBehalfOf: proxy(b), via: str(b, 'via'), note: str(b, 'note'), expected: expectedAnswer(b) }),
       reject: () => ({ kind: 'reject', note: str(b, 'note', true)!, onBehalfOf: proxy(b), expected: expectedAnswer(b) }),
       defer: () => ({ kind: 'defer', reason: str(b, 'reason', true)! }),
       invalidate: () => ({ kind: 'invalidate', reason: str(b, 'reason', true)! }),
+      'submit-answer': () => {
+        const mode = str(b, 'mode', true);
+        const reason = str(b, 'reason');
+        const via = str(b, 'via');
+        if (mode === 'option') return { kind: 'submit-answer', input: { mode, optionId: str(b, 'optionId', true)!, supplement: str(b, 'supplement'), reason, via } };
+        if (mode === 'free') return { kind: 'submit-answer', input: { mode, text: str(b, 'text', true)!, optionId: str(b, 'optionId'), reason, via } };
+        throw new ForgeError('bad_arg', 'mode 必须是 free 或 option');
+      },
     };
-    if (!ops[action]) throw new ForgeError('not_found', `没有这个操作：${action}`);
-    return c.json({ question: questionAction(store, id, actor, qid, ops[action]()) });
+    if (!Object.hasOwn(ops, action)) throw new ForgeError('not_found', `没有这个操作：${action}`);
+    const question = questionAction(store, id, actor, qid, ops[action]!(), basis);
+    return c.json(basis
+      ? { question, questionVersion: questionVersion(questionProject, store.load(id).change, question) }
+      : { question });
   });
 
   app.post('/api/changes/:id/restatement/confirm', async (c) => {

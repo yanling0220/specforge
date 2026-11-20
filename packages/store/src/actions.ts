@@ -6,6 +6,7 @@ import {
   claimTask as claimTaskCore,
   checkProxySubject,
   confirmAnswer,
+  composeQuestionAnswer,
   confirmRestatement as confirmRestatementCore,
   decideAssumption as decideAssumptionCore,
   deferQuestion,
@@ -14,6 +15,9 @@ import {
   maxFixRounds,
   nextStage,
   proposeAnswer,
+  questionVersion,
+  questionWorkFacts,
+  resolveIdentity,
   rejectAnswer,
   reopenComment as reopenCommentCore,
   resolveComment as resolveCommentCore,
@@ -22,7 +26,7 @@ import {
   resolveFixRound,
 } from '@specforge/core';
 import { headSha } from '@specforge/runner';
-import type { Actor, AnswerReference, ArtifactComment, ArtifactTarget, Question, ReviewFinding, ReviewRecord, Role, Stage } from '@specforge/shared';
+import type { Actor, AnswerDraftInput, AnswerReference, ArtifactComment, ArtifactTarget, Question, ReviewFinding, ReviewRecord, Role, Stage } from '@specforge/shared';
 import { bindingNow, evaluateAll, factsTree, readDesignFacts, readSpecFacts, readTasksFacts, workTree } from './engine.ts';
 import { withStoreLock, type ChangeState, type Store } from './store.ts';
 
@@ -43,6 +47,7 @@ function replaceQuestion(state: ChangeState, q: Question): ChangeState {
 
 export type QuestionOp =
   | { kind: 'answer'; text: string; optionId?: string; reason?: string; via?: string }
+  | { kind: 'submit-answer'; input: AnswerDraftInput }
   | { kind: 'confirm'; onBehalfOf?: Actor; via?: string; note?: string; expected?: AnswerReference }
   | { kind: 'reject'; note: string; onBehalfOf?: Actor; expected?: AnswerReference }
   | { kind: 'defer'; reason: string }
@@ -51,6 +56,7 @@ export type QuestionOp =
 
 const QUESTION_EVENT: Record<QuestionOp['kind'], string> = {
   answer: 'question.answered',
+  'submit-answer': 'question.answered',
   confirm: 'question.confirmed',
   reject: 'question.rejected',
   defer: 'question.deferred',
@@ -59,7 +65,11 @@ const QUESTION_EVENT: Record<QuestionOp['kind'], string> = {
 };
 
 /** 回答 / 确认 / 驳回 / 推迟 / 作废 / 追加确认角色 */
-export const questionAction = withStoreLock(function questionAction(store: Store, changeId: string, actor: Actor, qid: string, op: QuestionOp): Question {
+export const questionAction = withStoreLock(function questionAction(
+  store: Store, changeId: string, actor: Actor, qid: string, op: QuestionOp,
+  basis?: { version: string; project?: string },
+): Question {
+  if (op.kind === 'submit-answer' && !basis) throw new ForgeError('missing_arg', '缺少编辑基准');
   const proxy = op.kind === 'confirm' || op.kind === 'reject' ? op.onBehalfOf : undefined;
   if (proxy) checkProxySubject(store.users(), proxy);
   if (op.kind === 'require' && !['dev', 'product'].includes(op.role)) throw new ForgeError('bad_arg', '追加的角色只能是 dev|product');
@@ -69,6 +79,8 @@ export const questionAction = withStoreLock(function questionAction(store: Store
       case 'answer':
         if (!op.text.trim()) throw new ForgeError('missing_arg', '答案不能为空');
         return proposeAnswer(q, { text: op.text, optionId: op.optionId, reason: op.reason, via: op.via }, actor, t);
+      case 'submit-answer':
+        return proposeAnswer(q, composeQuestionAnswer(q, op.input), actor, t);
       case 'confirm':
         return confirmAnswer(q, { onBehalfOf: op.onBehalfOf, via: op.via, note: op.note, expected: op.expected }, actor, t);
       case 'reject':
@@ -85,6 +97,7 @@ export const questionAction = withStoreLock(function questionAction(store: Store
     const r = q.revisions.at(-1);
     switch (op.kind) {
       case 'answer':
+      case 'submit-answer':
         return { questionId: q.id, rev: r!.rev, answerHash: r!.hash, text: r!.text, optionId: r!.optionId, reason: r!.reason, status: q.status };
       case 'confirm': {
         const c = r!.confirmations.at(-1)!;
@@ -105,7 +118,27 @@ export const questionAction = withStoreLock(function questionAction(store: Store
     actor,
     QUESTION_EVENT[op.kind],
     (s) => {
-      updated = apply(findQuestion(s, qid));
+      const q = findQuestion(s, qid);
+      if (basis) {
+        const r = q.revisions.at(-1);
+        if ((op.kind === 'confirm' || op.kind === 'reject') && op.expected
+          && (r?.rev !== op.expected.rev || r.hash !== op.expected.hash)) {
+          throw new ForgeError('stale_answer', `${qid} 的答案已更新，请刷新后重新核对再操作`);
+        }
+        if (basis.version !== questionVersion(basis.project ?? store.root, s.change, q)) {
+          throw new ForgeError('stale_question', `${qid} 已更新，请核对当前问题版本`);
+        }
+        if (s.change.stage === 'delivered') throw new ForgeError('read_only', '变更已交付，问题仅供查看');
+        const registry = store.users();
+        if (!registry) throw new ForgeError('no_registry', '此操作需要登录');
+        const { role } = resolveIdentity(registry, actor);
+        if (role === 'agent') throw new ForgeError('bad_role', '此操作仅供人类角色使用');
+        const action = op.kind === 'confirm' && proxy ? 'record' : op.kind;
+        if (action === 'answer' || action === 'require' || !questionWorkFacts(s.change, q, role).actions.includes(action)) {
+          throw new ForgeError('question_action_unavailable', '当前问题或角色不允许此操作，请重新核对');
+        }
+      }
+      updated = apply(q);
       return replaceQuestion(s, updated);
     },
     () => payload(updated!),

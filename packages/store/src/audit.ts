@@ -1,8 +1,8 @@
 import { ForgeError, verifyChain, verifyLogAnchors, type ChainProblem } from '@specforge/core';
 import { LOG_ANCHOR_REF, readLogAnchors, writeLogAnchor, type GitLogAnchor } from '@specforge/runner';
-import { withStoreLock, type Store } from './store.ts';
+import { stateHash, withStoreLock, type Store } from './store.ts';
 
-export const verifyLog = withStoreLock(function verifyLog(store: Store, trustedCommit?: string) {
+function inspectLog(store: Store, trustedCommit?: string) {
   const events = store.events();
   const chainProblems = verifyChain(events);
   const anchorProblems: ChainProblem[] = [];
@@ -14,13 +14,17 @@ export const verifyLog = withStoreLock(function verifyLog(store: Store, trustedC
   } catch (error) {
     anchorProblems.push({ seq: 0, problem: error instanceof Error ? error.message : String(error) });
   }
-  const outOfBand = store.listChanges().flatMap((changeId) => {
-    const problem = store.outOfBand(changeId);
-    return problem ? [{ changeId, problem }] : [];
+  const lastByChange = new Map(events.filter((event) => event.changeId && event.stateHash)
+    .map((event) => [event.changeId!, event]));
+  const loaded = store.listChanges().map((id) => [id, store.load(id)] as const);
+  const outOfBand = loaded.flatMap(([changeId, state]) => {
+    const last = lastByChange.get(changeId);
+    if (!last) return [{ changeId, problem: '没有任何事件记录' }];
+    return last.stateHash === stateHash(state) ? [] : [{ changeId, problem: `最后一次记录是事件 #${last.seq}` }];
   });
   const usersProblem = store.usersOutOfBand() ?? null;
   const head = events.at(-1);
-  return {
+  const result = {
     ok: !chainProblems.length && !anchorProblems.length && !outOfBand.length && !usersProblem,
     events: events.length,
     head: head ? { seq: head.seq, hash: head.hash } : null,
@@ -35,6 +39,17 @@ export const verifyLog = withStoreLock(function verifyLog(store: Store, trustedC
       problems: anchorProblems,
     },
   };
+  return { result, states: loaded.map(([, state]) => state) };
+}
+
+export const verifyLog = withStoreLock(function verifyLog(store: Store, trustedCommit?: string) {
+  return inspectLog(store, trustedCommit).result;
+});
+
+export const readAuditedStates = withStoreLock(function readAuditedStates(store: Store) {
+  const { result, states } = inspectLog(store);
+  if (!result.ok) throw new ForgeError('question_work_unavailable', '项目审计校验异常，暂不能读取问题');
+  return states;
 });
 
 export const anchorLog = withStoreLock(function anchorLog(store: Store): { anchor: GitLogAnchor; created: boolean } {

@@ -4,4 +4,5 @@ export * from './actions.ts';
 export * from './audit.ts';
 export * from './notifications.ts';
 export * from './inbox.ts';
+export * from './question-work.ts';
 export * from './review.ts';

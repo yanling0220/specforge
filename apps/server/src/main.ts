@@ -33,6 +33,9 @@ REST
   GET /api/changes/:id/gates                     全部门禁的实时评估
   GET /api/changes/:id/questions[?status=&severity=]
   GET /api/changes/:id/questions/:qid            问题的完整修订与核对历史
+  GET /api/question-work?role=[&status=&cursor=]  当前角色的问题列表
+  GET /api/changes/:id/questions/:qid?role=       单题处理状态、动作与问题版本
+  POST /api/changes/:id/questions/:qid/submit-answer  提交带编辑基准的新答案
   GET /api/changes/:id/events[?type=&after=&limit=]
   GET /api/events[?changeId=&type=&after=&limit=]
   GET /api/changes/:id/evidence[/:eid]           验证证据与 G5 证据（hashOk 表示与事件日志一致）

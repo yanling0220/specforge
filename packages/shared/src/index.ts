@@ -2,6 +2,7 @@
 
 export type * from './notifications.ts';
 export type * from './inbox.ts';
+export * from './question-work.ts';
 
 export type Role = 'dev' | 'product' | 'agent';
 

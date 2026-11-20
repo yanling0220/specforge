@@ -21,12 +21,13 @@ export interface SessionUser {
 
 interface Session {
   name: string;
+  draftScope: string;
   /** 登录时的令牌哈希：令牌重置后会话失效 */
   tokenHash: string;
   expiresAt: number;
 }
 
-export type AuthEnv = { Variables: { user?: SessionUser } };
+export type AuthEnv = { Variables: { user?: SessionUser; draftScope?: string } };
 
 const sameHash = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
@@ -68,7 +69,7 @@ export class Auth {
     }
     this.failures.delete(key);
     const sid = randomBytes(32).toString('base64url');
-    this.sessions.set(sid, { name, tokenHash: u.tokenHash, expiresAt: this.now() + SESSION_TTL_MS });
+    this.sessions.set(sid, { name, tokenHash: u.tokenHash, expiresAt: this.now() + SESSION_TTL_MS, draftScope: randomBytes(24).toString('base64url') });
     return { sid, user: { name: u.name, roles: u.roles, admin: u.admin } };
   }
 
@@ -94,9 +95,11 @@ export class Auth {
   guard(): MiddlewareHandler<AuthEnv> {
     return async (c, next) => {
       if (this.required()) {
-        const user = this.user(getCookie(c, this.cookieName));
+        const sid = getCookie(c, this.cookieName);
+        const user = this.user(sid);
         if (!user) return c.json({ error: { code: 'unauthorized', message: '需要登录' } }, 401);
         c.set('user', user);
+        c.set('draftScope', this.sessions.get(sid!)?.draftScope);
       }
       await next();
     };
