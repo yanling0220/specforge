@@ -11,9 +11,14 @@ import { ArtifactsView } from './ArtifactsView.tsx';
 import { Timeline } from './Timeline.tsx';
 import { ReviewView } from './ReviewView.tsx';
 import { ChangeTabs, type ChangeTab } from './ChangeTabs.tsx';
+import { QuestionWorkDetailView } from './QuestionWorkDetail.tsx';
 
 export function ChangeView({ id, tab, qid, version }: { id: string; tab: ChangeTab; qid?: string; version: number }) {
+  const { user, role } = useMe();
   if (tab === 'review') return <ReviewView key={id} id={id} version={version} />;
+  if (tab === 'analysis' && qid && user && (role === 'dev' || role === 'product')) {
+    return <QuestionWorkDetailView key={JSON.stringify([id, qid, user.name, role])} changeId={id} questionId={qid} version={version} name={user.name} role={role} />;
+  }
   return <ChangeDetails key={id} id={id} tab={tab} qid={qid} version={version} />;
 }
 

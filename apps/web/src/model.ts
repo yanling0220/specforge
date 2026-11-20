@@ -269,7 +269,7 @@ export function questionHistory(q: Question): HistoryEntry[] {
 /** hash 路由：#/、#/inbox、#/changes/:id[/review|timeline|analysis[/:qid]]、#/changes/:id/evidence/:eid、#/events */
 export type Route =
   | { page: 'board' }
-  | { page: 'inbox' }
+  | { page: 'inbox'; approvals?: true }
   | { page: 'events' }
   | { page: 'change'; id: string; tab: 'gates' | 'review' | 'timeline' | 'analysis' | 'artifacts'; qid?: string }
   | { page: 'evidence'; id: string; eid: string };
@@ -277,7 +277,7 @@ export type Route =
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   if (parts[0] === 'events') return { page: 'events' };
-  if (parts[0] === 'inbox') return { page: 'inbox' };
+  if (parts[0] === 'inbox') return parts[1] === 'approvals' ? { page: 'inbox', approvals: true } : { page: 'inbox' };
   if (parts[0] === 'changes' && parts[1]) {
     if (parts[2] === 'evidence' && parts[3]) return { page: 'evidence', id: parts[1], eid: parts[3] };
     if (parts[2] === 'review') return { page: 'change', id: parts[1], tab: 'review' };
@@ -296,7 +296,7 @@ export function href(r: Route): string {
     case 'events':
       return '#/events';
     case 'inbox':
-      return '#/inbox';
+      return r.approvals ? '#/inbox/approvals' : '#/inbox';
     case 'change':
       return `#/changes/${e(r.id)}${r.tab === 'gates' ? '' : `/${r.tab}`}${r.tab === 'analysis' && r.qid ? `/${e(r.qid)}` : ''}`;
     case 'evidence':

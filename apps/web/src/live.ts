@@ -7,8 +7,9 @@ import { socketUrl } from './project.ts';
 
 export type LiveStatus = 'connecting' | 'live' | 'offline';
 
-export function useLive(changeId?: string): { version: number; status: LiveStatus } {
+export function useLive(changeId?: string): { version: number; reconnects: number; status: LiveStatus } {
   const [version, setVersion] = useState(0);
+  const [reconnects, setReconnects] = useState(0);
   const [status, setStatus] = useState<LiveStatus>('connecting');
   const lastSeq = useRef<number | undefined>(undefined);
 
@@ -23,6 +24,7 @@ export function useLive(changeId?: string): { version: number; status: LiveStatu
       ws = new WebSocket(socketUrl(API_BASE, location.origin, changeId, lastSeq.current));
       setStatus('connecting');
       ws.onopen = () => {
+        if (retry > 0) setReconnects((v) => v + 1);
         retry = 0;
         setStatus('live');
       };
@@ -57,7 +59,36 @@ export function useLive(changeId?: string): { version: number; status: LiveStatu
     };
   }, [changeId]);
 
-  return { version, status };
+  return { version, reconnects, status };
+}
+
+export function useVisibleRefresh() {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') setVersion((v) => v + 1);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+  return version;
+}
+
+/** 合并短时间内的刷新，撤销已失去上下文的读取。 */
+export function useQuestionRead<T>(load: (signal: AbortSignal) => Promise<T>, deps: unknown[]) {
+  const [state, setState] = useState<{ data?: T; error?: Error; loading: boolean }>({ loading: true });
+  useEffect(() => {
+    const controller = new AbortController();
+    setState((prev) => ({ data: prev.data, loading: true }));
+    const timer = setTimeout(() => {
+      load(controller.signal).then(
+        (data) => { if (!controller.signal.aborted) setState({ data, loading: false }); },
+        (error: Error) => { if (!controller.signal.aborted) setState((prev) => ({ data: prev.data, error, loading: false })); },
+      );
+    }, 60);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, deps);
+  return state;
 }
 
 /** 重新拉取期间保留数据；失败后清空，避免把旧门禁或旧表单作为当前结果。 */

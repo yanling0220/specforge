@@ -11,6 +11,10 @@ import type {
   HumanRole,
   InboxItem,
   Question,
+  QuestionWorkDetail,
+  QuestionWorkPage,
+  QuestionWorkStatus,
+  AnswerDraftInput,
   ReviewFinding,
   ReviewRecord,
   Role,
@@ -216,14 +220,15 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (PROJECT_ERROR) throw new ApiError(400, 'bad_project', PROJECT_ERROR);
   const res = await fetchWithBusyRetry(`${API_BASE}${path}`, { ...init, credentials: 'same-origin', cache: 'no-store' });
-  const body = (await res.json().catch(() => ({}))) as { error?: { code: string; message: string } };
+  const body = (await res.json().catch(() => undefined)) as { error?: { code: string; message: string } } | undefined;
   if (!res.ok) {
     // 会话过期、用户被停用或令牌被重置：通知界面回到登录页
-    if (!init?.signal?.aborted && res.status === 401 && body.error?.code === 'unauthorized') {
+    if (!init?.signal?.aborted && res.status === 401 && body?.error?.code === 'unauthorized') {
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     }
-    throw new ApiError(res.status, body.error?.code ?? 'http', body.error?.message ?? `请求失败：${res.status}`);
+    throw new ApiError(res.status, body?.error?.code ?? 'http', body?.error?.message ?? `请求失败：${res.status}`);
   }
+  if (body === undefined) throw new Error('未收到完整响应');
   return body as T;
 }
 
@@ -240,6 +245,12 @@ export const api = {
   project: () => get<{ id: string; readOnly: boolean }>('/api/project'),
   changes: () => get<{ changes: ChangeRow[] }>('/api/changes').then((r) => r.changes),
   inbox: (role: HumanRole) => get<{ role: HumanRole; items: InboxItem[] }>(`/api/inbox?role=${enc(role)}`),
+  questionWork: (role: HumanRole, status?: QuestionWorkStatus, cursor?: string, signal?: AbortSignal) =>
+    get<QuestionWorkPage>(`/api/question-work?role=${enc(role)}${status ? `&status=${enc(status)}` : ''}${cursor ? `&cursor=${enc(cursor)}` : ''}`, signal),
+  questionWorkDetail: (id: string, qid: string, role: HumanRole, signal?: AbortSignal) =>
+    get<QuestionWorkDetail>(`/api/changes/${enc(id)}/questions/${enc(qid)}?role=${enc(role)}`, signal),
+  submitQuestionAnswer: (id: string, qid: string, role: HumanRole, baseQuestionVersion: string, input: AnswerDraftInput) =>
+    post<{ question: Question; questionVersion: string }>(`/api/changes/${enc(id)}/questions/${enc(qid)}/submit-answer`, { role, baseQuestionVersion, ...input }),
   change: (id: string) => get<ChangeDetail>(`/api/changes/${enc(id)}`),
   gates: (id: string) => get<GatesResponse>(`/api/changes/${enc(id)}/gates`),
   /** 分页读取全部事件（升序） */
@@ -267,7 +278,7 @@ export const api = {
 
   // ---------- 写操作（T3.4）：服务端按登录用户 + role 校验，走 Store.mutate ----------
   questionAction: (id: string, qid: string, action: QuestionAction, body: Record<string, unknown>) =>
-    post<{ question: Question }>(`/api/changes/${enc(id)}/questions/${enc(qid)}/${action}`, body),
+    post<{ question: Question; questionVersion?: string }>(`/api/changes/${enc(id)}/questions/${enc(qid)}/${action}`, body),
   confirmRestatement: (id: string, body: { role: Role; via?: string }) => post<{ ok: true }>(`/api/changes/${enc(id)}/restatement/confirm`, body),
   decideAssumption: (id: string, aid: string, body: { role: Role; status: 'accepted' | 'rejected'; note?: string }) =>
     post<{ ok: true }>(`/api/changes/${enc(id)}/assumptions/${enc(aid)}/decide`, body),

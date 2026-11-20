@@ -39,6 +39,7 @@ export function Action({
 
   const submit = async (e?: FormEvent) => {
     e?.preventDefault();
+    if (disabled || busy) return;
     setBusy(true);
     setError(undefined);
     try {
@@ -104,7 +105,7 @@ export function Action({
       ))}
       {error && <div className="error">{error}</div>}
       <div className="action-buttons">
-        <button type="submit" className={`btn primary ${danger ? 'danger' : ''}`} disabled={busy}>
+        <button type="submit" className={`btn primary ${danger ? 'danger' : ''}`} disabled={disabled || busy}>
           {busy ? '提交中…' : '提交'}
         </button>
         <button type="button" className="btn" onClick={() => setOpen(false)}>

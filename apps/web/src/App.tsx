@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Role } from '@specforge/shared';
-import { api, PROJECT_ERROR, PROJECT_ID, UNAUTHORIZED_EVENT } from './api.ts';
+import { api, API_BASE, PROJECT_ERROR, PROJECT_ID, UNAUTHORIZED_EVENT } from './api.ts';
+import { allowQuestionLeave, clearQuestionDrafts } from './question-work.ts';
 import { MeProvider, useMe } from './me.tsx';
 import { useData, useLive, type LiveStatus } from './live.ts';
 import { href, parseRoute, type Route } from './model.ts';
@@ -47,6 +48,7 @@ function ProjectConsole() {
   const [authVersion, setAuthVersion] = useState(0);
   const me = useData(async () => {
     const session = await api.me();
+    if (!session.user) try { clearQuestionDrafts(API_BASE, sessionStorage); } catch { /* storage may be disabled */ }
     if (PROJECT_ID && session.user) {
       const project = await api.project();
       if (project.id !== PROJECT_ID) throw new Error('项目上下文不匹配，拒绝加载');
@@ -64,6 +66,7 @@ function ProjectConsole() {
   }, [me.data, me.loading, me.error]);
   useEffect(() => {
     const on = () => {
+      try { clearQuestionDrafts(API_BASE, sessionStorage); } catch { /* storage may be disabled */ }
       if (PROJECT_ID) rememberProject(PROJECT_ID, true);
       setAuthVersion((version) => version + 1);
     };
@@ -73,6 +76,7 @@ function ProjectConsole() {
   if (me.loading || me.error || !me.data) return <div className="app"><ProjectHeader /><main>{me.error ? <div className="error">无法连接项目：{me.error.message} <button onClick={() => setAuthVersion((version) => version + 1)}>重试</button></div> : '正在核对登录状态…'}</main></div>;
   if (me.data.required && !me.data.user) return <div className="app"><ProjectHeader /><main><Login onLogin={() => setAuthVersion((v) => v + 1)} /></main></div>;
   const logout = me.data.user ? () => void api.logout().then(() => {
+    try { clearQuestionDrafts(API_BASE, sessionStorage); } catch { /* storage may be disabled */ }
     if (PROJECT_ID) rememberProject(PROJECT_ID, true);
     setAuthVersion((version) => version + 1);
   }).catch(() => setAuthVersion((version) => version + 1)) : undefined;
@@ -105,7 +109,7 @@ function Console({ onLogout }: { onLogout?: () => void }) {
           <a className={route.page === 'board' ? 'active' : ''} href={href({ page: 'board' })}>
             看板
           </a>
-          {user && <a className={route.page === 'inbox' ? 'active' : ''} href={href({ page: 'inbox' })}>审批收件箱</a>}
+          {user && <a className={route.page === 'inbox' ? 'active' : ''} href={href({ page: 'inbox' })}>工作台</a>}
           <a className={route.page === 'events' ? 'active' : ''} href={href({ page: 'events' })}>
             全部事件
           </a>
@@ -128,7 +132,10 @@ function Console({ onLogout }: { onLogout?: () => void }) {
           <span className="me">
             {user.name}
             {user.roles.length > 1 ? (
-              <select className="role-picker" value={role} onChange={(e) => setRole(e.target.value as Role)} title="以哪个角色操作">
+              <select className="role-picker" value={role} onChange={(e) => {
+                if (allowQuestionLeave()) setRole(e.target.value as Role);
+                else e.target.value = role ?? '';
+              }} title="以哪个角色操作">
                 {user.roles.map((r) => (
                   <option key={r} value={r}>
                     以 {r} 身份
@@ -139,7 +146,7 @@ function Console({ onLogout }: { onLogout?: () => void }) {
               <span className="muted">（{role}）</span>
             )}
             {user.admin && <span className="muted">管理员</span>}
-            <button className="link" onClick={onLogout}>
+            <button className="link" onClick={() => { if (allowQuestionLeave()) onLogout?.(); }}>
               退出
             </button>
           </span>
@@ -150,10 +157,10 @@ function Console({ onLogout }: { onLogout?: () => void }) {
       <main>
         {route.page === 'board' && <Board version={live.version} />}
         {route.page === 'inbox' && (role === 'dev' || role === 'product'
-          ? <Inbox key={`${user?.name}:${role}`} role={role} version={live.version} />
+          ? <Inbox key={`${user?.name}:${role}`} name={user?.name ?? ''} role={role} version={live.version + live.reconnects} approvals={route.approvals} />
           : <div className="muted">启用用户名册并登录后，可查看当前角色的审批收件箱。</div>)}
         {route.page === 'events' && <Timeline version={live.version} />}
-        {route.page === 'change' && <ChangeView id={route.id} tab={route.tab} qid={route.qid} version={live.version} />}
+        {route.page === 'change' && <ChangeView id={route.id} tab={route.tab} qid={route.qid} version={live.version + (route.tab === 'analysis' && route.qid ? live.reconnects : 0)} />}
         {route.page === 'evidence' && <EvidenceView id={route.id} eid={route.eid} />}
       </main>
       <footer>{user ? `以 ${user.name}（${role}）身份操作；所有修改写入哈希链` : '只读：启用用户名册并登录后可在控制台操作'}</footer>

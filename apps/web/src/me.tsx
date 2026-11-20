@@ -19,13 +19,14 @@ const KEY = 'specforge.role';
 
 export function MeProvider({ user, children }: { user: SessionUser | null; children: ReactNode }) {
   const pick = () => {
-    const saved = PROJECT_ID ? null : localStorage.getItem(KEY) as Role | null;
+    let saved: Role | null = null;
+    try { saved = PROJECT_ID ? null : localStorage.getItem(KEY) as Role | null; } catch { /* use granted default role */ }
     return user ? (saved && user.roles.includes(saved) ? saved : user.roles[0]) : undefined;
   };
   const [role, setRoleState] = useState<Role | undefined>(pick);
   useEffect(() => setRoleState(pick()), [user?.name]);
   const setRole = (r: Role) => {
-    if (!PROJECT_ID) localStorage.setItem(KEY, r);
+    try { if (!PROJECT_ID) localStorage.setItem(KEY, r); } catch { /* role remains in memory */ }
     setRoleState(r);
   };
   return <Ctx.Provider value={{ user, role, setRole, canWrite: !!user && !!role }}>{children}</Ctx.Provider>;
