@@ -214,10 +214,14 @@ async function main() {
     await waitFor(`!!document.querySelector('.me') && !!document.querySelector('#q-Q-1.selected')`, '本人登录并保留问题深链接');
   };
   const selectRole = async (role) => { await evaluate(`__set(document.querySelector('.role-picker'), ${JSON.stringify(role)}), true`); };
-  const openConfirmation = async () => {
-    await waitFor(`!!__btn('以 product 身份确认', document.querySelector('#q-Q-1'))`, '本人确认按钮');
-    await evaluate(`__btn('以 product 身份确认', document.querySelector('#q-Q-1')).click(), true`);
+  const openRejection = async () => {
+    await waitFor(`!!document.querySelector('#q-Q-1') && !!__btn('退回并要求修订', document.querySelector('#q-Q-1'))`, '本人退回按钮');
+    await evaluate(`__btn('退回并要求修订', document.querySelector('#q-Q-1')).click(), true`);
     await waitFor(`!!document.querySelector('#q-Q-1 form.action-form')`, '确认表单');
+  };
+  const openRevision = async () => {
+    await waitFor(`!!document.querySelector('#q-Q-1') && !!__btn('修订答案', document.querySelector('#q-Q-1'))`, '可以修订答案');
+    await evaluate(`document.querySelector('#q-Q-1 > details:last-child').open = true; __btn('修订答案', document.querySelector('#q-Q-1')).click(), true`);
   };
   const switchEntry = async () => {
     await evaluate(`document.querySelector('.project-switch').click(), true`);
@@ -245,8 +249,14 @@ async function main() {
   const denied = await evaluate(`Promise.all([fetch('${mount}/p/b/api/changes'), fetch('${mount}/p/b/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'same', token: 'token-a' }) })]).then((responses) => responses.map((response) => response.status))`);
   assert.deepEqual(denied, [401, 401]);
   await selectRole('product');
-  await openConfirmation();
-  await evaluate(`__set(document.querySelector('#q-Q-1 form input'), 'unsent-a-draft'), true`);
+  await openRevision();
+  await evaluate(`__set(document.querySelector('.answer-editor textarea'), 'unsent-a-draft'), true`);
+  await waitFor(`document.querySelector('.answer-editor')?.textContent.includes('草稿已保存在此标签页')`, 'A 的产品草稿已保存');
+  await selectRole('dev');
+  await openRevision();
+  assert.equal(await evaluate(`document.querySelector('.answer-editor textarea').value`), 'a-private-answer');
+  await selectRole('product');
+  await waitFor(`document.querySelector('.answer-editor textarea')?.value === 'unsent-a-draft'`, '切回原角色恢复原草稿');
   const firstDocument = await evaluate('__documentId');
   const postCount = requests.filter((request) => request.method === 'POST' && /questions/.test(request.url)).length;
   await switchEntry();
@@ -258,6 +268,10 @@ async function main() {
   assert.notEqual(await evaluate('__documentId'), firstDocument);
   assert.equal(await evaluate(`document.querySelector('.role-picker').value`), 'dev');
   assert.equal(await evaluate(`document.querySelectorAll('form.action-form').length`), 0);
+  await selectRole('product');
+  await openRevision();
+  assert.equal(await evaluate(`document.querySelector('.answer-editor textarea').value`), 'b-private-answer');
+  await selectRole('dev');
   assert.equal(requests.filter((request) => request.method === 'POST' && /questions/.test(request.url)).length, postCount);
   await noOtherData('a');
 
@@ -296,7 +310,9 @@ async function main() {
 
   step('外部 CLI 修订关闭 A 旧表单，409 拒绝旧引用，本人只确认新版且 B 不变');
   await selectRole('product');
-  await openConfirmation();
+  await waitFor(`document.querySelector('.answer-editor textarea')?.value === 'unsent-a-draft'`, '回到 A 可恢复自己的草稿');
+  await evaluate(`__btn('放弃草稿').click(), true`);
+  await openRejection();
   const oldAnswer = await available(() => first.load('same').questions[0].revisions.at(-1));
   await sf(first.root, 'q', 'answer', 'same', 'Q-1', '--text', 'a-private-answer-v2', '--as', 'same:dev');
   await waitFor(`document.querySelector('#q-Q-1 .history')?.textContent.includes('a-private-answer-v2') && !document.querySelector('#q-Q-1 form.action-form')`, '实时修订关闭旧确认表单');
@@ -305,9 +321,8 @@ async function main() {
   assert.equal(stale.status, 409);
   assert.equal(stale.body.error.code, 'stale_answer');
   assert.equal(await available(() => first.events().length), beforeConflict);
-  await openConfirmation();
-  await evaluate(`__btn('提交', document.querySelector('#q-Q-1 form')).click(), true`);
-  await waitFor(`!!document.querySelector('#q-Q-1 .st-confirmed')`, 'A 本人确认');
+  await evaluate(`__btn('确认此答案', document.querySelector('#q-Q-1')).click(), true`);
+  await waitFor(`document.querySelector('.work-receipt')?.textContent.includes('已确认第 2 版')`, 'A 本人确认');
   const current = await available(() => first.load('same').questions[0].revisions.at(-1));
   assert.equal(current.rev, 2);
   const confirmation = current.confirmations.find((entry) => entry.role === 'product');
@@ -316,7 +331,7 @@ async function main() {
   assert.deepEqual(await available(() => second.exclusive(() => ({ state: second.load('same'), events: second.events() }))), secondBefore);
 
   step('旧文档延迟响应与历史返回不恢复旧表单；未知 / 损坏项目不回退');
-  await evaluate(`__btn('修改答案', document.querySelector('#q-Q-1')).click(), true`);
+  await openRevision();
   await evaluate(`__set(document.querySelector('#q-Q-1 textarea'), 'old-a-form'); window.__late = fetch('${mount}/p/a/api/changes/same').then((response) => response.json()).then((data) => new Promise((resolve) => setTimeout(() => resolve(data), 1500))).then(() => { document.body.dataset.late = 'a'; }); true`);
   await switchEntry();
   await recent('b');
@@ -370,12 +385,12 @@ async function main() {
     await databasePool.query(`CREATE FUNCTION specforge_index.browser_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.project_id = 'b' THEN RAISE EXCEPTION 'private-browser-db-error'; END IF; RETURN NEW; END $$; CREATE TRIGGER browser_fail BEFORE UPDATE ON specforge_index.projects FOR EACH ROW EXECUTE FUNCTION specforge_index.browser_fail()`);
     try {
       assert.equal(await evaluate(`__read('${mount}/p/b/api/changes').then((response) => response.status)`), 503);
-      await waitFor(`!!document.querySelector('.error') && !document.querySelector('#q-Q-1')`, '索引失败显示错误且不显示旧问题');
+      await waitFor(`!!document.querySelector('.error') && !__btn('确认此答案') && !__btn('修订答案')`, '索引失败显示错误且不显示旧问题');
       assert.equal(await evaluate(`document.body.innerText.includes('private-browser-db-error')`), false);
       assert.equal(await evaluate(`document.querySelectorAll('form.action-form').length`), 0);
     } finally { await databasePool.query('DROP TRIGGER browser_fail ON specforge_index.projects; DROP FUNCTION specforge_index.browser_fail()'); }
-    await waitFor(`!!__btn('重试')`, '索引失败后的重试入口');
-    await evaluate(`__btn('重试').click(), true`);
+    await waitFor(`!!__btn('重试读取问题')`, '索引失败后的重试入口');
+    await evaluate(`__btn('重试读取问题').click(), true`);
     await waitFor(`document.querySelector('#q-Q-1 .qtext')?.textContent === 'b-private-question'`, '索引恢复');
     assert.deepEqual(await available(() => second.exclusive(() => ({ state: second.load('same'), events: second.events() }))), before);
   }

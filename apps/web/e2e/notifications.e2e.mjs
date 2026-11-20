@@ -200,7 +200,7 @@ async function scenario(multi) {
   assert.deepEqual(await available(() => a.events()), initial, '打开通知和登录不写事件');
   assert.equal(await evaluate('location.pathname'), prefix + '/');
   const old = await available(() => a.load('same').questions[0].revisions.at(-1));
-  await evaluate("__btn('以 product 身份确认', document.querySelector('#q-Q-1')).click(), true");
+  await evaluate("__btn('退回并要求修订', document.querySelector('#q-Q-1')).click(), true");
   await wait("!!document.querySelector('#q-Q-1 form.action-form')", '确认表单');
   await available(() => questionAction(a, 'same', dev, 'Q-1', { kind: 'answer', text: 'a-private-answer-v2' }));
   await wait("document.querySelector('#q-Q-1 .history')?.textContent.includes('a-private-answer-v2') && !document.querySelector('#q-Q-1 form.action-form')", '最新答案关闭旧表单');
@@ -208,10 +208,8 @@ async function scenario(multi) {
   const stale = await post(prefix + '/api/changes/same/questions/Q-1/confirm', { role: 'product', rev: old.rev, answerHash: old.hash });
   assert.equal(stale.status, 409); assert.equal(stale.body.error.code, 'stale_answer');
   assert.equal(await available(() => a.events().length), beforeStale);
-  await evaluate("__btn('以 product 身份确认', document.querySelector('#q-Q-1')).click(), true");
-  await wait("!!document.querySelector('#q-Q-1 form.action-form')", '新版确认表单');
-  await evaluate("__btn('提交', document.querySelector('#q-Q-1 form')).click(), true");
-  await wait("!!document.querySelector('#q-Q-1 .st-confirmed')", '新版本人确认');
+  await evaluate("__btn('确认此答案', document.querySelector('#q-Q-1')).click(), true");
+  await wait("document.querySelector('.work-receipt')?.textContent.includes('已确认第 2 版')", '新版本人确认');
   const confirmed = await available(() => a.load('same').questions[0].revisions.at(-1));
   assert.equal(confirmed.rev, 2);
   assert.deepEqual(confirmed.confirmations.find((entry) => entry.role === 'product').actor, pm);
